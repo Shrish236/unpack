@@ -26,11 +26,11 @@ const KINDS = [
 
 const DESIGN_LINKS = [
   { id: 0, label: "Original", href: "#/" },
-  { id: 1, label: "1 · Morph UI", href: "#/home-design-1" },
-  { id: 2, label: "2 · Topology", href: "#/home-design-2" },
-  { id: 3, label: "3 · 2.5D Stack", href: "#/home-design-3" },
-  { id: 4, label: "4 · State Machine", href: "#/home-design-4" },
-  { id: 5, label: "5 · Motion Film", href: "#/home-design-5" },
+  { id: 1, label: "1 · Morph UI", href: "#/home-4" },
+  { id: 2, label: "2 · Topology", href: "#/home-5" },
+  { id: 3, label: "3 · 2.5D Stack", href: "#/home-6" },
+  { id: 4, label: "4 · State Machine", href: "#/home-7" },
+  { id: 5, label: "5 · Motion Film", href: "#/home-8" },
 ];
 
 const STEP_SHORT = ["Overview", "01 Record", "02 Overrule", "03 Check", "04 Patterns", "05 Approve", "06 Publish"];

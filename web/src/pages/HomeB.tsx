@@ -7,7 +7,7 @@ import "../styles/home2.css"; // shared section and story-layout styles (hx-)
 import "../styles/viz2.css";
 import "../styles/homeb.css";
 
-/* #/home-b: Option 2. The scene lives in the hero only; the scroll story uses the 2D morph figure. */
+/* #/home-3: Option 2. The scene lives in the hero only; the scroll story uses the 2D morph figure. */
 
 const STEPS = [
   { n: "01 · Record", h: "Record both voices", p: "Every choice in the session, the agent's and yours, becomes a typed decision pinned to the turn that caused it." },
