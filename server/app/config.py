@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     # Local development only: when set, the viewer endpoints accept requests with no login and act as this
     # user, with access to every repository. Refused unless UNPACK_BASE_URL points at localhost.
     DEV_VIEWER_LOGIN: str = ""
+    # Public demo: also allow DEV_VIEWER_LOGIN on a public URL, so anyone with the link sees every
+    # repository's analyses without logging in. Only for deployments with nothing sensitive in them.
+    PUBLIC_VIEWER: bool = False
 
     def required_problems(self) -> list[str]:
         """Return a human-readable line for each missing or weak required setting."""
@@ -104,8 +107,12 @@ class Settings(BaseSettings):
                 problems.append(f"{name} is not set")
             elif len(value) < 32:
                 problems.append(f"{name} must be at least 32 characters")
-        if self.DEV_VIEWER_LOGIN and not re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", self.UNPACK_BASE_URL):
-            problems.append("DEV_VIEWER_LOGIN is only allowed when UNPACK_BASE_URL is localhost or 127.0.0.1")
+        local = re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", self.UNPACK_BASE_URL)
+        if self.DEV_VIEWER_LOGIN and not local and not self.PUBLIC_VIEWER:
+            problems.append("DEV_VIEWER_LOGIN is only allowed when UNPACK_BASE_URL is localhost or 127.0.0.1 "
+                            "(or with PUBLIC_VIEWER=true for a public demo)")
+        if self.PUBLIC_VIEWER and not self.DEV_VIEWER_LOGIN:
+            problems.append("PUBLIC_VIEWER=true needs DEV_VIEWER_LOGIN (the name everyone is shown as)")
         if not self.TOKEN_ENCRYPTION_KEY:
             problems.append("TOKEN_ENCRYPTION_KEY is not set")
         else:
