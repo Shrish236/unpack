@@ -1,11 +1,18 @@
-"""Branch reconciler: finds the pull request for each tracked branch and keeps its comment current (server design §3)."""
+"""The poller (server design §3, revised): one sweep per interval checks every active branch's pull requests
+and queues the posts that are pending. There are no webhooks.
+
+Per repository with pending work there is one conditional call (`GET /repos/{o}/{r}/pulls`, ETag). A 304
+costs no rate-limit budget and the stored list is reused. Compare results are cached on the pull request,
+so an unchanged pair of commits is never compared twice.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select, text
@@ -20,22 +27,10 @@ from .queue import enqueue
 
 log = logging.getLogger("unpack.reconciler")
 
-ACTIVE_STATUSES = ("waiting_for_pr", "linked", "closed_recently")
-PUBLISH_WAIT_SECONDS = 600  # wait this long for GitHub to catch up with our push
-LINKED_CHECK_SECONDS = 120
+ACTIVE_STATUSES = ("waiting_for_pr", "linked")
+PUBLISH_WAIT_SECONDS = 600  # wait this long for GitHub to catch up with a push before using an older analysis
 
-
-def backoff_seconds(age_seconds: float) -> float | None:
-    """Design §3.4. None means stop tracking (abandoned)."""
-    if age_seconds < 600:
-        return 30
-    if age_seconds < 3600:
-        return 120
-    if age_seconds < 86400:
-        return 600
-    if age_seconds < 7 * 86400:
-        return 3600
-    return None
+_last_installation_sync = 0.0
 
 
 @dataclass
@@ -49,252 +44,277 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def reconcile_once() -> int:
-    """One tick: claim due branches and check each. Returns the number checked."""
-    async with session_scope() as session:
-        ids = (await session.execute(text(
-            """
-            UPDATE tracked_branches SET next_check_at = now() + interval '60 seconds', check_count = check_count + 1
-            WHERE id IN (
-                SELECT id FROM tracked_branches
-                WHERE status IN ('waiting_for_pr', 'linked', 'closed_recently') AND next_check_at <= now()
-                ORDER BY next_check_at
-                FOR UPDATE SKIP LOCKED
-                LIMIT 50
-            )
-            RETURNING id
-            """
-        ))).scalars().all()
-    gate = asyncio.Semaphore(max(settings.RECONCILE_CONCURRENCY, 1))
-
-    async def check_one(tid: int) -> None:
-        async with gate:
-            try:
-                await check_branch(int(tid))
-            except Exception as exc:  # one bad branch must not stop the others
-                log.warning("branch %s check failed: %s", tid, type(exc).__name__)
-                async with session_scope() as session:
-                    row = await session.get(TrackedBranch, tid)
-                    if row is not None:
-                        row.last_error = f"{type(exc).__name__}: {str(exc)[:400]}"
-                        row.next_check_at = _now() + timedelta(seconds=120)
-
-    await asyncio.gather(*(check_one(tid) for tid in ids))
-    return len(ids)
+def raw_from_pr(pr: PullRequest) -> dict[str, Any]:
+    """The pull request as GitHub lists it, rebuilt from the stored row (used when the list is unchanged)."""
+    return {
+        "number": pr.number,
+        "title": pr.title,
+        "html_url": pr.html_url,
+        "head": {"sha": pr.head_sha, "ref": pr.head_ref},
+        "base": {"ref": pr.base_ref},
+    }
 
 
-def choose_target(
+def decide(
     *,
+    decision: dict[str, Any] | None,
     pr_head: str,
-    latest: Analysis,
+    latest_id: int,
+    latest_status: str,
     latest_head: str,
     done_by_head: dict[str, int],
-    compare_result: Any,
-    latest_age_seconds: float,
+    age_seconds: float,
     latest_short: str,
 ) -> Target | str | None:
-    """Design §3.3. Returns a Target to publish, "wait", or None for nothing to publish."""
+    """Maps a compare decision to what to post. Pure, so the rules can be tested directly.
+
+    `decision` is the cached compare result {"status", "behind_by", "ancestor"} or None when the PR head
+    is already known to be one of our analyses.
+    """
     if pr_head == latest_head:
-        if latest.status in ("done", "failed"):
-            return Target(latest.id, "analysis")
-        return "wait"
+        return Target(latest_id, "analysis") if latest_status in ("done", "failed") else "wait"
     if pr_head in done_by_head:
         return Target(done_by_head[pr_head], "analysis")
-    status = compare_result.status
+    if decision is None:
+        return "wait"
+    status = decision["status"]
     if status == "ahead":  # our push is not on GitHub yet
-        if latest_age_seconds < PUBLISH_WAIT_SECONDS:
+        if age_seconds < PUBLISH_WAIT_SECONDS:
             return "wait"
-        return "ancestor"  # design §3.3: fall back to the newest analysis that is an ancestor of the PR head
-    if status == "behind":  # commits were pushed without the hook
-        n = compare_result.behind_by
-        noun = "commit" if n == 1 else "commits"
-        return Target(latest.id, "analysis", {
-            "kind": "partial_coverage",
-            "message": f"Covers up to {latest_short}; {n} newer {noun} were not analysed.",
-        })
-    if status == "diverged":
-        return Target(latest.id, "out_of_date")
-    if status == "identical":
-        return Target(latest.id, "analysis")
-    return None
-
-
-async def check_branch(tracked_id: int) -> None:
-    svc = get_github()
-    async with session_scope() as session:
-        row = await session.get(TrackedBranch, tracked_id)
-        if row is None or row.status not in ACTIVE_STATUSES:
-            return
-        repo = await session.get(Repo, row.repo_id)
-        latest_push = await session.get(Push, row.latest_push_id) if row.latest_push_id else None
-        if latest_push is None:
-            return
-        latest = (await session.execute(select(Analysis).where(Analysis.push_id == latest_push.id))).scalar_one_or_none()
-        done_rows = (await session.execute(
-            select(Analysis.id, Push.head_sha)
-            .join(Push, Push.id == Analysis.push_id)
-            .where(Push.repo_id == row.repo_id, Push.branch == row.branch, Analysis.status == "done")
-        )).all()
-        done_by_head = {head: aid for aid, head in done_rows}
-        snapshot = {
-            "tracked_id": row.id, "branch": row.branch, "repo_id": repo.id, "owner": repo.owner,
-            "name": repo.name, "installation_id": repo.installation_id, "repo_status": repo.status,
-            "latest_head": row.latest_head_sha, "latest_id": latest.id if latest else None,
-            "latest_status": latest.status if latest else None,
-            "latest_received": latest_push.received_at, "latest_short": latest_push.head_sha[:7],
-        }
-
-    now = _now()
-    received = snapshot["latest_received"]
-    age = (now - received).total_seconds() if received else 0.0
-
-    if snapshot["repo_status"] != "active" or snapshot["installation_id"] is None:
-        await _set_next(tracked_id, now + timedelta(hours=1), status=None)
-        return
-    if snapshot["latest_id"] is None:
-        await _set_next(tracked_id, now + timedelta(seconds=30))
-        return
-    if snapshot["latest_status"] in ("queued", "running"):
-        await _set_next(tracked_id, now + timedelta(seconds=15))
-        return
-
-    token = await svc.installation_token(snapshot["installation_id"])
-    owner, name, branch = snapshot["owner"], snapshot["name"], snapshot["branch"]
-    open_prs = await gh_prs.list_open_prs_for_head(svc, token, owner, name, branch)
-
-    if not open_prs:
-        await _handle_no_pr(tracked_id, snapshot, token, age, now)
-        return
-
-    scheduled_targets: list[Target | str | None] = []
-    for raw in open_prs:
-        pr_head = raw["head"]["sha"]
-        compare_result = None
-        if pr_head != snapshot["latest_head"] and pr_head not in done_by_head:
-            compare_result = await gh_prs.compare(svc, token, owner, name, pr_head, snapshot["latest_head"])
-        async with session_scope() as session:
-            pr = (await session.execute(select(PullRequest).where(
-                PullRequest.repo_id == snapshot["repo_id"], PullRequest.number == raw["number"]
-            ))).scalar_one_or_none()
-            if pr is None:
-                pr = PullRequest(repo_id=snapshot["repo_id"], number=raw["number"], head_ref=branch,
-                                 head_sha=pr_head, base_ref=raw["base"]["ref"])
-                session.add(pr)
-            pr.tracked_branch_id = snapshot["tracked_id"]
-            pr.head_sha = pr_head
-            pr.base_ref = raw["base"]["ref"]
-            pr.title = raw.get("title")
-            pr.html_url = raw.get("html_url")
-            pr.state = "open"
-            await session.flush()
-            pr_id = pr.id
-        target = choose_target(
-            pr_head=pr_head,
-            latest=await _load_latest(snapshot["latest_id"]),
-            latest_head=snapshot["latest_head"],
-            done_by_head=done_by_head,
-            compare_result=compare_result if compare_result is not None else _same_head(),
-            latest_age_seconds=age,
-            latest_short=snapshot["latest_short"],
-        )
-        if target == "ancestor":
-            target = await _ancestor_target(svc, token, owner, name, pr_head, snapshot, done_by_head)
-        scheduled_targets.append(target)
-        if isinstance(target, Target):
-            await _enqueue_publish(pr_id, target)
-
-    async with session_scope() as session:
-        row = await session.get(TrackedBranch, tracked_id)
-        row.status = "linked"
-        row.last_checked_at = _now()
-        row.last_error = None
-        wait = any(t == "wait" for t in scheduled_targets)
-        row.next_check_at = _now() + timedelta(seconds=15 if wait else LINKED_CHECK_SECONDS)
-        # Design §4: needs_publish stays true until every open PR shows the latest analysis.
-        open_prs = (await session.execute(select(PullRequest).where(
-            PullRequest.tracked_branch_id == tracked_id, PullRequest.state == "open"))).scalars().all()
-        row.needs_publish = any(pr.last_published_analysis_id != snapshot["latest_id"] for pr in open_prs)
-
-
-async def _ancestor_target(svc: Any, token: str, owner: str, name: str, pr_head: str,
-                           snapshot: dict[str, Any], done_by_head: dict[str, int]) -> Target | None:
-    """Newest done analysis whose head is an ancestor of the PR head (design §3.3, after 10 minutes)."""
-    candidates = sorted(((head, aid) for head, aid in done_by_head.items()
-                         if head != snapshot["latest_head"]), key=lambda item: -item[1])
-    for head, aid in candidates:
-        result = await gh_prs.compare(svc, token, owner, name, head, pr_head)
-        if result.status == "ahead":  # the PR head contains this analysis's head
+        ancestor = decision.get("ancestor")
+        if ancestor:  # design §3.3: the newest analysis that is an ancestor of the PR head
+            aid, head = ancestor
             return Target(aid, "analysis", {
                 "kind": "partial_coverage",
                 "message": f"Covers up to {head[:7]}; the newest push is not on GitHub yet.",
             })
+        return None
+    if status == "behind":  # commits were pushed without the hook
+        n = decision["behind_by"]
+        noun = "commit" if n == 1 else "commits"
+        return Target(latest_id, "analysis", {
+            "kind": "partial_coverage",
+            "message": f"Covers up to {latest_short}; {n} newer {noun} were not analysed.",
+        })
+    if status == "diverged":
+        return Target(latest_id, "out_of_date")
+    if status == "identical":
+        return Target(latest_id, "analysis")
     return None
 
 
-@dataclass
-class _Same:
-    status: str = "identical"
-    ahead_by: int = 0
-    behind_by: int = 0
-
-
-def _same_head() -> _Same:
-    return _Same()
-
-
-async def _load_latest(analysis_id: int | None) -> Analysis:
+async def reconcile_once() -> int:
+    """One sweep: installation sync when due, then every repository with pending posts. Returns repos swept."""
+    await _maybe_sync_installations()
     async with session_scope() as session:
-        analysis = await session.get(Analysis, analysis_id)
-        session.expunge(analysis)
-        return analysis
+        repo_ids = (await session.execute(
+            select(TrackedBranch.repo_id).where(TrackedBranch.status.in_(ACTIVE_STATUSES)).distinct()
+        )).scalars().all()
+    gate = asyncio.Semaphore(max(settings.RECONCILE_CONCURRENCY, 1))
+
+    async def one(repo_id: int) -> None:
+        async with gate:
+            try:
+                await sweep_repo(repo_id)
+            except Exception as exc:  # one repository must not stop the others; the next sweep retries it
+                log.warning("sweep of repository %s failed: %s", repo_id, type(exc).__name__)
+                async with session_scope() as session:
+                    await session.execute(text(
+                        "UPDATE tracked_branches SET last_error = :e WHERE repo_id = :r"
+                    ), {"e": f"{type(exc).__name__}: {str(exc)[:400]}", "r": repo_id})
+
+    await asyncio.gather(*(one(rid) for rid in repo_ids))
+    return len(repo_ids)
 
 
-async def _enqueue_publish(pr_id: int, target: Target) -> None:
+async def sweep_repo(repo_id: int) -> None:
+    svc = get_github()
+    async with session_scope() as session:
+        repo = await session.get(Repo, repo_id)
+        if repo is None or repo.status != "active" or repo.installation_id is None:
+            return
+        token = await svc.installation_token(repo.installation_id)
+        changed, fresh, etag = await gh_prs.list_open_pulls_conditional(
+            svc, token, repo.owner, repo.name, repo.pulls_etag)
+        if changed:
+            repo.pulls_etag = etag
+            stored = (await session.execute(select(PullRequest).where(
+                PullRequest.repo_id == repo.id, PullRequest.state == "open"))).scalars().all()
+            open_numbers = {raw["number"] for raw in fresh}
+            for raw in fresh:
+                await upsert_pr(session, repo, raw)
+            for pr in stored:
+                if pr.number not in open_numbers:
+                    await _settle_closed(svc, token, repo, pr)
+            pulls = fresh
+        else:
+            stored = (await session.execute(select(PullRequest).where(
+                PullRequest.repo_id == repo.id, PullRequest.state == "open"))).scalars().all()
+            pulls = [raw_from_pr(pr) for pr in stored]
+
+        # Every active branch, not only those with a post pending: a PR that closes or merges must be noticed.
+        pending = (await session.execute(select(TrackedBranch).where(
+            TrackedBranch.repo_id == repo.id, TrackedBranch.status.in_(ACTIVE_STATUSES),
+        ))).scalars().all()
+        for tb in pending:
+            await sweep_branch(session, svc, token, repo, tb, pulls)
+
+
+async def upsert_pr(session: Any, repo: Repo, raw: dict[str, Any]) -> PullRequest:
+    pr = (await session.execute(select(PullRequest).where(
+        PullRequest.repo_id == repo.id, PullRequest.number == raw["number"]))).scalar_one_or_none()
+    if pr is None:
+        pr = PullRequest(repo_id=repo.id, number=raw["number"], head_ref=raw["head"]["ref"],
+                         head_sha=raw["head"]["sha"], base_ref=raw["base"]["ref"])
+        session.add(pr)
+    pr.head_ref = raw["head"]["ref"]
+    pr.head_sha = raw["head"]["sha"]
+    pr.base_ref = raw["base"]["ref"]
+    pr.title = raw.get("title")
+    pr.html_url = raw.get("html_url")
+    pr.state = "open"
+    return pr
+
+
+async def _settle_closed(svc: Any, token: str, repo: Repo, pr: PullRequest) -> None:
+    """A stored open PR is missing from a fresh list: find out whether it was merged or closed."""
+    try:
+        raw = await gh_prs.get_pr(svc, token, repo.owner, repo.name, pr.number)
+    except GitHubError:
+        return
+    if raw.get("state") == "closed":
+        pr.state = "merged" if raw.get("merged_at") else "closed"
+
+
+async def sweep_branch(session: Any, svc: Any, token: str, repo: Repo, tb: TrackedBranch,
+                       pulls: list[dict[str, Any]]) -> None:
+    latest_push = await session.get(Push, tb.latest_push_id) if tb.latest_push_id else None
+    if latest_push is None:
+        return
+    latest = (await session.execute(select(Analysis).where(Analysis.push_id == latest_push.id))).scalar_one_or_none()
+    if latest is None:
+        return
+    tb.last_checked_at = _now()
+    tb.check_count = (tb.check_count or 0) + 1
+    tb.last_error = None
+    age = (_now() - latest_push.received_at).total_seconds() if latest_push.received_at else 0.0
+    branch_prs = [raw for raw in pulls if raw["head"]["ref"] == tb.branch]
+
+    if not branch_prs:
+        linked = (await session.execute(select(PullRequest).where(PullRequest.tracked_branch_id == tb.id))).scalars().all()
+        if linked and all(pr.state != "open" for pr in linked):
+            tb.status = "closed_recently"
+            tb.needs_publish = False
+            return
+        if age > settings.PR_WAIT_DAYS * 86400:
+            tb.status = "abandoned"  # held for PR_WAIT_DAYS; posting is on demand from now on
+            tb.needs_publish = False
+        return
+
+    done_rows = (await session.execute(
+        select(Analysis.id, Push.head_sha).join(Push, Push.id == Analysis.push_id).where(
+            Push.repo_id == repo.id, Push.branch == tb.branch, Analysis.status == "done")
+    )).all()
+    done_by_head = {head: aid for aid, head in done_rows}
+
+    waiting = False
+    for raw in branch_prs:
+        pr = await upsert_pr(session, repo, raw)
+        pr.tracked_branch_id = tb.id
+        await session.flush()
+        decision = await _compare_decision(session, svc, token, repo, pr, latest, latest_push, done_by_head, age)
+        target = decide(
+            decision=decision,
+            pr_head=pr.head_sha,
+            latest_id=latest.id,
+            latest_status=latest.status,
+            latest_head=latest_push.head_sha,
+            done_by_head=done_by_head,
+            age_seconds=age,
+            latest_short=latest_push.head_sha[:7],
+        )
+        if target == "wait":
+            waiting = True
+        elif isinstance(target, Target):
+            await _enqueue_publish(session, pr.id, target)
+    tb.status = "linked"
+    open_linked = (await session.execute(select(PullRequest).where(
+        PullRequest.tracked_branch_id == tb.id, PullRequest.state == "open"))).scalars().all()
+    tb.needs_publish = waiting or any(pr.last_published_analysis_id != latest.id for pr in open_linked)
+
+
+async def _compare_decision(session: Any, svc: Any, token: str, repo: Repo, pr: PullRequest,
+                            latest: Analysis, latest_push: Push, done_by_head: dict[str, int],
+                            age: float) -> dict[str, Any] | None:
+    """The compare result for this PR head and our latest head, cached on the pull request."""
+    pr_head = pr.head_sha
+    if pr_head == latest_push.head_sha or pr_head in done_by_head:
+        return None
+    key = f"{pr_head}>{latest_push.head_sha}"
+    cache = pr.compare_cache or {}
+    if cache.get("key") == key:
+        decision = dict(cache["result"])
+    else:
+        cmp = await gh_prs.compare(svc, token, repo.owner, repo.name, pr_head, latest_push.head_sha)
+        decision = {"status": cmp.status, "behind_by": cmp.behind_by, "ancestor": None, "ancestor_checked": False}
+    if decision["status"] == "ahead" and age >= PUBLISH_WAIT_SECONDS and not decision.get("ancestor_checked"):
+        decision["ancestor"] = await _ancestor(svc, token, repo, pr_head, latest_push.head_sha, done_by_head)
+        decision["ancestor_checked"] = True
+    pr.compare_cache = {"key": key, "result": decision}
+    return decision
+
+
+async def _ancestor(svc: Any, token: str, repo: Repo, pr_head: str, latest_head: str,
+                    done_by_head: dict[str, int]) -> list[Any] | None:
+    """Newest done analysis whose head is contained in the PR head (design §3.3)."""
+    for head, aid in sorted(done_by_head.items(), key=lambda item: -item[1]):
+        if head == latest_head:
+            continue
+        result = await gh_prs.compare(svc, token, repo.owner, repo.name, head, pr_head)
+        if result.status == "ahead":
+            return [aid, head]
+    return None
+
+
+async def _enqueue_publish(session: Any, pr_id: int, target: Target) -> None:
     payload = {"pr_id": pr_id, "analysis_id": target.analysis_id, "mode": target.mode}
     if target.banner_override:
         payload["banner_override"] = target.banner_override
-    async with session_scope() as session:
-        await enqueue(session, "publish_comment", payload, dedupe_key=f"publish:pr:{pr_id}")
-        await session.execute(text(
-            "INSERT INTO pr_analyses (pr_id, analysis_id, linked_at) VALUES (:p, :a, now()) "
-            "ON CONFLICT DO NOTHING"
-        ), {"p": pr_id, "a": target.analysis_id})
+    await enqueue(session, "publish_comment", payload, dedupe_key=f"publish:pr:{pr_id}")
+    await session.execute(text(
+        "INSERT INTO pr_analyses (pr_id, analysis_id, linked_at) VALUES (:p, :a, now()) ON CONFLICT DO NOTHING"
+    ), {"p": pr_id, "a": target.analysis_id})
 
 
-async def _handle_no_pr(tracked_id: int, snapshot: dict[str, Any], token: str, age: float, now: datetime) -> None:
-    svc = get_github()
-    async with session_scope() as session:
-        linked = (await session.execute(select(PullRequest).where(
-            PullRequest.tracked_branch_id == tracked_id, PullRequest.state == "open"
-        ))).scalars().all()
-        pr_numbers = [(pr.id, pr.number) for pr in linked]
-    for pr_id, number in pr_numbers:
-        try:
-            raw = await gh_prs.get_pr(svc, token, snapshot["owner"], snapshot["name"], number)
-        except GitHubError:
-            continue
-        if raw.get("state") == "closed":
-            state = "merged" if raw.get("merged_at") else "closed"
-            async with session_scope() as session:
-                pr = await session.get(PullRequest, pr_id)
-                pr.state = state
-
-    if pr_numbers:
-        status = "closed_recently"
-    else:
-        status = "waiting_for_pr"
-    limit = settings.TRACK_MAX_DAYS * 86400
-    delay = backoff_seconds(age)
-    if age > limit or delay is None:
-        await _set_next(tracked_id, now + timedelta(days=365), status="abandoned")
+async def _maybe_sync_installations() -> None:
+    """Keeps repo.installation_id and status in step with the App's installations (replaces webhooks)."""
+    global _last_installation_sync
+    if time.monotonic() - _last_installation_sync < settings.INSTALLATION_SYNC_SECONDS:
         return
-    await _set_next(tracked_id, now + timedelta(seconds=delay), status=status)
+    _last_installation_sync = time.monotonic()
+    try:
+        await sync_installations()
+    except Exception as exc:
+        # Retry in a minute rather than on every sweep: a failing sync must not hammer GitHub.
+        _last_installation_sync = time.monotonic() - settings.INSTALLATION_SYNC_SECONDS + 60
+        log.warning("installation sync failed: %s", type(exc).__name__)
 
 
-async def _set_next(tracked_id: int, when: datetime, status: str | None = None) -> None:
+async def sync_installations() -> None:
+    svc = get_github()
+    installs = await gh_prs.list_installations(svc)
+    owned: dict[str, int] = {}
+    for inst in installs:
+        for item in await gh_prs.installation_repositories(svc, inst["id"]):
+            owned[item["full_name"].lower()] = inst["id"]
     async with session_scope() as session:
-        row = await session.get(TrackedBranch, tracked_id)
-        row.next_check_at = when
-        row.last_checked_at = _now()
-        if status is not None:
-            row.status = status
+        for repo in (await session.execute(select(Repo))).scalars().all():
+            key = f"{repo.owner}/{repo.name}".lower()
+            if repo.status == "disabled":
+                continue
+            if key in owned:
+                repo.installation_id = owned[key]
+                repo.status = "active"
+            elif repo.installation_id is not None or repo.status == "active":
+                repo.installation_id = None
+                repo.status = "app_missing"

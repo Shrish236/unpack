@@ -179,4 +179,37 @@ This section records what changed on `claude/gifted-heisenberg-j9b1dk` (PR #14) 
 - The Dockerfile's fallback should fail the build once the UI is ready.
 - Real GitHub App, OAuth and webhook delivery: still mocked in tests.
 - The CLI hook against a real push.
-- The webhook replacement (poller on Postgres status flags) is proposed, not built. See the open questions in the discussion, not in this document.
+- The webhook replacement is built: see §9.
+
+
+## 9. Poller replaces webhooks
+
+The decisions below were made after the container checks in §8. They are built and tested on this branch.
+
+| Decision | Built as |
+|---|---|
+| No webhooks | `/github/webhook`, `GITHUB_WEBHOOK_SECRET` and the `webhook_deliveries` table are removed (migration `412bc53b2425`). `/github/setup` stays, because the install flow needs a page. |
+| Poller every 10 s | `RECONCILE_INTERVAL_SECONDS=10`. One sweep covers every active branch. |
+| One conditional call per repository | `GET /repos/{o}/{r}/pulls` with `If-None-Match`. A 304 costs no rate-limit budget and reuses the stored list. |
+| Compare cache | `pull_requests.compare_cache` keyed by `(PR head, latest head)`. An unchanged pair is never compared twice. |
+| Installation sync | Every `INSTALLATION_SYNC_SECONDS` (900) from `GET /app/installations`, replacing the installation webhooks. |
+| Hold for a PR | `PR_WAIT_DAYS=3` (configurable). After that the branch is `abandoned`. |
+| One comment per PR | Unchanged: updated in place, as before. |
+| Section at the top of the PR description | `PR_DESCRIPTION_SECTION=true`. Written between `<!-- unpack:begin -->` and `<!-- unpack:end -->`; the author's text is never changed. |
+| Trigger to post after the hold | **Not built.** Deferred, as agreed. |
+
+**Schema:** `tracked_branches.next_check_at` and its index are removed, and `needs_publish` now means "a post is outstanding". New columns: `repos.pulls_etag`, `pull_requests.compare_cache`, `pull_requests.description_hash`. New index: `ix_tracked_sweep`.
+
+**Tests:** 137 passed, 4 skipped, with `pytest tests/ -n auto`. New module `test_poller.py` covers the defaults, the webhook route being gone, the 3-day hold and its setting, the 304 path, the compare cache, and the description section (placed at the top, author text kept, unchanged content not rewritten). The webhook and per-branch timing tests were replaced.
+
+**Found and fixed while checking the poller in the container:**
+- The installation sync retried on every 10-second sweep after a failure. It now retries after about a minute, and the test for that is in place.
+- The setup page returned 500 when GitHub could not be reached. It now returns 503 with a clear message.
+- The first sweep marks a repository `app_missing` when the App does not list it. That matches GitHub and is correct; the test fake now lists the test repository as installed.
+
+**Container check of this change:** the stack ran with the repository's current `server/` mounted over the image's copy, because a fresh image build could not finish in this sandbox (BuildKit's session dropped during the export step). The image's dependencies are unchanged by this work, so the mount exercises the new code on the same environment. A proper rebuild is still to do. What was checked: the migration applied to the new head (`412bc53b2425`), `/github/webhook` returns 404, `/readyz` passes, a push is analysed and held as `waiting_for_pr`, and the worker's sweeps run without errors.
+
+**Known limits:**
+- A PR that is closed or merged is noticed while its branch is active. After the branch is `closed_recently`, a reopened PR is not noticed until a new push.
+- The description section makes the PR body edit (`PATCH /pulls/{n}`), which needs the App's pull-requests write permission (already required by the comment).
+- Polling uses the installation token for each repository with active branches. Abandoned branches are not polled.

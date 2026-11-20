@@ -29,6 +29,7 @@ class Repo(Base):
     remote_url = Column(Text, nullable=True)
     default_branch = Column(Text, nullable=False, default="main")
     installation_id = Column(BigInteger, nullable=True)
+    pulls_etag = Column(Text, nullable=True)  # ETag of the open-pull-request list (conditional polling)
     ingest_token_hash = Column(String(64), nullable=True, unique=True)
     graph_built_sha = Column(String(40), nullable=True)
     status = Column(Text, nullable=False, default="active")  # active | app_missing | disabled
@@ -131,15 +132,14 @@ class TrackedBranch(Base):
     latest_push_id = Column(BigInteger, ForeignKey("pushes.id"), nullable=True)
     latest_head_sha = Column(String(40), nullable=True)
     status = Column(Text, nullable=False, default="waiting_for_pr")
-    needs_publish = Column(Boolean, nullable=False, default=True)
-    next_check_at = Column(DateTime(timezone=True), server_default=func.now())
+    needs_publish = Column(Boolean, nullable=False, default=True)  # true while a post is pending
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
     check_count = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("repo_id", "branch", name="uq_tracked_branch"),
-        Index("ix_tracked_due", "status", "next_check_at"),  # reconciler scan
+        Index("ix_tracked_sweep", "status", "needs_publish"),  # the poller's pending-work scan
     )
 
 
@@ -161,6 +161,8 @@ class PullRequest(Base):
     last_published_analysis_id = Column(BigInteger, nullable=True)
     last_body_hash = Column(Text, nullable=True)
     last_published_at = Column(DateTime(timezone=True), nullable=True)
+    description_hash = Column(Text, nullable=True)  # hash of the Unpack section last written to the description
+    compare_cache = Column(JSONB, nullable=True)  # {"key": "...", "result": {...}}: last compare decision
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
@@ -241,14 +243,6 @@ class OAuthState(Base):
 
     nonce = Column(String(64), primary_key=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-
-
-class WebhookDelivery(Base):
-    __tablename__ = "webhook_deliveries"
-
-    delivery_id = Column(String(64), primary_key=True)
-    event = Column(Text, nullable=False)
-    received_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class User(Base):

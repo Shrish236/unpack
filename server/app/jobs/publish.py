@@ -11,6 +11,8 @@ from sqlalchemy import select, text
 from ..config import settings
 from ..db import session_scope
 from ..github.comments import build_comment_body, create_comment, find_unpack_comment, update_comment
+from ..github.description import digest, section_for, write_section
+from ..github.service import GitHubError
 from ..models import Analysis, PullRequest, Render, Repo, TrackedBranch
 from ..services import get_github
 
@@ -125,8 +127,24 @@ async def publish(pr_id: int, analysis_id: int, *, mode: str = "analysis",
             pr.last_published_analysis_id = analysis.id
         pr.last_body_hash = body_hash
         pr.last_published_at = datetime.now(timezone.utc)
+        if settings.PR_DESCRIPTION_SECTION:
+            await _write_description(session, svc, token, repo, pr, body)
         await _refresh_needs_publish(session, pr)
         return "published"
+
+
+async def _write_description(session: Any, svc: Any, token: str, repo: Repo, pr: PullRequest, body: str) -> None:
+    """Best effort: a failure here must not undo the comment, so it is logged and the poller moves on."""
+    section = section_for(body)
+    section_hash = digest(section)
+    if pr.description_hash == section_hash:
+        return
+    try:
+        result = await write_section(svc, token, repo.owner, repo.name, pr.number, section)
+    except GitHubError:
+        return
+    if result["written"] or result["reason"] == "unchanged":
+        pr.description_hash = section_hash
 
 
 async def _refresh_needs_publish(session: Any, pr: PullRequest) -> None:

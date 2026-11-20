@@ -16,7 +16,7 @@ from sqlalchemy import text
 from .config import require_valid_settings
 from .db import get_engine, session_scope
 from .errors import ApiError, api_error_handler, error_body
-from .routers import admin, auth, github_webhook, images, ingest, live
+from .routers import admin, auth, github_setup, images, ingest, live
 
 CSP = (
     "default-src 'self'; "
@@ -64,7 +64,7 @@ async def headers(request: Request, call_next):
 
 
 app.include_router(ingest.router)
-app.include_router(github_webhook.router)
+app.include_router(github_setup.router)
 app.include_router(auth.router)
 app.include_router(live.router)
 app.include_router(admin.router)

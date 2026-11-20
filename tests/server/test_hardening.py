@@ -1,12 +1,9 @@
-"""Design gaps and operational paths: reconciler edge cases, installation webhooks, admin rebuild, OAuth
+"""Design gaps and operational paths: reconciler edge cases, installation sync, admin rebuild, OAuth
 single use, revoked tokens, internal-only render, rate limits, job retries and worker failure, heartbeats."""
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
-import json
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -33,15 +30,6 @@ B_SHA = "b" * 40
 def origin(tmp_path):
     base, head = standard_files()
     return Origin(tmp_path, base, head)
-
-
-def sign(body: bytes) -> str:
-    return "sha256=" + hmac.new(settings.GITHUB_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
-
-
-async def force_due():
-    async with session_scope() as session:
-        await session.execute(update(TrackedBranch).values(next_check_at=datetime.now(timezone.utc) - timedelta(seconds=1)))
 
 
 async def second_push(client, token, origin, head=B_SHA):
@@ -95,7 +83,6 @@ async def test_closed_pull_request_moves_the_branch_to_closed_recently(client, t
     await drain_jobs()
     fake_github.open_prs = []
     fake_github.pr_state[7] = {"state": "closed", "merged_at": "2026-11-20T10:00:00Z"}
-    await force_due()
     await reconcile_once()
     async with session_scope() as session:
         pr = (await session.execute(select(PullRequest))).scalar_one()
@@ -139,35 +126,34 @@ async def test_disabled_repo_is_refused_without_an_install_link(client, tmp_data
                                         "details": {}}
 
 
-# ---- webhooks and setup -------------------------------------------------------------
+# ---- setup page -------------------------------------------------------------
 
-async def _webhook(client, event: str, payload: dict, delivery: str):
-    body = json.dumps(payload).encode()
-    return await client.post("/github/webhook", content=body, headers={
-        "X-GitHub-Event": event, "X-GitHub-Delivery": delivery, "X-Hub-Signature-256": sign(body)})
+async def test_installation_sync_marks_removed_repos_and_restores_them(client, tmp_data_dir, origin, fake_github):
+    from server.app.jobs.reconciler import sync_installations
 
-
-async def test_installation_deleted_marks_its_repos_app_missing(client, tmp_data_dir, origin, fake_github):
     await create_repo(remote_url=origin.remote_url, installation_id=123)
-    response = await _webhook(client, "installation", {"action": "deleted", "installation": {"id": 123}}, "i1")
-    assert response.status_code == 204
+    fake_github.installations = []  # the App was uninstalled
+    await sync_installations()
     async with session_scope() as session:
         repo = (await session.execute(select(Repo))).scalar_one()
         assert repo.status == "app_missing" and repo.installation_id is None
 
+    fake_github.installations = [{"id": 123}]
+    fake_github.installation_repos = [{"full_name": "o/r"}]
+    await sync_installations()
+    async with session_scope() as session:
+        repo = (await session.execute(select(Repo))).scalar_one()
+        assert repo.status == "active" and repo.installation_id == 123
 
-async def test_repositories_removed_and_added_update_the_repo(client, tmp_data_dir, origin, fake_github):
-    await create_repo(remote_url=origin.remote_url, installation_id=123)
-    await _webhook(client, "installation_repositories",
-                   {"action": "removed", "installation": {"id": 123},
-                    "repositories_removed": [{"full_name": "o/r"}]}, "i2")
+
+async def test_installation_sync_never_touches_disabled_repos(client, tmp_data_dir, origin, fake_github):
+    from server.app.jobs.reconciler import sync_installations
+
+    await create_repo(remote_url=origin.remote_url, installation_id=None, status="disabled")
+    fake_github.installations = []
+    await sync_installations()
     async with session_scope() as session:
-        assert (await session.execute(select(Repo))).scalar_one().status == "app_missing"
-    await _webhook(client, "installation_repositories",
-                   {"action": "added", "installation": {"id": 123},
-                    "repositories_added": [{"full_name": "o/r"}]}, "i3")
-    async with session_scope() as session:
-        assert (await session.execute(select(Repo))).scalar_one().status == "active"
+        assert (await session.execute(select(Repo))).scalar_one().status == "disabled"
 
 
 async def test_setup_page_links_installed_repositories(client, tmp_data_dir, origin, fake_github):
@@ -203,7 +189,6 @@ async def test_every_admin_endpoint_rejects_a_wrong_token(client):
         ("GET", "/admin/jobs", None),
         ("POST", "/admin/analyses/abc/retry", None),
         ("GET", "/admin/tracked-branches", None),
-        ("POST", "/admin/tracked-branches/1/check-now", None),
     ]
     for method, path, body in checks:
         response = await client.request(method, path, json=body, headers=wrong)

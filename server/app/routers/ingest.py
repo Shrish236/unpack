@@ -178,7 +178,6 @@ async def ingest(request: Request, repo: Repo = Depends(ingest_repo), db: AsyncS
         tracked.latest_push_id = push.id
         tracked.latest_head_sha = data.head_sha
         tracked.needs_publish = True
-        tracked.next_check_at = datetime.now(timezone.utc)
         tracking_status = tracked.status
 
     await enqueue(db, "analyze_push", {"analysis_id": analysis.id}, dedupe_key=f"analyze:{analysis.id}")
@@ -203,7 +202,7 @@ async def get_push(push_id: int, repo: Repo = Depends(ingest_repo), db: AsyncSes
         "analysis": {"public_id": analysis.public_id, "status": analysis.status,
                      "error": analysis.error_code, "url": _analysis_url(analysis.public_id)},
         "tracking": {"status": tracked.status if tracked else "untracked",
-                     "next_check_at": tracked.next_check_at.isoformat() if tracked and tracked.next_check_at else None},
+                     },
         "pull_requests": [
             {"number": pr.number, "url": pr.html_url, "comment_url": pr.comment_url,
              "published_analysis_is_this_push": pr.last_published_analysis_id == analysis.id}

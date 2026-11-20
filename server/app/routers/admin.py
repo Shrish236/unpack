@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -123,16 +122,6 @@ async def tracked_branches(status: str | None = None, db: AsyncSession = Depends
     rows = (await db.execute(query.limit(200))).all()
     return {"branches": [
         {"id": t.id, "repo": f"{r.owner}/{r.name}", "branch": t.branch, "status": t.status,
-         "latest_head_sha": t.latest_head_sha,
-         "next_check_at": t.next_check_at.isoformat() if t.next_check_at else None}
+         "latest_head_sha": t.latest_head_sha, "needs_publish": t.needs_publish}
         for t, r in rows
     ]}
-
-
-@router.post("/tracked-branches/{tracked_id}/check-now", status_code=202)
-async def check_now(tracked_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    row = await db.get(TrackedBranch, tracked_id)
-    if row is None:
-        raise ApiError(404, "not_found", "no such tracked branch")
-    row.next_check_at = datetime.now(timezone.utc)
-    return {"id": tracked_id, "next_check_at": row.next_check_at.isoformat()}

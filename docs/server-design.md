@@ -6,6 +6,15 @@ The server receives pushes from the CLI hook, analyses them (graph, session, LLM
 
 Builds on [session-pipeline.md](session-pipeline.md) (what the hook sends and how a push becomes reasons), [cli-hook.md](cli-hook.md) and [ui-design.md](ui-design.md). The code graph library is described in [graph-design.md](graph-design.md).
 
+
+> **Revised decisions (poller replaces webhooks), supersede the sections they name.**
+> - **No webhooks.** `/github/webhook`, `GITHUB_WEBHOOK_SECRET` and `webhook_deliveries` are removed. Sections 3.2, 3.4, 5.3 and the webhook items in §11, §12 and §14 describe what was replaced.
+> - **Poller.** One sweep every `RECONCILE_INTERVAL_SECONDS` (default 10) covers every active tracked branch. Per repository it makes one conditional call `GET /repos/{o}/{r}/pulls` (ETag). A 304 costs no rate-limit budget, and the stored list is used. Compare results are cached on the pull request (`compare_cache`).
+> - **Installations** are synced every `INSTALLATION_SYNC_SECONDS` (default 900) from `GET /app/installations`, instead of installation webhooks.
+> - **Hold for a PR:** `PR_WAIT_DAYS` (default 3). After that the branch is `abandoned` and nothing is posted until the on-demand trigger, which is not built yet.
+> - **One comment per PR,** updated in place. With `PR_DESCRIPTION_SECTION=true` (default) the same content is also written at the top of the PR description, between `<!-- unpack:begin -->` and `<!-- unpack:end -->`. The author's text outside those markers is never changed.
+> - **Per-branch timing is gone.** `tracked_branches.next_check_at` and `POST /admin/tracked-branches/{id}/check-now` are removed. `needs_publish` means a post is outstanding.
+
 ## Contents
 
 1. [Architecture](#1-architecture)

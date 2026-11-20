@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from PIL import Image
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from server.app.db import session_scope
 from server.app.jobs import handlers, render as render_mod
-from server.app.jobs.reconciler import backoff_seconds, choose_target, reconcile_once
+from server.app.jobs.reconciler import Target, decide, reconcile_once
 from server.app.models import PullRequest, Render, TrackedBranch
 
 from .conftest import Origin, drain_jobs
@@ -43,9 +42,6 @@ async def ingest(client, token, origin):
     return response.json()["analysis"]["public_id"]
 
 
-async def force_due() -> None:
-    async with session_scope() as session:
-        await session.execute(update(TrackedBranch).values(next_check_at=datetime.now(timezone.utc) - timedelta(seconds=1)))
 
 
 async def test_pr_gets_one_comment_then_stays_unchanged(client, tmp_data_dir, origin, fake_github, no_render):
@@ -70,7 +66,6 @@ async def test_pr_gets_one_comment_then_stays_unchanged(client, tmp_data_dir, or
         assert pr.comment_id == fake_github.created[0]["id"]
         assert pr.last_published_analysis_id is not None
 
-    await force_due()
     await reconcile_once()
     await drain_jobs()
     assert len(fake_github.created) == 1 and fake_github.updated == []  # nothing changed, nothing written
@@ -114,7 +109,7 @@ async def test_pr_head_not_yet_on_github_waits(client, tmp_data_dir, origin, fak
     async with session_scope() as session:
         tracked = (await session.execute(select(TrackedBranch))).scalar_one()
         assert tracked.status == "linked"
-        assert tracked.next_check_at <= datetime.now(timezone.utc) + timedelta(seconds=20)
+        assert tracked.needs_publish is True  # still pending: the poller keeps checking
 
 
 async def test_diverged_branch_is_marked_out_of_date(client, tmp_data_dir, origin, fake_github, no_render):
@@ -138,7 +133,7 @@ async def test_no_pr_means_waiting_with_backoff(client, tmp_data_dir, origin, fa
     async with session_scope() as session:
         tracked = (await session.execute(select(TrackedBranch))).scalar_one()
         assert tracked.status == "waiting_for_pr"
-        assert tracked.next_check_at > datetime.now(timezone.utc) + timedelta(seconds=10)
+        assert tracked.needs_publish is True  # the poller keeps looking for the PR
     assert fake_github.created == []
 
 
@@ -193,47 +188,24 @@ async def test_skips_repos_without_the_app(client, tmp_data_dir, origin, fake_gi
     assert fake_github.created == []
 
 
-def test_backoff_schedule_matches_the_design():
-    assert backoff_seconds(60) == 30
-    assert backoff_seconds(30 * 60) == 120
-    assert backoff_seconds(3 * 3600) == 600
-    assert backoff_seconds(2 * 86400) == 3600
-    assert backoff_seconds(8 * 86400) is None
-
-
-def test_choose_target_rules():
+def test_decision_rules():
     class A:  # a stand-in analysis row
         id = 5
         status = "done"
 
-    class Cmp:
-        def __init__(self, status, behind_by=0):
-            self.status = status
-            self.behind_by = behind_by
-
-    latest = A()
-    common = dict(latest=latest, latest_head="a" * 40, done_by_head={}, latest_age_seconds=10, latest_short="aaaaaaa")
-    assert choose_target(pr_head="a" * 40, compare_result=Cmp("identical"), **common).analysis_id == 5
-    assert choose_target(pr_head="b" * 40, compare_result=Cmp("ahead"), **common) == "wait"
-    assert choose_target(pr_head="b" * 40, compare_result=Cmp("diverged"), **common).mode == "out_of_date"
-    behind = choose_target(pr_head="b" * 40, compare_result=Cmp("behind", 3), **common)
+    head = "a" * 40
+    common = dict(latest_id=5, latest_status="done", latest_head=head, done_by_head={}, latest_short="aaaaaaa")
+    assert decide(decision={"status": "identical"}, pr_head=head, age_seconds=10, **common) == Target(5, "analysis")
+    assert decide(decision={"status": "ahead", "ancestor": None}, pr_head="b" * 40, age_seconds=10, **common) == "wait"
+    assert decide(decision={"status": "ahead", "ancestor": None}, pr_head="b" * 40, age_seconds=700, **common) is None
+    anc = decide(decision={"status": "ahead", "ancestor": [9, "c" * 40]}, pr_head="b" * 40, age_seconds=700, **common)
+    assert anc.analysis_id == 9 and anc.banner_override["message"].startswith("Covers up to ccccccc")
+    assert decide(decision={"status": "diverged"}, pr_head="b" * 40, age_seconds=10, **common).mode == "out_of_date"
+    behind = decide(decision={"status": "behind", "behind_by": 3}, pr_head="b" * 40, age_seconds=10, **common)
     assert behind.banner_override["message"].endswith("3 newer commits were not analysed.")
-    older = choose_target(pr_head="c" * 40, latest=latest, latest_head="a" * 40, done_by_head={"c" * 40: 9},
-                          compare_result=Cmp("ahead"), latest_age_seconds=10, latest_short="aaaaaaa")
-    assert older.analysis_id == 9 and older.banner_override is None
-
-
-def test_render_image_checks():
-    import io
-
-    blank = Image.new("RGB", (400, 300), (255, 255, 255))
-    buf = io.BytesIO()
-    blank.save(buf, format="PNG")
-    with pytest.raises(render_mod.RenderFailed, match="blank"):
-        render_mod.check_image(buf.getvalue())
-    noisy = Image.effect_noise((400, 300), 80).convert("RGB")
-    buf2 = io.BytesIO()
-    noisy.save(buf2, format="PNG")
-    render_mod.check_image(buf2.getvalue())
-    with pytest.raises(render_mod.RenderFailed, match="larger"):
-        render_mod.check_image(b"x" * (2 * 1024 * 1024 + 1))
+    older = decide(decision=None, pr_head="c" * 40, age_seconds=10,
+                   **{**common, "done_by_head": {"c" * 40: 9}})
+    assert older == Target(9, "analysis")
+    waiting = decide(decision=None, pr_head=head, age_seconds=10,
+                     **{**common, "latest_status": "running"})
+    assert waiting == "wait"

@@ -117,11 +117,22 @@ def tmp_data_dir(tmp_path, monkeypatch):
     return tmp_path / "data"
 
 
+_schema_built = False
+
+
 @pytest.fixture
 async def db_ready():
-    """Fresh schema on the test database for every test (tables are truncated, not dropped)."""
+    """Fresh schema on the test database for every test (tables are truncated, not dropped).
+
+    The schema is rebuilt once per worker: create_all never alters an existing table, so a database built
+    from older models would keep dropped columns and miss new ones.
+    """
+    global _schema_built
     reset_engine()
     async with get_engine().begin() as conn:
+        if not _schema_built:
+            await conn.run_sync(Base.metadata.drop_all)
+            _schema_built = True
         await conn.run_sync(Base.metadata.create_all)
         names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
         await conn.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
@@ -152,7 +163,11 @@ class FakeGitHub:
         self.pr_state: dict[int, dict] = {}
         self.next_comment_id = 1000
         self.calls: list[tuple[str, str]] = []
-        self.installation_repos: list[dict] = []
+        self.installation_repos: list[dict] = [{"full_name": "o/r"}]  # the test repository is installed
+        self.installations: list[dict] = [{"id": 123}]
+        self.pull_list_calls = 0
+        self.description_writes: list[str] = []
+        self.not_modified = 0
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         method, path = request.method, request.url.path
@@ -171,10 +186,26 @@ class FakeGitHub:
                 return httpx.Response(404, json={"message": "Not Found"})
             return httpx.Response(200, json={"id": install})
         if method == "GET" and path.endswith("/pulls"):
-            return httpx.Response(200, json=self.open_prs)
+            import hashlib
+            import json as _json
+
+            self.pull_list_calls += 1
+            etag = '"' + hashlib.sha1(_json.dumps(self.open_prs, sort_keys=True).encode()).hexdigest() + '"'
+            if request.headers.get("if-none-match") == etag:
+                self.not_modified += 1
+                return httpx.Response(304, headers={"ETag": etag})
+            return httpx.Response(200, json=self.open_prs, headers={"ETag": etag})
+        if method == "GET" and path == "/app/installations":
+            return httpx.Response(200, json=self.installations)
         if method == "GET" and "/pulls/" in path:
             number = int(path.rsplit("/", 1)[1])
-            return httpx.Response(200, json=self.pr_state.get(number, {"state": "open"}))
+            return httpx.Response(200, json={"state": "open", "body": "", **self.pr_state.get(number, {})})
+        if method == "PATCH" and "/pulls/" in path:
+            number = int(path.rsplit("/", 1)[1])
+            body = json_body(request)
+            self.pr_state.setdefault(number, {"state": "open"})["body"] = body
+            self.description_writes.append(body)
+            return httpx.Response(200, json={"state": "open", "body": body})
         if method == "GET" and "/compare/" in path:
             head = path.split("...")[1]
             return httpx.Response(200, json=self.compare_status.get(head, {"status": "identical", "ahead_by": 0, "behind_by": 0}))
@@ -216,7 +247,6 @@ def fake_github(private_key_pem, monkeypatch):
     )
     services.set_github(svc)
     monkeypatch.setattr(settings, "GITHUB_APP_ID", "1")
-    monkeypatch.setattr(settings, "GITHUB_WEBHOOK_SECRET", "whsec_test_webhook_secret_value_long")
     monkeypatch.setattr(settings, "GITHUB_CLIENT_ID", "client-id")
     monkeypatch.setattr(settings, "GITHUB_CLIENT_SECRET", "client-secret")
     yield fake
