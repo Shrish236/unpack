@@ -77,9 +77,10 @@ Developer + Agent (Gemini CLI, Claude Code, Cursor)
    - Rigorous verification checking every quote verbatim against session turns.
 4. **Code Knowledge Graph (`unpack_graph/`)**:
    - Tree-sitter and AST two-pass parser.
-   - Call graph resolution with confidence tiers (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`, `UNRESOLVED`).
-   - Argument-gated BFS test reachability discovering untested functions (flagging `none`).
-   - Neo4j persistence and fast Cypher region queries.
+   - Call graph resolution with confidence tiers on every edge (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`). Calls that cannot be resolved are kept on their function with the reason, not as edges.
+   - Argument-gated BFS test reachability with the labels `direct`, `reached`, `reached_uncertain` and `none`. `none` is the only red flag, and it is checked against a real coverage run (`unpack-graph coverage-check`).
+   - Function-level change classification (text only, signature, behaviour) and the GraphView region for a change.
+   - Neo4j persistence, a single-query region, and incremental updates.
 5. **PR Comment Bot (`server/app/github/`)**:
    - GitHub App integration editing a single comment per PR on every push.
    - Includes change summary, risk flags (e.g. untested functions), rendered graph screenshot, and authenticated live link.
@@ -98,10 +99,12 @@ unpack/
 ├── docker-compose.yml             # Postgres, Neo4j, API, Worker, Cloudflared
 ├── .env.example                   # Environment configuration template
 ├── Makefile                       # Development task shortcuts
+├── docs/
+│   └── graph-design.md            # Design, tiers, validation, adapting to other repositories
 ├── schemas/
 │   └── graphview.schema.json      # Stable JSON schema for GraphView
 ├── unpack_graph/                  # Code knowledge graph library & CLI
-│   ├── model.py                   # Data models (Shape, CallSite, FuncInfo, Edge)
+│   ├── model.py                   # Data models (Shape, CallSite, FuncInfo, ModuleInfo, ...)
 │   ├── extract.py                 # Pass 1: Syntax extraction & hashing
 │   ├── resolve.py                 # Pass 2: Whole-repo symbol & call resolution
 │   ├── graph.py                   # In-memory graph container & builder
@@ -111,6 +114,7 @@ unpack/
 │   ├── incremental.py             # Incremental graph update
 │   ├── neo4j_io.py                # Neo4j loader and Cypher queries
 │   ├── source.py                  # FsSource and GitSource abstractions
+│   ├── evaluate.py                # Measurements: coverage against ast, coverage check
 │   └── cli.py                     # `unpack-graph` CLI
 ├── server/                        # FastAPI server & worker
 │   ├── Dockerfile                 # Multi-stage production container
@@ -138,6 +142,15 @@ unpack/
 │   ├── vite.config.ts
 │   └── src/                       # PR view, Codebase map, Timeline, Detail panel
 └── tests/                         # Test suite
+    ├── test_extraction.py         # Pass 1 corner cases, checked against ast
+    ├── test_resolution.py         # Pass 2: imports, types, dispatch, containers
+    ├── test_reachability.py       # Test reachability and argument gating
+    ├── test_dynamic_dispatch.py   # getattr-dispatched methods
+    ├── test_diff.py               # Change classification and the region schema
+    ├── test_neo4j.py              # Neo4j parity and delta (needs the neo4j service)
+    ├── test_incremental.py        # Incremental update equals a full rebuild
+    ├── test_evaluate.py           # Measurements and the coverage check
+    └── fixtures/                  # Small Python packages the graph tests analyse
 ```
 
 ---
@@ -177,7 +190,8 @@ cd web && npm install && cd ..
 # Export Pydantic models to JSON schemas for the frontend
 python contract/export_schemas.py
 
-# Run test suite
+# Run test suite (the Neo4j tests need `docker compose up -d neo4j`;
+# without it they are skipped, and with it they clear the database they use)
 pytest
 ```
 
@@ -200,15 +214,29 @@ cd web && npm run dev
 
 ### Build Code Knowledge Graph
 ```bash
-# Analyze current repository and view graph summary
-unpack-graph build .
+# Pass 1 only: check every definition against Python's ast module
+unpack-graph extract . --check-ast
 
-# Detect changed functions between git revisions
+# Call graph with a confidence tier per edge, and reachability labels
+unpack-graph build .
+unpack-graph build . --neo4j                       # also load into Neo4j
+
+# Functions changed between two revisions, classified
 unpack-graph changed . main feature-branch --json
 
-# Build GraphView region JSON for diff
+# GraphView region JSON for the change (schemas/graphview.schema.json)
 unpack-graph region . main feature-branch --out region.json
+unpack-graph region . main feature-branch --neo4j  # answered by the Cypher region query
+
+# Measurements, and the reachability check against a real test run
+unpack-graph eval .
+coverage run -m pytest && coverage json -o cov.json   # run from the repository root
+unpack-graph coverage-check . cov.json             # exits 1 on any false "none"
 ```
+
+Neo4j connection: `UNPACK_NEO4J_URI`, `UNPACK_NEO4J_USER`, `UNPACK_NEO4J_PASSWORD` (defaults: `bolt://localhost:7687`, `neo4j`, `unpackpass` as in `docker-compose.yml`). Start the service with `docker compose up -d neo4j`.
+
+The design, the tiers, the validation and how to adapt the graph to another repository are described in [docs/graph-design.md](docs/graph-design.md).
 
 ### Install Git Pre-Push Hook
 In any project repository:
