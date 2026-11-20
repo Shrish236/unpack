@@ -319,9 +319,11 @@ view = build_region(cs)                              # the GraphView dict
 | Gap fixes change labels only where they should | labels before and after the decorator, property and method-reference fixes | httpx: no label changes. flask: no function moved to `none`; `none` count fell (production 190 to 166). requests: production `none` 54 to 31 |
 | Coverage check on `pallets/click` (2,628 tests passing under coverage, 86% of `src/`) | `coverage-check` before and after the gap fixes | false `none` 55 to 29; `none` precision 0.43 to 0.55. The 29 that remain are stdlib and framework callbacks (limit 3a) |
 | Coverage check on this repository | `coverage-check` against its own test run | 4 false `none`, all in the mock ingest server's stdlib hook callbacks (limit 3a); precision 0.90 |
-| Six repositories, 15 recent commits each | `ast` agreement, incremental against full rebuild, schema validation, Neo4j against memory | 100% on every check: httpx, requests, flask, click, attrs, and this repository |
+| Six repositories, recent commits | `ast` agreement, incremental against full rebuild, schema validation, Neo4j against memory (3 commits per repository). Up to 15 non-merge commits per repository; the root commit has no parent and is skipped | 100% on every check, all six, after the name-invalidation fix: AST coverage 100%; incremental equal on 15/15 for httpx, requests, flask, click, attrs and 11/11 for this repository; schema valid on every commit; Neo4j equal on 3/3 in each |
+| Handled rate of call sites (`metrics.py`) | share of call sites the graph classifies with a definite answer (resolved, ambiguous with candidates kept, external, builtin, no_init) | httpx 98.96%, flask 98.19%, requests 99.36%, click 99.57%, attrs 95.89%, this repository 99.60% |
+| Coverage check, all six repositories (`coverage-check`, default policy) | labels against each repository's coverage.py run | false `none` / true `none` / precision: flask 8 / 6 / 0.43; requests 9 / 21 / 0.70; click 14 / 13 / 0.48; attrs 6 / 1 / 0.14; this repository 1 / 36 / 0.97. httpx: 0 false `none` over 436 functions in the earlier run (see the note in section 15) |
 | Neo4j matches memory | Cypher region and in-memory region on real changes | identical |
-| Incremental matches a full rebuild | 12 consecutive httpx commits and 8 scenarios | identical fingerprints |
+| Incremental matches a full rebuild | recent commits in each of six repositories, and 9 scenarios in `tests/test_incremental.py` | identical fingerprints |
 
 The unit tests (`pytest`) cover every corner in the fixtures under `tests/fixtures/`: nested and decorated definitions, every import form, re-exports, inheritance and `super()`, type inference forms, dispatch, ambiguity, containers, enums, yield and except bindings, argument gating, import-time code, change classification, region schema validation, Neo4j parity and delta, and incremental equivalence.
 
@@ -360,7 +362,7 @@ A workflow for a new repository:
 4. `unpack-graph coverage-check <repo> cov.json`. The acceptance bar is zero false `none`.
 5. Record the result separately for the in-sample and out-of-sample checks.
 
-Before this procedure, the repositories checked were: httpx (all checks above), flask and requests (pass 1 and the call-graph statistics only). The flask result is the main open question: 190 production functions are labelled `none`, most likely because the test client calls into Flask from outside the repository. That is unverified until step 3 has been run for flask.
+Results so far: httpx (all checks above), flask, requests, click and attrs (pass 1, call statistics, coverage check with the numbers in section 13), and this repository. Only httpx reaches zero false `none`: on flask, requests, click, attrs and this repository, the coverage check still finds false `none` labels, mostly framework callbacks, the standard library and run-time class construction (limits 2, 3a and 11). The coverage file used for httpx in the most recent run was empty, so its zero is from the earlier run; repeating it needs httpx's test suite under coverage in its own environment (step 3 above).
 
 ## 16. Decisions
 
