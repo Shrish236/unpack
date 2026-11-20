@@ -48,6 +48,8 @@ def require_admin(request: Request) -> None:
 async def viewer(request: Request, db: AsyncSession = Depends(get_db)) -> tuple[User, str]:
     """The logged-in user and their GitHub token. 401 not_logged_in otherwise."""
     session_id = request.cookies.get(SESSION_COOKIE)
+    if not session_id and settings.DEV_VIEWER_LOGIN:
+        return await _dev_viewer(db), ""
     if not session_id:
         raise ApiError(401, "not_logged_in", "log in with GitHub")
     row = await db.get(WebSession, session_id)
@@ -59,8 +61,23 @@ async def viewer(request: Request, db: AsyncSession = Depends(get_db)) -> tuple[
     return user, decrypt_secret(row.oauth_token_encrypted)
 
 
+DEV_VIEWER_GITHUB_ID = -1  # never a real GitHub id
+
+
+async def _dev_viewer(db: AsyncSession) -> User:
+    """The stand-in user for local development (config.DEV_VIEWER_LOGIN). Created on first use."""
+    user = (await db.execute(select(User).where(User.github_id == DEV_VIEWER_GITHUB_ID))).scalar_one_or_none()
+    if user is None:
+        user = User(github_id=DEV_VIEWER_GITHUB_ID, login=settings.DEV_VIEWER_LOGIN)
+        db.add(user)
+        await db.commit()
+    return user
+
+
 async def require_repo_access(db: AsyncSession, user: User, token: str, repo: Repo) -> None:
     """Design §5.5: cached for 10 minutes, otherwise checked against GitHub with the viewer's token."""
+    if settings.DEV_VIEWER_LOGIN and user.github_id == DEV_VIEWER_GITHUB_ID:
+        return
     cached = await db.get(AccessCache, (user.id, repo.id))
     fresh = cached is not None and cached.checked_at is not None and (
         datetime.now(timezone.utc) - cached.checked_at.astimezone(timezone.utc)
