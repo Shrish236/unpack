@@ -584,3 +584,51 @@ Core for a working demo (dashboard click → graph → PR image): steps 0–6, a
 | Q4 | Should the dashboard embed the graph as a component later (G6 keeps this possible)? | No; separate page |
 | Q5 | Approve the server change in §15.1 (render token on `GET /api/analyses/{id}`)? Without it the PR image cannot be made by the real page | Build it in step 6 |
 | Q6 | Fixtures: hand-written now (§13), or will real ones come from the server? | Hand-written; replaced by real ones when the session pipeline lands |
+
+## 20. Decisions added after review
+
+Status of this section: **Proposed** unless marked otherwise. Review layout: [PR graph layout wireframe](https://claude.ai/artifact/XpVTHjJDxsnDN1jn2qbWGW) (a Design canvas: the live page and the 1200 × 700 comment image).
+
+### 20.1 One URL per analysis
+
+| ID | Decision | Alternatives | Why |
+|---|---|---|---|
+| G71 | The canonical graph URL is `/a/{analysis_id}`, where `analysis_id` is the database primary key of the `analyses` row. The PR comment and the dashboard both link to this same URL for the same analysis | Keep `public_id` in the URL (current); a branch-based URL | The dashboard and the PR comment share one address per analysis, so a link can be pasted anywhere and shows the same page |
+| G72 | Each branch has a database id (`tracked_branches.id`). `/b/{branch_id}` redirects (302) to the newest `done` analysis of that branch. Optional: only if the PR should always show the latest push | Only per-analysis URLs | A PR can be read as "latest state" without changing the per-analysis links |
+| G73 | The PR comment links to the analysis it describes, so an old comment keeps showing the push it was written for. Its "latest" link can use `/b/{branch_id}` | Always latest | Matches how the comment is already written per push |
+| G74 | A missing analysis and an analysis the viewer cannot access both return `404`. The current `403 no_repo_access` is replaced for this route | Keep `403` | An unauthenticated or unrelated viewer should not learn which ids exist. Sequential ids make this more important |
+| G75 | `public_id` stays as the random key for the image file name (`/img/{32 hex}`) and the render token. It is no longer in the page URL | Remove it | GitHub's image proxy caches by URL, so the image name must stay random |
+
+**What changes in the code:** `Analysis.id` already exists as the primary key. The change is in `publish.py` (the link), `routers/live.py` and `routers/images.py` (route and lookup), and the contract (`AnalysisMetadata` gains `id`). Routes move to `/a/{id}`; the old `/a/{public_id}` should keep working as a redirect so links already posted in PR comments still open.
+
+### 20.2 Why the render token exists
+
+The PR image is made by a headless Chromium in the worker. It loads `/render/{public_id}?static=1&render_token=…` (`server/app/jobs/render.py`). The page then fetches `GET /api/analyses/{id}`, which normally needs a logged-in viewer cookie. The worker has no viewer, so without a token that request fails.
+
+The token is a short-lived HMAC over `public_id` and an expiry time, created by the server just before it starts a render (`verify_render_token` in `routers/images.py`). It is valid for 60 seconds and is good for one analysis only. It lets the renderer read that one analysis without a user session, and it does not grant anything else.
+
+Why not the alternatives:
+- **A long-lived admin token** would let the renderer read every analysis. Rejected.
+- **Injecting the JSON into the `/render` HTML** would avoid the second request, but the CSP blocks inline scripts, and it creates a second data path. Rejected.
+- **Letting `/render` run without auth** would let any caller ask for renders. The route also checks that the caller is on loopback or a private network, so the token is a second check.
+
+The token appears in the URL, so it can end up in logs. The 60-second lifetime limits that risk. Proposed follow-up (G76): the token could be sent in a header instead, if Chromium's request setup allows it for the page's own API calls.
+
+### 20.3 Fixtures
+
+Hand-written in `contract/fixtures/` (decision Q6 in §19: hand-written for now):
+
+| File | Covers |
+|---|---|
+| `analysis_graph_rich.json` | The main development fixture. Two files, two classes, a `Retry` class. Changed cards of each kind (`added`, `functional`, `signature`, `text_only`), one ghost (`deleted`), one `outside_session` change, one `session_then_formatted` change, two tests with `REACHES` edges, one untested function with a `nearest_tested`, collapsed callers and tests, impact depths 1 to 3 with an uncertain hop, reasons for most nodes, two findings, diff hunks keyed by node id, and a timeline |
+| `analysis_no_session.json` | Done, `no_session` banner, no reasons, no findings |
+| `analysis_running.json` | Running state, as the API serves it |
+| `analysis_failed.json` | Failed state with `error_code` and `error_message` |
+
+Not written yet: `analysis_large.json` (generated, at the node and edge caps). It will come from a generator, not by hand.
+
+`tests/test_contract_fixtures.py` validates the done fixtures through `AnalysisResponse` and checks their references (edges, reading order, impact hops, reasons, findings, hunks, timeline, paths and the stats totals). Result: 4 passed, 1 expected failure. The expected failure is `analysis_done.json`, which predates these rules (§2.4). It is kept as-is because the server tests use it.
+
+### 20.4 Render token and the page
+
+Before the UI is wired to the API, the render route needs the change in §15.1 (accept the render token on `GET /api/analyses/{id}`). Until then the image cannot be made from the real page.

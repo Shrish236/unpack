@@ -1,0 +1,12 @@
+{
+  "analysis": {
+    "public_id": "p2Yw8dGnK5vLq3BxTr6hFa",
+    "status": "failed",
+    "error_code": "graph_build_failed",
+    "error_message": "The code graph could not be built for this commit. Check that the head commit is reachable from the repository."
+  },
+  "repo": { "owner": "encode", "name": "httpx", "default_branch": "main" },
+  "branch": "feature/broken-merge",
+  "head_sha": "9c1e7a4b2d8f0e3a6c5b9d1f7e2a8c4b0d6e3f1a",
+  "short_sha": "9c1e7a4"
+}
