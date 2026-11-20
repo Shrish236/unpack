@@ -181,6 +181,11 @@ These exist because a call-only graph reports functions as untested when tests d
 | escape | an instance handed to external code: `AMBIGUOUS` edges to its dunders, or to all its methods for private or inline adapter classes |
 | instance protocol | `AMBIGUOUS` edges from a class's constructor to its own dunders |
 | enum metaclass | the module to `__new__` of an enum, because the enum machinery calls it at class creation |
+| decorator application | `@d` and `@d(args)` apply the decorated function at definition time: the enclosing scope calls `d` (or the closure `d(args)` returns) with the function as argument. A closure returned by a factory is a function value, even when the factory is annotated with a `typing.Callable` type |
+| property read through a base | a property read on a base-class receiver also reaches the overrides in its subclasses, as method calls do |
+| property read, unknown receiver | `x.name` where `x` has no known type falls back to the repository's property `name`: `INFERRED` when unique, `AMBIGUOUS` otherwise. A receiver with any known type never falls back |
+| method reference | a method read without a call (`report = err.show`) is a `ref`-style edge: it can be called later |
+| module `__getattr__` | a missing attribute on a module links to the module's `__getattr__` (PEP 562), via `module_getattr` |
 
 ## 8. Test reachability
 
@@ -306,7 +311,10 @@ view = build_region(cs)                              # the GraphView dict
 | Call resolution is sound | 60 hand-labelled call sites from httpx, and an independent audit of 30 more | 27 of 28 correct on the labelled set before tuning, 28 of 28 after; 30 of 30 on the audit |
 | No false `none` | a coverage.py run of httpx's own test suite (`coverage-check`) | 0 false `none` over 436 functions |
 | No false `none` on subsets | 8 subsets of httpx's tests, each run under coverage, compared with labels built from that subset | 1 false `none` in 875 labels; the cause is a format-string attribute read, which static analysis cannot see |
-| Each increment matches the validated implementation | graphs, reachability labels and region outputs compared edge by edge | identical on httpx, flask and requests |
+| Gap fixes change labels only where they should | labels before and after the decorator, property and method-reference fixes | httpx: no label changes. flask: no function moved to `none`; `none` count fell (production 190 to 166). requests: production `none` 54 to 31 |
+| Coverage check on `pallets/click` (2,628 tests passing under coverage, 86% of `src/`) | `coverage-check` before and after the gap fixes | false `none` 55 to 29; `none` precision 0.43 to 0.55. The 29 that remain are stdlib and framework callbacks (limit 3a) |
+| Coverage check on this repository | `coverage-check` against its own test run | 4 false `none`, all in the mock ingest server's stdlib hook callbacks (limit 3a); precision 0.90 |
+| Six repositories, 15 recent commits each | `ast` agreement, incremental against full rebuild, schema validation, Neo4j against memory | 100% on every check: httpx, requests, flask, click, attrs, and this repository |
 | Neo4j matches memory | Cypher region and in-memory region on real changes | identical |
 | Incremental matches a full rebuild | 12 consecutive httpx commits and 8 scenarios | identical fingerprints |
 
@@ -318,7 +326,9 @@ Performance on httpx (60 files, one process): a full build takes about 1.3 s; lo
 
 1. `reached` is a static claim: it does not mean a test runs the code. Only `none` is a strong statement, and even it is static.
 2. Calls made by third-party code (a framework calling back into the repository, a test client driving an application) are invisible. This is the main risk on framework-heavy repositories, where many production functions may be labelled `none` for that reason.
-3. Dynamic dispatch is resolved only where the name is a literal or a literal prefix, for `getattr` on a name or attribute receiver. Other dynamic dispatch (registries keyed by computed strings outside dictionary literals, `functools.partial`, `__getattr__`) stays unresolved. The coverage check (section 11) reports the resulting false `none` labels.
+3. Dynamic dispatch is resolved only where the name is a literal or a literal prefix, for `getattr` on a name or attribute receiver. Other dynamic dispatch (registries keyed by computed strings outside dictionary literals, `functools.partial`) stays unresolved.
+3a. Callbacks that a framework or the standard library calls on an object the repository handed over are invisible. Examples measured on `pallets/click`: `http.server` handlers (`do_POST`) of a class that subclasses a standard-library class, `textwrap.TextWrapper._wrap_chunks`, `pickle` and `repr` hooks on objects the stdlib receives, and callbacks stored in attributes and invoked later (`version_option`'s `callback`). The coverage check reports these as false `none` labels; the design cannot close them statically in general.
+3b. An attribute on a value whose annotation names an external supertype (for example `BaseException`) is treated as external, even when the actual value is a repository subclass.
 4. Type inference uses annotations, constructors, returns and a fixed set of idioms. There is no general flow-sensitive inference and no generics beyond the common containers.
 5. Argument gating recognises only positive guards on parameters with falsy defaults. Other guard shapes stay reachable.
 6. Re-export chains stop at three hops.
@@ -361,6 +371,8 @@ Before this procedure, the repositories checked were: httpx (all checks above), 
 | Instance-protocol and escape edges are `AMBIGUOUS` | They may run, but this cannot be proven statically |
 | Reachability depth 12 | Measured against coverage: 8 gave false `none` |
 | Name-keyed dispatch is resolved | Running the repository's own tests under coverage found 51 false `none` in a visitor that dispatches with `getattr` |
+| Decorators run in the enclosing scope | Measured on `pallets/click`: applying decorators inside the decorated function's scope left every decorator closure unreached |
+| Property reads and method references count | Measured on `pallets/click`: property reads on untyped receivers, base-class properties, and methods passed around by name were all missing edges |
 | Argument gating | Needed for a new option threaded through an existing method |
 | Region in memory and in Cypher, tested for parity | The Cypher query is the one served; the Python version is the reference |
 | Delta update by diffing keyed rows | Exact, and independent of the change that caused it |

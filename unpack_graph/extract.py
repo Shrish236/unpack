@@ -734,12 +734,26 @@ class Walker:
         elif ctx.kind == "func" and ctx.func is not None:
             ctx.func.local_names.add(name)
             ctx.func.nested_defs[name] = ("func", fid)
-        # decorator expressions run when the function is defined, but they belong to it
-        dctx = Ctx(scope=f, scope_id=fid, qual=qual, kind="func", cls=None, func=f)
+        # Decorators run when the definition executes, in the enclosing scope, and apply the
+        # decorated function: `@d` is `d(f)`, `@d(args)` is `d(args)(f)`.  Both are recorded as
+        # calls owned by the enclosing scope, with the function itself as their argument.
         for d in decos:
-            for c in d.children:
-                if c.type != "@":
-                    self.visit(c, dctx)
+            expr = [c for c in d.children if c.type != "@"]
+            if not expr:
+                continue
+            expr = expr[0]
+            if expr.type == "call":
+                self.visit(expr, ctx)                      # the factory call and its arguments
+                factory = self.callsite(expr, ctx)
+                app_shape = Shape("call", "", (), factory, self.collapse(self.txt(expr), 120))
+            else:
+                app_shape = self.shape(expr, ctx)          # bare decorator: a name or attribute
+            ctx.scope.calls.append(CallSite(
+                line=d.start_point[0] + 1, col=d.start_point[1],
+                end_line=d.end_point[0] + 1, raw=self.collapse(self.txt(d)),
+                shape=app_shape, owner=ctx.scope_id,
+                arg_names=(Shape("def", fid, (), None, qual),),
+            ))
         # walk default values in the enclosing scope
         if params_node is not None:
             for c in params_node.children:
