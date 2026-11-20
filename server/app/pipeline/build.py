@@ -23,6 +23,7 @@ from .changes import FuncChange, compute_changes
 from .edit_linker import LinkOutcome, link_session_to_changes
 from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
 from .payload import PayloadSource, parse_diff_hunks
+from .agy_session import AGY_AGENT, parse_agy_transcript
 from .session import UnpackSession, parse_gemini_session
 from .repos import load_cached_graph, save_cached_graph
 
@@ -100,7 +101,10 @@ def analyze_blocking(
         known_paths = set(head.mods.keys()) | set(base.mods.keys()) | {
             f["path"] for f in files if isinstance(f.get("path"), str)
         }
-        unpack_session = parse_gemini_session(session_payload, known_paths=known_paths)
+        if str(session_payload.get("agent") or "") == AGY_AGENT:
+            unpack_session = parse_agy_transcript(session_payload, known_paths=known_paths)
+        else:
+            unpack_session = parse_gemini_session(session_payload, known_paths=known_paths)
         link_outcome = link_session_to_changes(unpack_session, changes, base, head, files)
         sources = link_outcome.sources
     build = build_graph_view(changes, base, head, parse_diff_hunks(diff_text), sources=sources)

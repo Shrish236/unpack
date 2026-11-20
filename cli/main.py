@@ -19,6 +19,7 @@ from .hook import (
     uninstall_hook,
 )
 from .mock_server import run_mock_server
+from .agy_session import find_agy_session
 from .session_finder import find_gemini_session, resolve_gemini_project_ids
 from .transport import IngestError, format_ingest_result, send_ingest_payload
 
@@ -189,8 +190,10 @@ def _cmd_status(_args: argparse.Namespace) -> int:
     else:
         print("  pre-push hook:   not installed")
 
+    newest_agy = find_agy_session(repo_root)
+    print(f"  Antigravity:     {newest_agy or '(none found)'}")
     print(f"  Gemini ID:       {project_ids[0] if project_ids else '(none)'}")
-    print(f"  Latest session:  {newest_session or '(none found)'}")
+    print(f"  Latest Gemini:   {newest_session or '(none found)'}")
     return 0
 
 
@@ -252,8 +255,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     push_p.add_argument(
         "--agent",
-        default="gemini-cli",
-        help="Agent label for session payload (default: gemini-cli)",
+        default="antigravity-cli",
+        help="Agent label for session payload (default: antigravity-cli; gemini-cli for Gemini CLI)",
     )
     push_p.add_argument("--base", default=None, help="Explicit base commit SHA")
     push_p.add_argument("--head", default=None, help="Explicit head commit SHA")

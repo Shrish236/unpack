@@ -34,6 +34,9 @@ os.environ.setdefault("RENDER_TOKEN_SECRET", "test_render_secret_value_that_is_l
 os.environ.setdefault("ADMIN_TOKEN", "test_admin_token_value_that_is_long_enough_32")
 os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "Yx4bq7Pn1hjVQ1xq0mD3xV0aXlYl7vHk1m3Pz0cQe6U=")
 os.environ["DATA_DIR"] = f"/tmp/unpack-test-data-{_WORKER}"
+# Forced: the repo .env sets ANALYSIS_PROCESSES=2, and spawned analysis processes do not see the
+# per-test DATA_DIR monkeypatch, so their graph cache writes never reach the test that reads it.
+os.environ["ANALYSIS_PROCESSES"] = "0"
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402

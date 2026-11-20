@@ -85,7 +85,8 @@ class TestCliEndToEnd(unittest.TestCase):
             marker_file = root / "orig_hook_ran.txt"
             orig_hook = work / ".git" / "hooks" / "pre-push"
             orig_hook.write_text(
-                f"#!/bin/sh\necho ran > {marker_file}\nexit 0\n",
+                # Forward slashes and quotes: the hook runs under sh, where backslashes are escapes.
+                f"#!/bin/sh\necho ran > \"{marker_file.as_posix()}\"\nexit 0\n",
                 encoding="utf-8",
             )
             orig_hook.chmod(0o755)
@@ -98,6 +99,8 @@ class TestCliEndToEnd(unittest.TestCase):
             try:
                 env = {
                     "HOME": str(fake_home),
+                    # Path.home() reads USERPROFILE on Windows, so the hook needs it too.
+                    "USERPROFILE": str(fake_home),
                     "UNPACK_CONFIG_PATH": str(cfg_path),
                 }
 
@@ -114,54 +117,40 @@ class TestCliEndToEnd(unittest.TestCase):
                 _git(work, "add", "client.py", ".gitignore")
                 _git(work, "commit", "-m", "add retry logic")
 
-                # Write matching Gemini CLI session in fake_home/.gemini
+                # Write a matching Antigravity CLI (agy) session in fake_home/.gemini/antigravity-cli.
+                # The hook discovers agy sessions by default: the resume cache maps the repo to a
+                # conversation, and its transcript is brain/<id>/.system_generated/logs/transcript_full.jsonl.
                 real_work = os.path.realpath(str(work))
-                gemini_dir = fake_home / ".gemini"
-                gemini_dir.mkdir(parents=True)
-                (gemini_dir / "projects.json").write_text(
-                    json.dumps({"projects": {real_work: "httpxdemo"}}),
+                agy_dir = fake_home / ".gemini" / "antigravity-cli"
+                (agy_dir / "cache").mkdir(parents=True)
+                (agy_dir / "cache" / "last_conversations.json").write_text(
+                    json.dumps({real_work: "conv-e2e-0001"}),
                     encoding="utf-8",
                 )
-                chats_dir = gemini_dir / "tmp" / "httpxdemo" / "chats"
-                chats_dir.mkdir(parents=True)
-                session_file = chats_dir / "session-2026-11-20T12-00-12345678.jsonl"
+                logs_dir = agy_dir / "brain" / "conv-e2e-0001" / ".system_generated" / "logs"
+                logs_dir.mkdir(parents=True)
+                session_file = logs_dir / "transcript_full.jsonl"
                 session_lines = [
                     {
-                        "sessionId": "12345678",
-                        "projectHash": "httpxdemo",
-                        "startTime": "2026-11-20T11:55:00Z",
-                        "lastUpdated": "2099-01-01T00:00:00Z",
+                        "step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "status": "DONE",
+                        "created_at": "2026-11-20T11:55:00Z",
+                        "content": "<USER_REQUEST>\nAdd retries using super_secret_demo_val\n</USER_REQUEST>",
                     },
                     {
-                        "id": "u1",
-                        "type": "user",
-                        "content": [{"text": "Add retries using super_secret_demo_val"}],
-                    },
-                    {
-                        "id": "g1",
-                        "type": "gemini",
-                        "content": [{"text": "Updated client.py"}],
-                        "tokens": {"input": 500},
-                        "toolCalls": [
+                        "step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE",
+                        "created_at": "2026-11-20T11:56:00Z",
+                        "content": 'Updated client.py. token = "super_secret_demo_val"',
+                        "tool_calls": [
                             {
-                                "id": "tc1",
-                                "name": "replace",
-                                "args": {
-                                    "file_path": "client.py",
-                                    "instruction": "Update return code",
-                                },
-                                "resultDisplay": {
-                                    "fileDiff": "@@ -1,2 +1,3 @@",
-                                    "fileName": "client.py",
-                                    "filePath": "client.py",
-                                    "originalContent": "def send():\n    return 200\n",
-                                    "newContent": (
-                                        'def send():\n    token = "super_secret_demo_val"\n'
-                                        "    return 201\n"
-                                    ),
-                                },
+                                "name": "replace_file_content",
+                                "args": {"TargetFile": "client.py", "Instruction": "Update return code"},
                             }
                         ],
+                    },
+                    {
+                        "step_index": 2, "source": "MODEL", "type": "GENERIC", "status": "DONE",
+                        "created_at": "2026-11-20T11:56:01Z",
+                        "content": "Edit applied to client.py.",
                     },
                 ]
                 session_file.write_text(
@@ -216,8 +205,7 @@ class TestCliEndToEnd(unittest.TestCase):
                 self.assertEqual(received["client"]["hook"], "pre-push")
                 self.assertIsNotNone(received["session"])
                 self.assertEqual(received["session"]["file_name"], session_file.name)
-                # tokens field must have been trimmed
-                self.assertNotIn("tokens", received["session"]["lines"][2])
+                self.assertEqual(received["session"]["agent"], "antigravity-cli")
 
                 # Secret must NOT appear anywhere in serialized payload
                 serialized = json.dumps(received)
