@@ -648,3 +648,94 @@ Before the UI is wired to the API, the render route needs the change in §15.1 (
 - **nexus-graph** (AKhileshPothuri, MIT): a "neon graph UI" with a directory overview that drills into files and symbols. Stores the graph in SQLite. Renderer not named.
 
 **Neo4j:** the repo does not show a deployed Neo4j. The server does not read it, and `docker-compose.yml` has no Neo4j service (status D1). The library has a Neo4j loader and a single-query region (`unpack_graph/neo4j_io.py`, `region.py`). Where the deployed instance runs, and what it holds, needs confirming before the design depends on it.
+
+## 21. How the changes are rendered (design, after the second UI design document)
+
+Status: **proposed.** Built on the design in `ui-design.md` (the second version reviewed by the owner), the current contract (`AnalysisResponse`) and `main` at `e4d0aa9`. Nothing here is built.
+
+### 21.1 Where the data comes from
+
+Every change is a node in `graph.nodes` with `change.kind` and `change.source`. Nothing is computed in the browser except layout, highlight and zoom. The inputs for drawing a change are:
+
+| Drawing need | Contract field |
+|---|---|
+| Which functions changed, and how | `graph.nodes[].change` (`added`, `functional`, `signature`, `text_only`, `deleted`) and `change.source` |
+| Who drove the change | `reasons[id].driver` |
+| Whether a test reaches it | `graph.nodes[].test.label` and the `REACHES` edge |
+| Reading order | `reading_order` |
+| How far it reaches | `impact.by_node`, `impact.summary` |
+| Findings | `findings`, `graph.nodes[].finding_ids` |
+
+### 21.2 Rendering rules for each change
+
+The same encoding is used in the PR view, the map and the static image, so a colour means the same thing everywhere.
+
+| Change | Colour (stripe and badge) | Shape in the PR view | Shape on the map (dot) |
+|---|---|---|---|
+| Added | green | Full card, "ADDED" | Filled dot, green |
+| Functional | amber | Full card, "MODIFIED" | Filled dot, amber |
+| Signature | amber, bold outline | Full card, "SIGNATURE" | Filled dot, amber, ring |
+| Text only | grey, muted | Compact card, "FORMATTING" | Small grey dot |
+| Deleted | red dashed outline | Ghost card, struck name, "still called by N" | Hollow red ring at its old position |
+| Outside session | amber badge "outside session" | As the change kind, with the badge | As the change kind, with a dashed ring |
+| No test reaches it | red outline and flask | Adds "no test" to the footer | Red halo |
+
+Context (not changed) is grey and compact. Tests are a pill, separate from the changed cards. Nothing uses emoji: icons come from `lucide-react` (G14), so they render the same in the PNG.
+
+### 21.3 Large changes
+
+The PR view stops being readable at about 40 changed functions. The server already caps the graph at 200 nodes and turns the rest into collapsed chips, but that does not help a refactor that changes 150 functions across 30 files.
+
+**Rule (proposed, G78):** if more than 40 functions changed, the PR view opens in **file summary mode**:
+- one card per changed file, with counts by change kind (for example "3 added · 7 modified · 1 deleted · 2 untested");
+- the cards are laid out in reading order of their first changed function;
+- clicking a file card expands it to its changed cards (the usual view for that file only).
+
+The map (below) is the same data at a larger scale, so a big change is still visible as a whole.
+
+### 21.4 The map (whole repository)
+
+The docx puts the map in Sigma (WebGL) with deterministic folder packing (d3-hierarchy `pack`). This design keeps that and adds how the changes show on it:
+- Every function is a dot. Changed dots use the colours in §21.2 and are drawn above everything else. Everything else is muted grey.
+- Folders that contain a change get a tint. Folders with no change stay quiet.
+- The blast radius (`impact.by_node`) is a heat glow on the affected dots. Uncertain hops are faint.
+- Edges are hidden by default, as the docx says. Hovering or selecting a changed dot draws its callers and callees.
+- Labels: folders always, files when zoomed in, functions on hover or close zoom.
+
+The map's data is `GET /api/repos/{owner}/{repo}/map?sha=` (folder rows with `loc`, `fan_in`, `is_test`). That endpoint exists and is not yet used by any UI.
+
+### 21.5 Static image (PR comment)
+
+The image is the PR view in static mode at 1200 × 700, as the docx says. For a large change (§21.3), the image uses file summary mode. The image never shows the map. The renderer only needs HTML cards, so the text stays sharp.
+
+### 21.6 Where Neo4j fits
+
+The Neo4j question is answered by the repo, and it is not in production. The facts:
+- `main` has no Neo4j service in `docker-compose.yml` (removed in `431450b`, D1 in `server-design.md`). The server does not import `unpack_graph/neo4j_io.py`.
+- The graph branches (`graph/01` to `graph/12`, and `integrate/graph-stack`) still define a `neo4j:5-community` service with APOC, ports 7474 and 7687, and a volume.
+- The library's Neo4j code (`neo4j_io.py`, the `--neo4j` flags, the single-query region in `region.py`) is on `main`.
+
+So the Neo4j instance you have in mind may be (a) a stack built from the graph branches and run outside this repo, or (b) a deployment that was not committed. Neither can be confirmed from the repo. Before the design depends on Neo4j, we need the answer to "where does it run and what does it hold".
+
+Options for rendering, depending on that answer:
+- **N1 (proposed):** the server keeps computing the PR graph in-process, as now. Neo4j is not needed for the PR view or the image. The browser never talks to Neo4j.
+- **N2:** Neo4j holds the map and the history (every analysis's changed functions), so a query can answer "what changed in this folder since last week". The server writes to it after each analysis. This needs the service back in compose and a write step in the worker.
+- **N3:** the browser queries Neo4j directly. Rejected: it exposes the database and bypasses the access check on `/api/*`.
+
+### 21.7 Decisions
+
+| ID | Decision | Status |
+|---|---|---|
+| G78 | More than 40 changed functions opens in file summary mode (§21.3) | Proposed |
+| G79 | The colours and shapes in §21.2 are the same in the PR view, the map and the image | Proposed |
+| G80 | The map shows changed dots above the rest, folder tints for changed folders, and blast radius as a heat glow (§21.4) | Proposed |
+| G81 | The PR view uses React Flow cards and the map uses Sigma with folder packing, as in the docx | Inherited (`ui-design.md` §2.2) |
+| G82 | The browser never queries Neo4j (N3 rejected) | Proposed |
+| G83 | Neo4j role: N1 for now (server computes the graph in-process). N2 only after the owner confirms where the instance runs and what it holds | Open (question to the owner) |
+| G84 | The map's data comes from `GET /api/repos/{owner}/{repo}/map`, which exists but has no UI yet | Inherited (`ui-design.md` §6) |
+
+### 21.8 Questions for the owner
+
+1. Where does your Neo4j instance run, what does it hold, and is it reachable from the server? (It is not in this repo's compose file or in production.)
+2. Is the card design (§3.2 of the docx: React Flow cards, colour stripes, reason lines) the right direction for the PR view, or should the PR view use dots with labels like GitNexus and Graphify?
+3. Agree with the 40-function threshold for file summary mode (G78)?
