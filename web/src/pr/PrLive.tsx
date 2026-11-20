@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Bot, Code2, User } from "lucide-react";
-import { ApiError, fetchAnalysis, fetchTurns, type AnalysisResponse, type Driver, type GNode, type Reason, type TimelineItem, type Turn } from "../api";
+import { ApiError, fetchAnalysis, fetchTurns, type AnalysisResponse, type Driver, type GovDecision, type Governance, type GNode, type Reason, type TimelineItem, type Turn } from "../api";
 import { TYPE_LABEL, type DType } from "../data";
 import { Kpi, PageHead, Panel, Seg } from "../ui";
 import PrMode from "./PrMode";
+// the graph brings in React Flow and its layout, so it loads when a PR page opens, not with the rest of the app
+const GraphPanel = lazy(() => import("../graph/GraphPanel"));
 import "../styles/prlive.css";
 
 const tnum = (t: string) => Number(t.replace(/\D/g, "")) || 0;
@@ -39,6 +41,14 @@ export default function PrLive({ id }: { id: string }) {
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
+        // demo ids render the contract fixture, so the PR tab can be tried without an analysis in the database
+        if (id === "demo" || id === "demo-large") {
+          const [{ default: fixture }, { makeLarge }] = await Promise.all([import("../../../contract/fixtures/analysis_graph_rich.json"), import("../graph/large")]);
+          // the contract fixture predates the governance block; an unavailable one makes the panel say so
+          const base: AnalysisResponse = { ...(fixture as unknown as Omit<AnalysisResponse, "governance">), governance: { decisions: [], highlights: [], flags: [], tool_stats: {}, attempts: 0, human_interventions: 0, steering_files: [], steering_rules: 0, available: false } };
+          if (alive) setSt({ k: "ok", a: id === "demo" ? base : makeLarge(base), turns: {} });
+          return;
+        }
         const a = await fetchAnalysis(id);
         if (!alive) return;
         const status = a.analysis.status;
@@ -68,6 +78,7 @@ export default function PrLive({ id }: { id: string }) {
   return (
     <main className="wrap page">
       <PageHead title="PR analysis" sub={msg} meta={<><span className="chip sim">{id}</span><PrMode mode="live" /></>} />
+      {st.k === "error" && st.e.kind === "notfound" && <p className="lv-muted">Try the demo: <a href="#/pr/demo">small commit</a> · <a href="#/pr/demo-large">large commit</a></p>}
       {st.k === "error" && st.e.kind === "login" && <a className="btn primary" style={{ width: "fit-content" }} href="/auth/login">Log in with GitHub</a>}
     </main>
   );
@@ -130,6 +141,10 @@ function Live({ a, turns }: { a: AnalysisResponse; turns: Record<string, Turn> }
         <Kpi value={findings.length} label="review findings" tone={findings.length ? "bad" : "ok"} sub="checked against the session" />
       </section>
 
+      <Suspense fallback={<Panel title="What this change touched"><p className="lv-muted">Loading the graph…</p></Panel>}><GraphPanel analysis={a} /></Suspense>
+
+      <GovernancePanel g={a.governance} onTurn={setTurn} />
+
       <Panel title="Review findings" sub={findings.length ? `${findings.length} · each backed by a quoted turn` : undefined}>
         {findings.length === 0 ? <p className="lv-muted">No review findings.</p> : (
           <ul className="lv-findings">
@@ -155,7 +170,7 @@ function Live({ a, turns }: { a: AnalysisResponse; turns: Record<string, Turn> }
               {timeline.map((e, i) => <Ev key={e.turn} e={e} i={i} p={pos(e.turn)} hot={hotEvents.has(e.turn)} on={turn === e.turn} onClick={() => setTurn(turn === e.turn ? null : e.turn)} />)}
               {arcs.length > 0 && <span className="lv-arcs">{arcs.length} human turn{arcs.length > 1 ? "s" : ""} followed by a reverted edit</span>}
             </div>
-            <p className="lv-note">Overrule arcs appear only where a reverted edit follows a human turn. The server does not detect overrides yet.</p>
+            <p className="lv-note">A red diamond on the human side is a tool call you denied. Overrule arcs appear where a reverted edit follows a human turn.</p>
           </Panel>
 
           <Panel title="Decision story" sub="one per changed function · type inferred from path, model classification not built yet"
@@ -193,13 +208,10 @@ function Live({ a, turns }: { a: AnalysisResponse; turns: Record<string, Turn> }
       </div>
 
       <details className="panel lv-todo">
-        <summary>Not computed yet <span className="lv-muted">· 5 things the server does not produce today</span></summary>
+        <summary>Not computed yet <span className="lv-muted">· things the server does not produce today</span></summary>
         <ul>
           <li><b>Acceptance criteria and iterations.</b> No criteria are extracted from prompts or tickets, so no ladders and no "agent missed it / requirement thin" verdict.</li>
-          <li><b>Human decision kinds.</b> Redirect, reject, permission denied and revert are not detected. Only the user's requests appear.</li>
-          <li><b>Decision types.</b> The type chips here are inferred from file paths. The model does not classify decisions yet.</li>
-          <li><b>Skill adherence.</b> Agent decisions are not compared with skill files.</li>
-          <li><b>Tokens and calls by tool.</b> The CLI hook drops token counts, and tool calls are not aggregated.</li>
+          <li><b>Function decision types.</b> The type chips on the function cards are inferred from file paths. The Governance panel above has model-classified types.</li>
         </ul>
         <a className="lv-link" href="#/pr/mock">See how these look on the mock page</a>
       </details>
@@ -207,9 +219,65 @@ function Live({ a, turns }: { a: AnalysisResponse; turns: Record<string, Turn> }
   );
 }
 
+const KIND_LABEL: Record<string, string> = {
+  choice: "Agent choice", redirect: "Redirected", reject: "Rejected", requirement: "Added requirement",
+  discussion: "Chose in discussion", permission_denied: "Denied tool call",
+};
+const FLAG_LABEL: Record<string, string> = {
+  "new-dependency": "New dependency", "skipped-test": "Skipped test", unsupported: "Unsupported claim", "async-gap": "Async gap",
+};
+
+function GovernancePanel({ g, onTurn }: { g: Governance; onTurn: (t: string) => void }) {
+  if (!g.available) {
+    return (
+      <Panel title="Governance" sub="decisions, human interventions and steering">
+        <p className="lv-muted">No governance data for this push. It needs an agent session.</p>
+      </Panel>
+    );
+  }
+  const human = g.decisions.filter((d) => d.actor === "human");
+  const agent = g.decisions.filter((d) => d.actor === "agent");
+  const tools = Object.entries(g.tool_stats).sort((x, y) => y[1].calls - x[1].calls);
+  const row = (d: GovDecision) => (
+    <li key={d.turn + d.kind + d.quote.slice(0, 12)}>
+      <span className={`chip ${d.actor === "human" ? "warn" : "agent"}`}>{d.actor === "human" ? <User size={11} /> : <Bot size={11} />} {KIND_LABEL[d.kind] ?? d.kind}</span>
+      <div>
+        <b>{d.choice || d.proposal}</b>
+        {d.proposal && d.choice && <small>{d.proposal}</small>}
+        {d.quote && <small><button className="lv-link" onClick={() => onTurn(d.turn)}>{d.turn}</button> “{d.quote}”</small>}
+        {d.rule && <small>Rule: {d.rule} {d.rule_followed === true && <span className="chip ok">followed</span>}{d.rule_followed === false && <span className="chip bad">not followed</span>}</small>}
+      </div>
+      <span className="chip">{d.type}</span>
+    </li>
+  );
+  return (
+    <Panel title="Governance" sub={`${g.decisions.length} decisions · ${g.human_interventions} human interventions · ${g.attempts} attempt${g.attempts === 1 ? "" : "s"} · ${g.steering_rules} steering rules read from ${g.steering_files.length ? g.steering_files.join(", ") : "no steering files"}`}>
+      {g.flags.length > 0 && (
+        <div className="gv-chips" style={{ marginBottom: 12 }}>
+          {g.flags.map((f) => <span key={f.flag + f.path} className="chip bad" title={f.detail}>{FLAG_LABEL[f.flag] ?? f.flag}{f.path ? ` · ${base(f.path)}` : ""}</span>)}
+        </div>
+      )}
+      {g.highlights.length > 0 && (
+        <ul className="lv-findings" style={{ marginBottom: 12 }}>
+          {g.highlights.map((h) => (
+            <li key={h.turn + h.text}>
+              <span className={`chip ${h.kind === "went_right" ? "ok" : "bad"}`}>{h.kind === "went_right" ? "Went right" : "Went wrong"}</span>
+              <div><b>{h.text}</b>{h.quote && <small><button className="lv-link" onClick={() => onTurn(h.turn)}>{h.turn}</button> “{h.quote}”</small>}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {human.length === 0 && agent.length === 0 && <p className="lv-muted">No decisions were found in this session.</p>}
+      {human.length > 0 && <><h4 className="lv-muted" style={{ margin: "8px 0" }}>Where a person stepped in</h4><ul className="lv-findings">{human.map(row)}</ul></>}
+      {agent.length > 0 && <><h4 className="lv-muted" style={{ margin: "12px 0 8px" }}>What the agent decided</h4><ul className="lv-findings">{agent.map(row)}</ul></>}
+      {tools.length > 0 && <p className="lv-note">Tools: {tools.map(([n, t]) => `${n} ×${t.calls}${t.tokens ? ` (${t.tokens.toLocaleString()} tok)` : ""}`).join(" · ")}</p>}
+    </Panel>
+  );
+}
+
 function Ev({ e, i, p, hot, on, onClick }: { e: TimelineItem; i: number; p: number; hot: boolean; on: boolean; onClick: () => void }) {
-  const user = e.kind === "user_request";
-  const cls = user ? "user" : e.kind === "test_run" ? (e.exit_code === 0 ? "pass" : "fail") : e.reverted ? "revert" : "edit";
+  const user = e.kind === "user_request" || e.kind === "denied";
+  const cls = e.kind === "denied" ? "denied" : user ? "user" : e.kind === "test_run" ? (e.exit_code === 0 ? "pass" : "fail") : e.reverted ? "revert" : "edit";
   const label = e.kind === "edit" ? base(e.label) : e.label.length > 38 ? e.label.slice(0, 38) + "…" : e.label;
   return (
     <button className={`lv-ev ${cls} ${user ? "below" : "above"} s${i % 2} ${hot ? "hot" : ""} ${on ? "on" : ""}`} style={{ ["--p" as string]: p }} onClick={onClick}

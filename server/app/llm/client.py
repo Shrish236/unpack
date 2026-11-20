@@ -62,6 +62,34 @@ class LLMReasoningOutput(BaseModel):
     session_review: list[LLMReviewFinding] = Field(default_factory=list)
 
 
+DecisionType = Literal["architecture", "design", "dependency", "retries", "test", "scope", "other"]
+
+
+class LLMDecision(BaseModel):
+    turn: str  # the turn where the decision happened (a user turn for human decisions)
+    actor: Literal["agent", "human"]
+    kind: Literal["choice", "redirect", "reject", "requirement", "discussion"]
+    type: DecisionType
+    proposal: str = ""  # what was on the table (the agent's plan, or what the human was reacting to)
+    choice: str = ""  # what was decided
+    statement: str = ""  # a general, reusable rule that captures the decision ("Do not add runtime dependencies")
+    quote: str = ""  # verbatim from the turn
+    rule_id: str | None = None  # a steering rule from ## STEERING that applies to this decision
+    rule_followed: bool | None = None  # whether the agent's action followed that rule
+
+
+class LLMHighlight(BaseModel):
+    kind: Literal["went_right", "went_wrong"]
+    text: str
+    turn: str
+    quote: str = ""
+
+
+class LLMDecisionOutput(BaseModel):
+    decisions: list[LLMDecision] = Field(default_factory=list)
+    highlights: list[LLMHighlight] = Field(default_factory=list)
+
+
 # -------------------------------------------------------------
 # Transport & Call Logging Records
 # -------------------------------------------------------------
@@ -96,7 +124,7 @@ class LLMCallRecord:
 
 @dataclass
 class LLMInvocationResult:
-    output: LLMReasoningOutput | None
+    output: Any | None
     model: str | None
     calls: list[LLMCallRecord] = field(default_factory=list)
     error: str | None = None
@@ -190,6 +218,71 @@ class GoogleGenAIClient:
             raise LLMBackendError(f"Gemini API error ({type(exc).__name__}): {exc}") from exc
 
 
+    async def generate_text_with_tools(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[Any],
+        max_calls: int,
+        timeout_s: int,
+    ) -> RawLLMResponse:
+        """Free-text answer where the model may call `tools` (plain Python functions) along the way."""
+        if not self._api_key:
+            raise LLMBackendError("GEMINI_API_KEY is not set")
+
+        def _call() -> RawLLMResponse:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=self._api_key)
+            response = client.models.generate_content(
+                model=model,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    tools=tools,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=max_calls),
+                    max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
+                ),
+            )
+            text = response.text or ""
+            usage = getattr(response, "usage_metadata", None)
+            in_tok = int(getattr(usage, "prompt_token_count", 0) or 0)
+            out_tok = int(getattr(usage, "candidates_token_count", 0) or 0)
+            if not text.strip():
+                # The model used up its tool calls before it wrote anything. Ask once more, with no tools, from
+                # what the lookups returned.
+                results = []
+                for content in getattr(response, "automatic_function_calling_history", None) or []:
+                    for part in getattr(content, "parts", None) or []:
+                        fr = getattr(part, "function_response", None)
+                        if fr is not None:
+                            results.append(f"{fr.name}: {str(fr.response)[:1200]}")
+                if results:
+                    second = client.models.generate_content(
+                        model=model,
+                        contents=user_prompt + "\n\nLookup results so far:\n" + "\n".join(results[-40:])
+                        + "\n\nNo more lookups. Write the notes now.",
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt, max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
+                        ),
+                    )
+                    text = second.text or ""
+                    usage2 = getattr(second, "usage_metadata", None)
+                    in_tok += int(getattr(usage2, "prompt_token_count", 0) or 0)
+                    out_tok += int(getattr(usage2, "candidates_token_count", 0) or 0)
+            return RawLLMResponse(text=text, model=model, input_tokens=in_tok, output_tokens=out_tok)
+
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(_call), timeout=timeout_s)
+        except asyncio.TimeoutError as exc:
+            raise LLMBackendError(f"Gemini tool call timed out after {timeout_s}s") from exc
+        except Exception as exc:
+            raise LLMBackendError(f"Gemini API error ({type(exc).__name__}): {exc}") from exc
+
+
 _override_client: LLMClient | None = None
 
 
@@ -221,10 +314,14 @@ def _strip_code_fence(text: str) -> str:
     return stripped
 
 
-def _parse_reasoning_json(text: str) -> LLMReasoningOutput:
+def _parse_json(text: str, schema: type[BaseModel]) -> Any:
     cleaned = _strip_code_fence(text)
     obj = json.loads(cleaned)
-    return LLMReasoningOutput.model_validate(obj)
+    return schema.model_validate(obj)
+
+
+def _parse_reasoning_json(text: str) -> LLMReasoningOutput:
+    return _parse_json(text, LLMReasoningOutput)
 
 
 async def run_reasoning_llm(
@@ -236,6 +333,23 @@ async def run_reasoning_llm(
     client: LLMClient | None = None,
 ) -> LLMInvocationResult:
     """Run one structured Gemini reasoning call with retry, fallback, and JSON repair."""
+    return await run_structured_llm(
+        system_prompt=system_prompt, user_prompt=user_prompt, schema=LLMReasoningOutput, purpose="reasons",
+        prompt_version=prompt_version, daily_tokens_used=daily_tokens_used, client=client,
+    )
+
+
+async def run_structured_llm(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    schema: type[BaseModel],
+    purpose: str,
+    prompt_version: int = 1,
+    daily_tokens_used: int = 0,
+    client: LLMClient | None = None,
+) -> LLMInvocationResult:
+    """One structured Gemini call with retry, model fallback and JSON repair. `output` is an instance of `schema`."""
     if daily_tokens_used >= settings.GEMINI_DAILY_TOKEN_BUDGET_PER_REPO:
         return LLMInvocationResult(
             output=None,
@@ -263,7 +377,7 @@ async def run_reasoning_llm(
                     model=model,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    response_schema=LLMReasoningOutput,
+                    response_schema=schema,
                     temperature=_temperature_for_model(model),
                     max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
                     timeout_s=settings.GEMINI_TIMEOUT_S,
@@ -273,7 +387,7 @@ async def run_reasoning_llm(
                 last_error = str(exc)
                 calls.append(
                     LLMCallRecord(
-                        purpose="reasons",
+                        purpose=purpose,
                         model=model,
                         attempt=attempt,
                         prompt_version=prompt_version,
@@ -291,7 +405,7 @@ async def run_reasoning_llm(
             latency_ms = int((time.monotonic() - started) * 1000)
             calls.append(
                 LLMCallRecord(
-                    purpose="reasons",
+                    purpose=purpose,
                     model=raw.model,
                     attempt=attempt,
                     prompt_version=prompt_version,
@@ -307,7 +421,7 @@ async def run_reasoning_llm(
             )
 
             try:
-                parsed = _parse_reasoning_json(raw.text)
+                parsed = _parse_json(raw.text, schema)
                 return LLMInvocationResult(output=parsed, model=raw.model, calls=calls)
             except (json.JSONDecodeError, ValidationError, ValueError) as parse_exc:
                 # Attempt one JSON repair call using GEMINI_MODEL_REPAIR
@@ -323,7 +437,7 @@ async def run_reasoning_llm(
                         model=repair_model,
                         system_prompt=repair_sys,
                         user_prompt=repair_user,
-                        response_schema=LLMReasoningOutput,
+                        response_schema=schema,
                         temperature=_temperature_for_model(repair_model),
                         max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
                         timeout_s=min(settings.GEMINI_TIMEOUT_S, 60),
@@ -345,7 +459,7 @@ async def run_reasoning_llm(
                             response_text=repaired_raw.text,
                         )
                     )
-                    parsed = _parse_reasoning_json(repaired_raw.text)
+                    parsed = _parse_json(repaired_raw.text, schema)
                     return LLMInvocationResult(output=parsed, model=raw.model, calls=calls)
                 except Exception as repair_exc:
                     repair_ms = int((time.monotonic() - repair_started) * 1000)

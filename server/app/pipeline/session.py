@@ -13,6 +13,18 @@ READ_TOOL_NAMES = frozenset(
     {"read_file", "grep", "search_file_content", "glob", "list_directory", "read_many_files"}
 )
 PLAN_TOOL_NAMES = frozenset({"write_todos"})
+DENIED_STATUSES = frozenset({"cancelled", "canceled", "rejected", "denied", "declined"})
+_DENIED_TEXT_RE = re.compile(
+    r"(?i)\b(rejected|denied|declined|cancel+ed)\b[^.\n]{0,40}\bby (the )?user\b|user (rejected|denied|declined|cancel+ed)"
+)
+
+
+def is_denied(status: str | None, text: str = "") -> bool:
+    """A tool call the human refused. Read from the tool status, or from the result text as a fallback."""
+    if status and status.strip().lower() in DENIED_STATUSES:
+        return True
+    return bool(text and _DENIED_TEXT_RE.search(text[:400]))
+
 
 _EXIT_CODE_RE = re.compile(r"(?im)(?:^|\b)exit\s*code\s*[:=]\s*(-?\d+)\b")
 
@@ -37,6 +49,10 @@ class UnpackTurn:
     output: str | None = None
     tool_name: str | None = None
     level: str | None = None  # info | error | warning (for notice turns)
+    tokens: int | None = None  # tokens the model spent on the message that issued this tool call, split per call
+    edit_old: str | None = None  # agents that send a snippet edit (agy edit_file): the text replaced
+    edit_new: str | None = None  # ... and its replacement
+    denied: bool = False  # the human refused this tool call (cancelled or denied at the permission prompt)
     function_diffs: dict[str, str] = field(default_factory=dict)
 
     def searchable_texts(self) -> list[str]:
@@ -250,7 +266,7 @@ def normalize_repo_path(
             return cleaned[len(prefix) :]
 
     # Match longest known repo-relative path suffix (e.g., /abs/repo/httpx/_client.py)
-    if cleaned.startswith("/"):
+    if cleaned.startswith("/") or re.match(r"^[A-Za-z]:/", cleaned):
         for candidate in sorted(known_paths, key=len, reverse=True):
             if cleaned.endswith("/" + candidate):
                 return candidate
@@ -344,6 +360,13 @@ def parse_gemini_session(
                 add_turn("assistant", ts=ts, text=text)
 
             tool_calls = msg.get("toolCalls")
+            msg_tokens = msg.get("tokens")
+            total_tokens = 0
+            if isinstance(msg_tokens, dict):
+                total_tokens = int(msg_tokens.get("total") or 0) or sum(
+                    int(msg_tokens.get(k) or 0) for k in ("input", "output", "thoughts")
+                )
+            per_call_tokens = (total_tokens // len(tool_calls)) if isinstance(tool_calls, list) and tool_calls else 0
             if isinstance(tool_calls, list):
                 for tc in tool_calls:
                     if not isinstance(tc, dict):
@@ -354,6 +377,7 @@ def parse_gemini_session(
                     tc_ts = str(tc.get("timestamp") or ts)
                     result_text = _extract_part_text(tc.get("result")).strip()
                     result_display = tc.get("resultDisplay")
+                    first_new = len(turns)
 
                     if name in EDIT_TOOL_NAMES:
                         raw_path = args.get("file_path") or args.get("path")
@@ -422,6 +446,13 @@ def parse_gemini_session(
                         plan_text = _format_todos(args)
                         if plan_text:
                             add_turn("plan", ts=tc_ts, tool_name=name, text=plan_text)
+
+                    denied = is_denied(status, result_text)
+                    for new_turn in turns[first_new:]:
+                        new_turn.tokens = per_call_tokens or None
+                        new_turn.denied = denied
+                        if new_turn.status is None:
+                            new_turn.status = status
 
     return UnpackSession(
         agent=agent,

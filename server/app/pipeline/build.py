@@ -23,7 +23,7 @@ from .changes import FuncChange, compute_changes
 from .edit_linker import LinkOutcome, link_session_to_changes
 from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
 from .payload import PayloadSource, parse_diff_hunks
-from .agy_session import AGY_AGENT, parse_agy_transcript
+from .agy_session import AGY_AGENT, parse_agy_transcript, reconstruct_edit_states
 from .session import UnpackSession, parse_gemini_session
 from .repos import load_cached_graph, save_cached_graph
 
@@ -103,6 +103,10 @@ def analyze_blocking(
         }
         if str(session_payload.get("agent") or "") == AGY_AGENT:
             unpack_session = parse_agy_transcript(session_payload, known_paths=known_paths)
+            reconstruct_edit_states(unpack_session, {
+                f["path"]: f["base_content"] for f in files
+                if isinstance(f.get("path"), str) and isinstance(f.get("base_content"), str)
+            })
         else:
             unpack_session = parse_gemini_session(session_payload, known_paths=known_paths)
         link_outcome = link_session_to_changes(unpack_session, changes, base, head, files)

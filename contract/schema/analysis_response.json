@@ -339,6 +339,211 @@
       "title": "FunctionReason",
       "type": "object"
     },
+    "GovDecision": {
+      "properties": {
+        "turn": {
+          "title": "Turn",
+          "type": "string"
+        },
+        "actor": {
+          "enum": [
+            "agent",
+            "human"
+          ],
+          "title": "Actor",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "proposal": {
+          "default": "",
+          "title": "Proposal",
+          "type": "string"
+        },
+        "choice": {
+          "default": "",
+          "title": "Choice",
+          "type": "string"
+        },
+        "statement": {
+          "default": "",
+          "title": "Statement",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "title": "Quote",
+          "type": "string"
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule"
+        },
+        "rule_followed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Followed"
+        },
+        "source": {
+          "default": "llm",
+          "enum": [
+            "parsed",
+            "llm"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn",
+        "actor",
+        "kind",
+        "type"
+      ],
+      "title": "GovDecision",
+      "type": "object"
+    },
+    "GovFlag": {
+      "properties": {
+        "flag": {
+          "title": "Flag",
+          "type": "string"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flag"
+      ],
+      "title": "GovFlag",
+      "type": "object"
+    },
+    "GovHighlight": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "went_right",
+            "went_wrong"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "turn": {
+          "title": "Turn",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "text",
+        "turn"
+      ],
+      "title": "GovHighlight",
+      "type": "object"
+    },
+    "Governance": {
+      "description": "What the session says about how the agent was steered, and where people stepped in.",
+      "properties": {
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/GovDecision"
+          },
+          "title": "Decisions",
+          "type": "array"
+        },
+        "highlights": {
+          "items": {
+            "$ref": "#/$defs/GovHighlight"
+          },
+          "title": "Highlights",
+          "type": "array"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/GovFlag"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "tool_stats": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "title": "Tool Stats",
+          "type": "object"
+        },
+        "attempts": {
+          "default": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "human_interventions": {
+          "default": 0,
+          "title": "Human Interventions",
+          "type": "integer"
+        },
+        "steering_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Steering Files",
+          "type": "array"
+        },
+        "steering_rules": {
+          "default": 0,
+          "title": "Steering Rules",
+          "type": "integer"
+        },
+        "available": {
+          "default": false,
+          "title": "Available",
+          "type": "boolean"
+        }
+      },
+      "title": "Governance",
+      "type": "object"
+    },
     "GraphEdge": {
       "properties": {
         "id": {
@@ -1094,6 +1299,9 @@
       },
       "title": "Diff Hunks",
       "type": "object"
+    },
+    "governance": {
+      "$ref": "#/$defs/Governance"
     }
   },
   "required": [

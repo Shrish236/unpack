@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpen, Check, FileText, Share2, ShieldCheck } from "lucide-react";
-import { Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
+import { DataGate, Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
 import { TYPE_LABEL, type DType, type HumanKind } from "../data";
 import {
-  TODAY, actives as seedActives, candidates as seedCandidates, history as seedHistory, rules,
-  type ActivePolicy, type Candidate, type Enforcement, type Evidence, type HistoryItem, type Scope,
-} from "../data.govern";
+  approveCandidate, rejectCandidate, retirePolicy, revisePolicy,
+  type ApproveBody, type Enforcement, type GovCandidate, type GovEvidence, type GovernanceState, type GovPolicy, type Scope,
+} from "../api";
+import { useGovernance, useGovernanceAction } from "../queries";
+import { longDay, shortDay } from "../format";
 import "../styles/govern.css";
 
 type Tab = "candidates" | "active" | "skills" | "history";
@@ -22,8 +24,6 @@ const ENF = { advice: "Advice", check: "PR check", gate: "Hard gate" } as const;
 const ON_VIOLATION = { advice: "comment on the PR", check: "fail the PR check", gate: "block the merge" } as const;
 const OWNERS = ["@platform", "@quality", "@api-guild", "@security"];
 
-const fmt = (d: string) => new Date(d).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-const daysLeft = (d: string) => Math.round((Date.parse(d) - Date.parse(TODAY)) / 864e5);
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 function Spark({ v, w = 72, h = 22 }: { v: number[]; w?: number; h?: number }) {
@@ -36,13 +36,13 @@ function Spark({ v, w = 72, h = 22 }: { v: number[]; w?: number; h?: number }) {
   );
 }
 
-function EvidenceCard({ e }: { e: Evidence }) {
+function EvidenceCard({ e }: { e: GovEvidence }) {
   return (
     <div className="gv-ev">
       <div className="gv-ev-h">
         <span className="chip human">{KIND[e.kind]}</span>
         <a href="#/pr">PR {e.pr}</a><span>{e.session}</span><span>T{e.turn}</span><span>{e.team}</span><span>{e.dev}</span>
-        <span className="gv-when">{e.when}</span>
+        <span className="gv-when">{shortDay(e.when)}</span>
       </div>
       <div className="gv-pair">
         <div className="a"><small>Agent proposed</small>{e.proposal}</div>
@@ -54,11 +54,23 @@ function EvidenceCard({ e }: { e: Evidence }) {
 }
 
 export default function Govern() {
+  const q = useGovernance();
+  return (
+    <main className="wrap page">
+      <DataGate q={q}>{(g) => <GovernanceView g={g} />}</DataGate>
+    </main>
+  );
+}
+
+function GovernanceView({ g }: { g: GovernanceState }) {
+  const approveM = useGovernanceAction((a: { id: string; body: ApproveBody }) => approveCandidate(a.id, a.body));
+  const rejectM = useGovernanceAction((a: { id: string; reason: string }) => rejectCandidate(a.id, a.reason));
+  const retireM = useGovernanceAction((id: string) => retirePolicy(id));
+  const reviseM = useGovernanceAction((id: string) => revisePolicy(id));
+  const busy = approveM.isPending || rejectM.isPending || retireM.isPending || reviseM.isPending;
+
   const [tab, setTab] = useState<Tab>("candidates");
-  const [cands, setCands] = useState<Candidate[]>(seedCandidates);
-  const [actives, setActives] = useState<ActivePolicy[]>(seedActives);
-  const [hist, setHist] = useState<HistoryItem[]>(seedHistory);
-  const [sel, setSel] = useState(seedCandidates[0].id);
+  const [sel, setSel] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [minS, setMinS] = useState(3);
   const [minD, setMinD] = useState(2);
@@ -75,62 +87,57 @@ export default function Govern() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const meets = (c: Candidate) => c.sessions >= minS && c.developers >= minD;
-  // strongest evidence first: more developers, then more sessions
-  const sorted = useMemo(() => [...cands].sort((a, b) => b.developers - a.developers || b.sessions - a.sessions), [cands]);
-  const c = sorted.find((x) => x.id === sel) ?? sorted[0];
+  const { candidates: cands, policies: actives, history: hist, rules, today } = g;
+  const meets = (c: GovCandidate) => c.sessions >= minS && c.developers >= minD;
+  // the server orders candidates by developers, then sessions: strongest evidence first
+  const c = cands.find((x) => x.id === sel) ?? cands[0];
   const ready = cands.filter(meets).length;
 
-  const draftOf = (x: Candidate): Draft => drafts[x.id] ?? { statement: x.statement, scope: x.scope, enforcement: x.enforcement, owner: x.owner, expires: x.expires };
-  const patch = (x: Candidate, p: Partial<Draft>) => setDrafts((d) => ({ ...d, [x.id]: { ...draftOf(x), ...p } }));
+  const draftOf = (x: GovCandidate): Draft => drafts[x.id] ?? { statement: x.statement, scope: x.scope, enforcement: x.enforcement, owner: x.owner, expires: x.expires };
+  const patch = (x: GovCandidate, p: Partial<Draft>) => setDrafts((ds) => ({ ...ds, [x.id]: { ...draftOf(x), ...p } }));
+  const dropDraft = (id: string) => setDrafts((ds) => Object.fromEntries(Object.entries(ds).filter(([k]) => k !== id)));
 
   const pick = (id: string) => {
     setSel(id); setRejecting(false); setEditing(false); setShowAll(false); setReason("");
     if (matchMedia("(max-width: 960px)").matches) setTimeout(() => detail.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   };
-  const leave = (x: Candidate) => {
-    const rest = sorted.filter((y) => y.id !== x.id);
-    setCands((cs) => cs.filter((y) => y.id !== x.id));
-    if (rest[0]) pick(rest[0].id);
-  };
+  // after a decision the candidate leaves the inbox; with no selection the view falls back to the first one
+  const settle = () => { setSel(null); setRejecting(false); setEditing(false); setShowAll(false); setReason(""); };
+  const fail = (e: Error) => setToast(e.message);
 
-  const approve = (x: Candidate) => {
+  const approve = (x: GovCandidate) => {
     const d = draftOf(x);
-    setActives((a) => [{
-      id: x.pid, statement: d.statement, type: x.type, scope: d.scope, scopeName: d.scope === "org" ? "Org" : d.scope === "team" ? "Payments" : "payments-service",
-      enforcement: d.enforcement, owner: d.owner, expires: d.expires, adherence: null, before: x.perHundred, after: null, match: x.match,
-    }, ...a]);
-    setHist((h) => [{ id: `h-${x.pid}`, statement: d.statement, outcome: "approved", role: "Tech lead (you)", when: TODAY, why: `${x.sessions} sessions across ${x.teams} teams, ${x.developers} developers.` }, ...h]);
-    leave(x);
-    setToast(`${x.pid} approved. Published to AGENTS.md${d.enforcement === "advice" ? "" : " and the PR check"}.`);
+    approveM.mutate({
+      id: x.id,
+      body: { statement: d.statement, scope: d.scope, enforcement: d.enforcement, owner: d.owner, expires: d.expires },
+    }, {
+      onSuccess: () => {
+        dropDraft(x.id); settle();
+        setToast(`${x.pid} approved. Published to AGENTS.md${d.enforcement === "advice" ? "" : " and the PR check"}.`);
+      },
+      onError: fail,
+    });
   };
-  const reject = (x: Candidate) => {
-    setHist((h) => [{ id: `h-${x.pid}`, statement: x.statement, outcome: "rejected", role: "Tech lead (you)", when: TODAY, why: reason.trim() || "No reason given." }, ...h]);
-    leave(x);
-    setToast(`${x.pid} rejected and moved to history.`);
+  const reject = (x: GovCandidate) => {
+    rejectM.mutate({ id: x.id, reason }, {
+      onSuccess: () => { dropDraft(x.id); settle(); setToast(`${x.pid} rejected and moved to history.`); },
+      onError: fail,
+    });
   };
+  const retire = (p: GovPolicy) => retireM.mutate(p.id, { onSuccess: () => setToast(`${p.id} retired.`), onError: fail });
+  const revise = (p: GovPolicy) => reviseM.mutate(p.id, {
+    onSuccess: () => {
+      settle(); setTab("candidates"); setSel(`c-${p.id}`);
+      setToast(`${p.id} reopened as a candidate. Edit the statement and approve to replace it.`);
+    },
+    onError: fail,
+  });
 
-  const stillHappening = (p: ActivePolicy) => p.after !== null && p.after >= p.before * 0.6;
-  const retire = (p: ActivePolicy) => {
-    setActives((a) => a.filter((y) => y.id !== p.id));
-    setHist((h) => [{ id: `h-${p.id}-r`, statement: p.statement, outcome: "expired", role: "Policy owner", when: TODAY, why: "Retired: the override kept recurring after the policy." }, ...h]);
-    setToast(`${p.id} retired.`);
-  };
-  const revise = (p: ActivePolicy) => {
-    if (!p.recurrence) return;
-    const r = p.recurrence;
-    const x: Candidate = {
-      id: `c-${p.id}`, pid: `${p.id}b`, statement: p.statement, type: p.type, sessions: r.sessions, teams: r.teams, developers: r.developers,
-      trend: [1, 1, 2, 1, 2, 2, 3, 3], perHundred: p.after ?? 0, match: p.match, scope: p.scope, enforcement: p.enforcement, owner: p.owner, expires: p.expires, evidence: r.evidence,
-    };
-    setActives((a) => a.filter((y) => y.id !== p.id));
-    setCands((cs) => [x, ...cs]);
-    setTab("candidates"); pick(x.id);
-    setToast(`${p.id} reopened as a candidate. Edit the statement and approve to replace it.`);
-  };
-
-  const avgAdherence = Math.round(actives.filter((a) => a.adherence !== null).reduce((s, a) => s + a.adherence!, 0) / Math.max(1, actives.filter((a) => a.adherence !== null).length));
+  const stillHappening = (p: GovPolicy) => p.after !== null && p.after >= p.before * 0.6;
+  const measured = actives.filter((a) => a.adherence !== null);
+  const avgAdherence = Math.round(measured.reduce((s, a) => s + a.adherence!, 0) / Math.max(1, measured.length));
   const overridden = actives.filter(stillHappening).length;
+  const daysLeft = (d: string) => Math.round((Date.parse(d) - Date.parse(today)) / 864e5);
 
   const d = c ? draftOf(c) : null;
   const agentsMd = c && d ? `## ${HEADING[c.type]}\n- ${d.statement}\n  <!-- ${c.pid} · scope: ${d.scope} · owner: ${d.owner} · expires: ${d.expires} -->` : "";
@@ -138,7 +145,7 @@ export default function Govern() {
   const evidence = c ? (showAll ? c.evidence : c.evidence.slice(0, 3)) : [];
 
   return (
-    <main className="wrap page">
+    <>
       <PageHead
         crumbs={<>Company <b>›</b> <span>Governance</span></>}
         title="Governance inbox"
@@ -173,7 +180,7 @@ export default function Govern() {
       ) : (
         <div className="gv-split">
           <div className="gv-list" role="list" aria-label="Policy candidates">
-            {sorted.map((x) => (
+            {cands.map((x) => (
               <button key={x.id} className={`gv-item t-${x.type}`} aria-pressed={x.id === c.id} onClick={() => pick(x.id)}>
                 <span className="gv-item-t">{x.statement}</span>
                 <span className="gv-item-m">
@@ -191,7 +198,7 @@ export default function Govern() {
 
           <div ref={detail} className={`panel gv-detail t-${c.type}`} aria-label="Candidate detail">
             <div className="gv-sec">
-              <div className="gv-chips"><TypeChip t={c.type} /><span className="chip">Proposed</span><span className="chip mono">{c.pid}</span></div>
+              <div className="gv-chips"><TypeChip t={c.type} /><span className="chip">Proposed</span><span className="chip mono">{c.pid}</span>{c.source === "measured" && <span className="chip ok">From your sessions</span>}</div>
               <h3>{c.statement}</h3>
               <div className="gv-stats">
                 <div className="gv-stat"><b>{c.sessions}</b><span>sessions</span></div>
@@ -238,18 +245,18 @@ export default function Govern() {
                 <label className="gv-field"><span className="gv-label">Owner</span>
                   <select className="gv-select" value={d!.owner} onChange={(e) => patch(c, { owner: e.target.value })}>{OWNERS.map((o) => <option key={o}>{o}</option>)}</select></label>
                 <label className="gv-field"><span className="gv-label">Expires</span>
-                  <input className="gv-input" type="date" value={d!.expires} min={TODAY} onChange={(e) => patch(c, { expires: e.target.value })} /></label>
+                  <input className="gv-input" type="date" value={d!.expires} min={today} onChange={(e) => patch(c, { expires: e.target.value })} /></label>
               </div>
               {rejecting ? (
                 <div className="gv-field">
                   <span className="gv-label">Why reject? Saved to history</span>
                   <textarea className="gv-text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="One team's preference, covered by the linter…" />
-                  <div className="gv-actions"><button className="btn danger" onClick={() => reject(c)}>Reject candidate</button><button className="btn" onClick={() => setRejecting(false)}>Cancel</button></div>
+                  <div className="gv-actions"><button className="btn danger" disabled={busy} onClick={() => reject(c)}>Reject candidate</button><button className="btn" onClick={() => setRejecting(false)}>Cancel</button></div>
                 </div>
               ) : (
                 <div className="gv-actions">
-                  <button className="btn ok" disabled={!meets(c)} onClick={() => approve(c)}><Check size={16} /> Approve and publish</button>
-                  <button className="btn" onClick={() => setRejecting(true)}>Reject</button>
+                  <button className="btn ok" disabled={!meets(c) || busy} onClick={() => approve(c)}><Check size={16} /> Approve and publish</button>
+                  <button className="btn" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
                   {!meets(c) && <span className="gv-hint">Below threshold: keep watching, or lower it above.</span>}
                 </div>
               )}
@@ -277,10 +284,10 @@ export default function Govern() {
                   return (
                     <tr key={p.id}>
                       <td><div className="gv-cell-t">{p.statement}</div><div className="gv-cell-s">{p.id} · {TYPE_LABEL[p.type]}</div></td>
-                      <td><span className="chip">{p.scope}</span> <span className="gv-cell-s">{p.scopeName}</span></td>
+                      <td><span className="chip">{p.scope}</span> <span className="gv-cell-s">{p.scope_name}</span></td>
                       <td><span className={`chip ${p.enforcement === "gate" ? "bad" : p.enforcement === "check" ? "agent" : ""}`}>{ENF[p.enforcement]}</span></td>
                       <td className="gv-nums">{p.owner}</td>
-                      <td className={left <= 45 ? "gv-soon" : "gv-nums"}>{fmt(p.expires)}{left <= 45 && <div className="gv-cell-s">in {left} days</div>}</td>
+                      <td className={left <= 45 ? "gv-soon" : "gv-nums"}>{longDay(p.expires)}{left <= 45 && <div className="gv-cell-s">in {left} days</div>}</td>
                       <td>{p.adherence === null ? <span className="gv-cell-s">Measuring</span> : (
                         <div className="gv-pair-bars"><span className="gv-nums">{p.adherence}%</span>
                           <span className={`gv-bar ad ${p.adherence < 60 ? "bad" : p.adherence < 80 ? "low" : ""}`}><i style={{ width: `${p.adherence}%` }} /></span></div>)}</td>
@@ -292,8 +299,8 @@ export default function Govern() {
                         </div>)}</td>
                       <td>{again && <div className="gv-row-actions">
                         <span className="chip warn">Still overridden</span>
-                        {p.recurrence && <button className="btn sm" onClick={() => revise(p)}>Revise</button>}
-                        <button className="btn sm danger" onClick={() => retire(p)}>Retire</button></div>}</td>
+                        {p.recurrence && <button className="btn sm" disabled={busy} onClick={() => revise(p)}>Revise</button>}
+                        <button className="btn sm danger" disabled={busy} onClick={() => retire(p)}>Retire</button></div>}</td>
                     </tr>
                   );
                 })}
@@ -314,11 +321,11 @@ export default function Govern() {
                   const pct = Math.round((r.followed / (r.followed + r.violated)) * 100);
                   return (
                     <tr key={r.id}>
-                      <td><div className="gv-cell-t">{r.text}</div><div className="gv-cell-s">{r.skill}</div></td>
+                      <td><div className="gv-cell-t">{r.text}{r.source === "measured" && <span className="chip ok" style={{ marginLeft: 8 }}>Measured</span>}</div><div className="gv-cell-s">{r.skill}</div></td>
                       <td className="gv-nums">{r.followed}</td><td className="gv-nums">{r.violated}</td>
                       <td><div className="gv-pair-bars"><span className="gv-nums">{pct}%</span><span className={`gv-bar ad ${pct < 75 ? "bad" : pct < 90 ? "low" : ""}`}><i style={{ width: `${pct}%` }} /></span></div></td>
                       <td><Spark v={r.trend} /></td>
-                      <td><a className="gv-link" href="#/pr">PR {r.latestPr} · T{r.latestTurn}</a></td>
+                      <td><a className="gv-link" href="#/pr">PR {r.latest_pr} · T{r.latest_turn}</a></td>
                     </tr>
                   );
                 })}
@@ -335,7 +342,7 @@ export default function Govern() {
               <div key={h.id}>
                 <span className={`chip ${h.outcome === "approved" ? "ok" : h.outcome === "rejected" ? "bad" : ""}`}>{h.outcome}</span>
                 <div><b>{h.statement}</b><p>{h.why}</p></div>
-                <div className="gv-cell-s">{h.role}<br />{fmt(h.when)}</div>
+                <div className="gv-cell-s">{h.role}<br />{longDay(h.when)}</div>
               </div>
             ))}
           </div>
@@ -343,6 +350,6 @@ export default function Govern() {
       )}
 
       {toast && <div className="gv-toast" role="status"><Check size={16} />{toast}</div>}
-    </main>
+    </>
   );
 }

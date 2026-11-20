@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from .graph_context import build_code_context
 from ..pipeline.edit_linker import LinkOutcome
 from ..pipeline.session import UnpackSession, UnpackTurn
 
@@ -32,6 +33,8 @@ def load_system_prompt(version: int = 1) -> str:
 
 def load_repair_prompt(version: int = 1) -> str:
     path = PROMPTS_DIR / f"json_repair_v{version}.md"
+    if not path.exists():  # the repair prompt does not change with the reasoning prompt
+        path = PROMPTS_DIR / "json_repair_v1.md"
     return path.read_text(encoding="utf-8")
 
 
@@ -104,6 +107,7 @@ def build_reasoning_prompt(
     *,
     prompt_version: int = 1,
     max_functions: int | None = None,
+    graph: Any | None = None,
 ) -> BuiltPrompt:
     """Build the single-call LLM prompt containing TASK, CHANGED FUNCTIONS, FACTS, and SESSION."""
     limit = max_functions or settings.MAX_LLM_FUNCTIONS
@@ -156,6 +160,10 @@ def build_reasoning_prompt(
         if link.out_of_band_turns:
             fn_lines.append(f"   out_of_band: {', '.join(link.out_of_band_turns)}")
     sections.append("\n".join(fn_lines))
+
+    # 2b. CODE CONTEXT from the head code graph (callers, callees, test reach). Context only, never evidence.
+    if graph is not None and settings.GRAPH_CONTEXT_ENABLED and target_ids:
+        sections.append(build_code_context(graph, target_ids, node_to_alias))
 
     # 3. FACTS (computed, do not contradict)
     fact_lines = ["## FACTS (computed, do not contradict)"]

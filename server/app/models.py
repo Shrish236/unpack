@@ -6,7 +6,9 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -15,7 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from .db import Base
 
@@ -279,3 +281,328 @@ class WorkerHeartbeat(Base):
 
     worker_id = Column(String(64), primary_key=True)
     beat_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Decision(Base):
+    """One decision in a session: who made it, what it was about, and the verbatim quote that proves it."""
+    __tablename__ = "decisions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_id = Column(BigInteger, ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False)
+    turn = Column(Integer, nullable=False)
+    actor = Column(Text, nullable=False)  # agent | human
+    kind = Column(Text, nullable=False)  # choice | redirect | reject | requirement | discussion | permission_denied
+    type = Column(Text, nullable=False)  # architecture | design | dependency | retries | test | scope | other
+    proposal = Column(Text, nullable=False, default="")
+    choice = Column(Text, nullable=False, default="")
+    statement = Column(Text, nullable=False, default="")  # the correction as a reusable rule, for clustering
+    quote = Column(Text, nullable=False, default="")
+    rule_id = Column(Text, nullable=True)  # steering rule id within this analysis's snapshot (S1, S2 ...)
+    rule_followed = Column(Boolean, nullable=True)
+    source = Column(Text, nullable=False, default="llm")  # parsed | llm
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_decisions_analysis", "analysis_id"),)
+
+
+class SessionSignals(Base):
+    """Deterministic signals, highlights and the steering snapshot for one analysis."""
+    __tablename__ = "session_signals"
+
+    analysis_id = Column(BigInteger, ForeignKey("analyses.id", ondelete="CASCADE"), primary_key=True)
+    signals = Column(JSONB, nullable=False, default=dict)  # tool_stats, denied, attempts, flags ...
+    highlights = Column(JSONB, nullable=False, default=list)  # [{kind: went_right|went_wrong, text, turn, quote}]
+    steering = Column(JSONB, nullable=False, default=dict)  # {files, rules}
+
+
+# ---------------------------------------------------------------------------------------------
+# Dashboard tables. Aggregates for the executive, manager and governance pages. They are loaded
+# with dummy data by server/app/dashboard_seed.py, and the governance actions write to them.
+# Nothing here is measured yet; the seed says so.
+# ---------------------------------------------------------------------------------------------
+
+
+class ExecWeek(Base):
+    """One week of the company-wide agent programme (executive page)."""
+    __tablename__ = "exec_weeks"
+
+    week_start = Column(Date, primary_key=True)
+    adherence = Column(Integer, nullable=False)  # % of agent decisions that followed a skill rule
+    repeat_overrides = Column(Float, nullable=False)  # the same human correction, per 100 sessions
+    human_decisions = Column(Integer, nullable=False)
+    mix = Column(JSONB, nullable=False)  # decisions by type, e.g. {"architecture": 18, ...}
+
+
+class ExecPeriod(Base):
+    """KPIs and criteria outcomes for one reporting window (30d or 90d)."""
+    __tablename__ = "exec_periods"
+
+    period = Column(Text, primary_key=True)
+    adherence = Column(Integer, nullable=False)
+    adherence_delta = Column(Integer, nullable=False)
+    override = Column(Float, nullable=False)
+    override_before = Column(Float, nullable=False)
+    verified = Column(Integer, nullable=False)
+    verified_delta = Column(Integer, nullable=False)
+    unrequested = Column(Integer, nullable=False)
+    unrequested_delta = Column(Integer, nullable=False)
+    pending = Column(Integer, nullable=False)
+    pending_oldest_days = Column(Integer, nullable=False)
+    sessions = Column(Integer, nullable=False)
+    rework_first = Column(Integer, nullable=False)
+    rework_missed = Column(Integer, nullable=False)
+    rework_thin = Column(Integer, nullable=False)
+
+
+class ExecHumanKind(Base):
+    """How human decisions entered the record, as a share of all human decisions."""
+    __tablename__ = "exec_human_kinds"
+
+    kind = Column(Text, primary_key=True)
+    label = Column(Text, nullable=False)
+    pct = Column(Integer, nullable=False)
+    position = Column(Integer, nullable=False)
+
+
+class ExecPolicyEvent(Base):
+    """A policy publication, drawn as a marker on the adherence chart."""
+    __tablename__ = "exec_policy_events"
+
+    id = Column(Text, primary_key=True)  # policy id, e.g. P-12
+    week_start = Column(Date, nullable=False)
+    text = Column(Text, nullable=False)
+    headline = Column(Boolean, nullable=False, default=False)  # the policy the page reports on
+
+
+class ExecAgent(Base):
+    """An agent tool or model, and how far its claims verify."""
+    __tablename__ = "exec_agents"
+
+    name = Column(Text, primary_key=True)
+    tool = Column(Text, nullable=False)
+    decisions = Column(Integer, nullable=True)
+    verified = Column(Integer, nullable=True)  # %
+    unrequested = Column(Integer, nullable=True)  # %
+    attempts = Column(Float, nullable=True)
+    autonomy = Column(Text, nullable=True)  # advice | check | gate
+    position = Column(Integer, nullable=False)
+
+
+class Team(Base):
+    """A team, with its headline KPIs and criteria funnel for the last eight weeks."""
+    __tablename__ = "teams"
+
+    id = Column(Text, primary_key=True)
+    name = Column(Text, nullable=False)
+    position = Column(Integer, nullable=False)
+    prs = Column(Integer, nullable=False)
+    prs_delta = Column(Text, nullable=False)
+    attempts = Column(Float, nullable=False)
+    attempts_delta = Column(Text, nullable=False)
+    overrules = Column(Float, nullable=False)
+    thin = Column(Integer, nullable=False)  # % of criteria that were thin
+    unsupported = Column(Integer, nullable=False)  # % of PRs with an unsupported claim
+    funnel_total = Column(Integer, nullable=False)
+    funnel_first = Column(Integer, nullable=False)
+    funnel_second_agent = Column(Integer, nullable=False)
+    funnel_second_thin = Column(Integer, nullable=False)
+    funnel_third_agent = Column(Integer, nullable=False)
+    funnel_third_thin = Column(Integer, nullable=False)
+
+
+class TeamArea(Base):
+    """A code area a team works in (a path prefix)."""
+    __tablename__ = "team_areas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Text, ForeignKey("teams.id"), nullable=False)
+    path = Column(Text, nullable=False)
+    position = Column(Integer, nullable=False)
+
+    __table_args__ = (UniqueConstraint("team_id", "path", name="uq_team_area_path"),)
+
+
+class TeamAreaWeek(Base):
+    """Rework in one area in one week. attempts = 0 means no criteria that week."""
+    __tablename__ = "team_area_weeks"
+
+    area_id = Column(Integer, ForeignKey("team_areas.id", ondelete="CASCADE"), primary_key=True)
+    week_start = Column(Date, primary_key=True)
+    attempts = Column(Float, nullable=False)
+    overrules = Column(Integer, nullable=False)
+
+
+class TeamSuggestion(Base):
+    """A proposed fix, from the brief or from the agent, with the PRs it came from."""
+    __tablename__ = "team_suggestions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Text, ForeignKey("teams.id"), nullable=False)
+    position = Column(Integer, nullable=False)
+    cause = Column(Text, nullable=False)  # requirement-thin | agent-missed
+    text = Column(Text, nullable=False)
+    prs = Column(ARRAY(Integer), nullable=False)
+
+
+class TeamMix(Base):
+    """Decisions by type for one team, split between the agent and humans."""
+    __tablename__ = "team_mix"
+
+    team_id = Column(Text, ForeignKey("teams.id"), primary_key=True)
+    type = Column(Text, primary_key=True)
+    agent = Column(Integer, nullable=False)
+    human = Column(Integer, nullable=False)
+
+
+class TeamTool(Base):
+    """Tool use across one team's agents."""
+    __tablename__ = "team_tools"
+
+    team_id = Column(Text, ForeignKey("teams.id"), primary_key=True)
+    name = Column(Text, primary_key=True)
+    calls = Column(Integer, nullable=False)
+    tokens = Column(Integer, nullable=False)
+
+
+class TeamPR(Base):
+    """A recent PR with an agent session, for a team's PR list."""
+    __tablename__ = "team_prs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    number = Column(Integer, nullable=False, unique=True)
+    team_id = Column(Text, ForeignKey("teams.id"), nullable=False)
+    title = Column(Text, nullable=False)
+    area = Column(Text, nullable=False)
+    week_start = Column(Date, nullable=False)
+    agent = Column(Text, nullable=False)
+    agent_decisions = Column(Integer, nullable=False)
+    human_decisions = Column(Integer, nullable=False)
+    overrules = Column(Integer, nullable=False)
+    attempts = Column(Float, nullable=False)
+    flags = Column(ARRAY(Text), nullable=False)  # unsupported | new-dependency | skipped-test | async-gap
+    source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+
+
+class ConsistencyItem(Base):
+    """A decision type that teams may decide differently."""
+    __tablename__ = "consistency_items"
+
+    id = Column(Text, primary_key=True)
+    type = Column(Text, nullable=False)
+    question = Column(Text, nullable=False)
+    position = Column(Integer, nullable=False)
+
+
+class ConsistencyRow(Base):
+    """How one team decided a consistency question."""
+    __tablename__ = "consistency_rows"
+
+    item_id = Column(Text, ForeignKey("consistency_items.id", ondelete="CASCADE"), primary_key=True)
+    team_id = Column(Text, ForeignKey("teams.id"), primary_key=True)
+    approach = Column(Text, nullable=False)
+    prs = Column(Integer, nullable=False)
+
+
+class GovCandidate(Base):
+    """An override that repeats across sessions, waiting for a decision. Status: open | approved | rejected."""
+    __tablename__ = "gov_candidates"
+
+    id = Column(Text, primary_key=True)
+    pid = Column(Text, nullable=False, unique=True)  # the policy id it gets if approved
+    statement = Column(Text, nullable=False)
+    type = Column(Text, nullable=False)
+    sessions = Column(Integer, nullable=False)
+    teams = Column(Integer, nullable=False)
+    developers = Column(Integer, nullable=False)
+    trend = Column(ARRAY(Integer), nullable=False)  # overrides per week, oldest first
+    per_hundred = Column(Integer, nullable=False)
+    match = Column(Text, nullable=False)
+    scope = Column(Text, nullable=False)  # repo | team | org
+    enforcement = Column(Text, nullable=False)  # advice | check | gate
+    owner = Column(Text, nullable=False)
+    expires = Column(Date, nullable=False)
+    first_seen = Column(Date, nullable=False)
+    status = Column(Text, nullable=False, default="open")
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+
+
+class GovPolicy(Base):
+    """A published policy. Status: active | retired | revised."""
+    __tablename__ = "gov_policies"
+
+    id = Column(Text, primary_key=True)
+    statement = Column(Text, nullable=False)
+    type = Column(Text, nullable=False)
+    scope = Column(Text, nullable=False)
+    scope_name = Column(Text, nullable=False)
+    enforcement = Column(Text, nullable=False)
+    owner = Column(Text, nullable=False)
+    expires = Column(Date, nullable=False)
+    adherence = Column(Integer, nullable=True)  # null while it is still being measured
+    before = Column(Integer, nullable=False)  # overrides per 100 sessions before the policy
+    after = Column(Integer, nullable=True)
+    match = Column(Text, nullable=False)
+    recurrence_sessions = Column(Integer, nullable=True)  # set when the same override still recurs
+    recurrence_teams = Column(Integer, nullable=True)
+    recurrence_developers = Column(Integer, nullable=True)
+    status = Column(Text, nullable=False, default="active")
+    published_on = Column(Date, nullable=True)
+
+
+class GovEvidence(Base):
+    """A human override, quoted from a session. Belongs to a candidate or to a policy's recurrence."""
+    __tablename__ = "gov_evidence"
+
+    id = Column(Text, primary_key=True)
+    candidate_id = Column(Text, ForeignKey("gov_candidates.id", ondelete="CASCADE"), nullable=True)
+    policy_id = Column(Text, ForeignKey("gov_policies.id", ondelete="CASCADE"), nullable=True)
+    position = Column(Integer, nullable=False)
+    session = Column(Text, nullable=False)
+    pr = Column(Text, nullable=False)
+    team = Column(Text, nullable=False)
+    dev = Column(Text, nullable=False)  # hashed id, never a name
+    turn = Column(Integer, nullable=False)
+    kind = Column(Text, nullable=False)  # redirect | reject | permission_denied | revert | requirement | discussion
+    occurred_on = Column(Date, nullable=False)
+    proposal = Column(Text, nullable=False)
+    choice = Column(Text, nullable=False)
+    quote = Column(Text, nullable=False)
+    source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+
+
+class GovSkillRule(Base):
+    """A skill rule and how often agent decisions followed it."""
+    __tablename__ = "gov_skill_rules"
+
+    id = Column(Text, primary_key=True)
+    position = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+    skill = Column(Text, nullable=False)
+    followed = Column(Integer, nullable=False)
+    violated = Column(Integer, nullable=False)
+    trend = Column(ARRAY(Integer), nullable=False)  # violations per week
+    latest_pr = Column(Text, nullable=False)
+    latest_turn = Column(Integer, nullable=False)
+    source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+
+
+class GovHistory(Base):
+    """A decision taken on a candidate or policy. seq orders the list, newest first."""
+    __tablename__ = "gov_history"
+
+    seq = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Text, nullable=False, unique=True)
+    statement = Column(Text, nullable=False)
+    outcome = Column(Text, nullable=False)  # approved | rejected | expired
+    role = Column(Text, nullable=False)
+    occurred_on = Column(Date, nullable=False)
+    why = Column(Text, nullable=False)
+
+
+DASHBOARD_TABLES = (
+    "exec_weeks", "exec_periods", "exec_human_kinds", "exec_policy_events", "exec_agents",
+    "teams", "team_areas", "team_area_weeks", "team_suggestions", "team_mix", "team_tools", "team_prs",
+    "consistency_items", "consistency_rows",
+    "gov_evidence", "gov_candidates", "gov_policies", "gov_skill_rules", "gov_history",
+)

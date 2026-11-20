@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Layers, TrendingDown, TrendingUp } from "lucide-react";
-import { TYPE_LABEL } from "../data";
-import {
-  adherence, agents, backlog, expiring, humanKinds, humanPerWeek, kpis, mix, policyEvents,
-  repeatOverrides, rework, typeOrder, weekLabels, type Autonomy, type Period,
-} from "../data.exec";
-import { Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
+import { TYPE_LABEL, type DType } from "../data";
+import { type Autonomy, type ExecData, type Period } from "../api";
+import { useExec } from "../queries";
+import { shortDay } from "../format";
+import { DataGate, Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
 import "../styles/exec.css";
+
+const TYPE_ORDER: DType[] = ["architecture", "design", "dependency", "retries", "test", "scope"];
 
 // Charts draw at their real pixel width so text stays at the type scale on phones.
 function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
@@ -32,16 +33,15 @@ function Delta({ d, goodWhenUp = true, unit = "pts" }: { d: number; goodWhenUp?:
   return <span className={`delta ${good ? "up" : "down"}`}><Icon size={12} /> {d > 0 ? "+" : "−"}{Math.abs(d)} {unit}</span>;
 }
 
-function Trend({ from, period }: { from: number; period: Period }) {
+function Trend({ d }: { d: ExecData }) {
   const [ref, w] = useWidth();
   const H = 244, L = 34, R = 44, T = 32, B = 26;
-  const a = adherence.slice(from), o = repeatOverrides.slice(from), labels = weekLabels.slice(from);
+  const a = d.adherence, o = d.repeat_overrides, labels = d.weeks.map(shortDay);
   const n = a.length;
-  const x = (i: number) => L + (i * (w - L - R)) / (n - 1);
+  const x = (i: number) => L + (i * (w - L - R)) / Math.max(1, n - 1);
   const ya = (v: number) => T + ((100 - v) / 40) * (H - T - B);
   const yo = (v: number) => T + ((14 - v) / 14) * (H - T - B);
   const path = (vs: number[], y: (v: number) => number) => vs.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
-  const events = policyEvents.filter((e) => e.week >= from).map((e) => ({ ...e, i: e.week - from }));
   const step = w < 520 ? 3 : 1;
   return (
     <div ref={ref} className="chart">
@@ -53,10 +53,10 @@ function Trend({ from, period }: { from: number; period: Period }) {
           </g>
         ))}
         {[0, 7, 14].map((v) => <text key={v} x={w - R + 8} y={yo(v) + 4} className="ax human">{v}</text>)}
-        {events.map((e) => (
+        {d.policy_events.map((e) => (
           <g key={e.id}>
-            <line x1={x(e.i)} x2={x(e.i)} y1={T - 6} y2={H - B} className="event" />
-            <text x={x(e.i)} y={T - 12} textAnchor={x(e.i) < 70 ? "start" : x(e.i) > w - 90 ? "end" : "middle"} className="ev-t">{e.id}{w >= 520 ? " published" : ""}</text>
+            <line x1={x(e.week)} x2={x(e.week)} y1={T - 6} y2={H - B} className="event" />
+            <text x={x(e.week)} y={T - 12} textAnchor={x(e.week) < 70 ? "start" : x(e.week) > w - 90 ? "end" : "middle"} className="ev-t">{e.id}{w >= 520 ? " published" : ""}</text>
           </g>
         ))}
         <path d={path(a, ya)} className="line agent" />
@@ -72,17 +72,17 @@ function Trend({ from, period }: { from: number; period: Period }) {
       <p className="legend-row">
         <span><i className="sw agent" />Skill adherence, % of agent decisions</span>
         <span><i className="sw human" />Repeat overrides per 100 sessions</span>
-        <span className="mono dim">{period === "30d" ? "last 5 weeks" : "last 12 weeks"}</span>
+        <span className="mono dim">{d.period === "30d" ? "last 5 weeks" : "last 12 weeks"}</span>
       </p>
     </div>
   );
 }
 
-function Mix({ from }: { from: number }) {
+function Mix({ d }: { d: ExecData }) {
   const [ref, w] = useWidth();
   const H = w > 560 ? 290 : 200, L = 30, T = 8, B = 22;
-  const weeks = mix.architecture.length - from;
-  const totals = Array.from({ length: weeks }, (_, i) => typeOrder.reduce((s, t) => s + mix[t][from + i], 0));
+  const weeks = d.weeks.length;
+  const totals = Array.from({ length: weeks }, (_, i) => TYPE_ORDER.reduce((s, t) => s + d.mix[t][i], 0));
   const max = Math.ceil(Math.max(...totals) / 40) * 40;
   const slot = (w - L) / weeks, bw = Math.min(28, slot * 0.64);
   const y = (v: number) => T + (1 - v / max) * (H - T - B);
@@ -100,18 +100,18 @@ function Mix({ from }: { from: number }) {
           const cx = L + slot * i + (slot - bw) / 2;
           return (
             <g key={i}>
-              {typeOrder.map((t) => {
-                const v = mix[t][from + i];
-                const r = <rect key={t} x={cx} y={y(acc + v)} width={bw} height={y(acc) - y(acc + v) - 1} rx="2" style={{ fill: `var(--t-${t})` }}><title>{weekLabels[from + i]} · {TYPE_LABEL[t]}: {v}</title></rect>;
+              {TYPE_ORDER.map((t) => {
+                const v = d.mix[t][i];
+                const r = <rect key={t} x={cx} y={y(acc + v)} width={bw} height={y(acc) - y(acc + v) - 1} rx="2" style={{ fill: `var(--t-${t})` }}><title>{shortDay(d.weeks[i])} · {TYPE_LABEL[t]}: {v}</title></rect>;
                 acc += v;
                 return r;
               })}
-              {(weeks < 8 || i % 2 === 0) && <text x={cx + bw / 2} y={H - 6} textAnchor="middle" className="ax">{weekLabels[from + i]}</text>}
+              {(weeks < 8 || i % 2 === 0) && <text x={cx + bw / 2} y={H - 6} textAnchor="middle" className="ax">{shortDay(d.weeks[i])}</text>}
             </g>
           );
         })}
       </svg>
-      <div className="chips">{typeOrder.map((t) => <TypeChip key={t} t={t} />)}</div>
+      <div className="chips">{TYPE_ORDER.map((t) => <TypeChip key={t} t={t} />)}</div>
     </div>
   );
 }
@@ -126,57 +126,55 @@ const Meter = ({ v, bad }: { v: number; bad?: boolean }) => (
   <span className="meter"><span className="track"><i className={bad ? "bad" : ""} style={{ width: `${v}%` }} /></span><b className="mono">{v}%</b></span>
 );
 
-export default function Exec() {
-  const [period, setPeriod] = useState<Period>("30d");
-  const k = kpis[period];
-  const from = period === "30d" ? 7 : 0;
-
+function ExecBody({ d }: { d: ExecData }) {
+  const k = d.kpis;
   const humanShare = Math.round(
-    (humanPerWeek.slice(from).reduce((s, v) => s + v, 0) /
-      typeOrder.reduce((s, t) => s + mix[t].slice(from).reduce((a, v) => a + v, 0), 0)) * 100,
+    (d.human_per_week.reduce((s, v) => s + v, 0) /
+      TYPE_ORDER.reduce((s, t) => s + d.mix[t].reduce((a, v) => a + v, 0), 0)) * 100,
   );
 
-  const r = rework[period];
+  const r = d.rework;
   const total = r.first + r.missed + r.thin;
   const pct = (v: number) => Math.round((v / total) * 100);
   const thinOfRework = Math.round((r.thin / (r.missed + r.thin)) * 100);
-  const p12 = policyEvents.find((e) => e.id === "P-12")!;
+  const headline = d.headline;
 
   return (
-    <main className="wrap page exec">
-      <PageHead
-        crumbs={<>Company <b>›</b> <span>Agent programme</span></>}
-        title="Can we trust our agent programme?"
-        sub="Adherence to our own rules, how often the same correction repeats, and whether claims hold up. Measured on agents, areas and policies, never on people."
-        meta={
-          <>
-            <Seg<Period> value={period} onChange={setPeriod} options={[{ id: "30d", label: "30 days" }, { id: "90d", label: "90 days" }]} />
-            <span className="chip"><Layers size={12} /> All teams</span>
-            <span className="chip mono">{k.sessions.toLocaleString("en-US")} sessions</span>
-            <span className="chip sim">Illustrative data</span>
-          </>
-        }
-      />
-
+    <>
       <section className="kpis five" aria-label="Summary">
         <Kpi tone="ok" value={`${k.adherence.v}%`} label="Skill adherence" sub={<><Delta d={k.adherence.d} /> vs prior</>} />
-        <Kpi tone="hot" value={k.override.v.toFixed(1)} label="Repeat overrides per 100 sessions" sub={<>was {k.override.before} before P-12</>} />
+        <Kpi tone="hot" value={k.override.v.toFixed(1)} label="Repeat overrides per 100 sessions" sub={<>was {k.override.before} before {headline?.id ?? "the policy"}</>} />
         <Kpi value={`${k.verified.v}%`} label="Claims verified by code" sub={<><Delta d={k.verified.d} /> vs prior</>} />
         <Kpi value={`${k.unrequested.v}%`} label="Changes nobody asked for" sub={<><Delta d={k.unrequested.d} goodWhenUp={false} /> vs prior</>} />
-        <Kpi value={k.pending.v} label="Policies waiting for approval" sub={<>oldest {k.pending.oldestDays} days</>} />
+        <Kpi value={k.pending.v} label="Policies waiting for approval" sub={<>oldest {k.pending.oldest_days} days</>} />
       </section>
+
+      {d.measured && d.measured.sessions > 0 && (
+        <Panel title="Live from your sessions" sub="Measured by Unpack from real agent sessions. The charts below are the sample baseline."
+          aside={<span className="chip ok">Measured</span>}>
+          <section className="kpis" aria-label="Measured">
+            <Kpi value={d.measured.sessions} label="sessions analysed" sub={`${d.measured.decisions} decisions found`} />
+            <Kpi value={d.measured.human_decisions} label="human interventions" sub={Object.entries(d.measured.human_kinds).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(" · ") || "none"} tone="hot" />
+            <Kpi value={d.measured.adherence === null ? "n/a" : `${d.measured.adherence}%`} label="steering followed" sub={`${d.measured.rule_checks} decisions checked against a rule`} tone="ok" />
+            <Kpi value={d.measured.tool_calls} label="tool calls" sub={`${d.measured.tokens.toLocaleString()} tokens`} />
+            <Kpi value={Object.values(d.measured.flags).reduce((a, b) => a + b, 0)} label="flags raised" sub={Object.entries(d.measured.flags).map(([k, v]) => `${v} ${k}`).join(" · ") || "none"} tone="bad" />
+          </section>
+        </Panel>
+      )}
 
       <Panel
         title="Is governance working?"
-        sub={`Repeat overrides ${repeatOverrides[p12.week - 1]} → ${repeatOverrides[11]} per 100 sessions since ${p12.id} was published. Associated with the policy, not proven caused by it.`}
+        sub={headline
+          ? `Repeat overrides ${headline.before} → ${headline.after} per 100 sessions since ${headline.id} was published. Associated with the policy, not proven caused by it.`
+          : "Associated with the policy, not proven caused by it."}
         aside={<Link href="#/govern">Policies</Link>}
       >
-        <Trend from={from} period={period} />
+        <Trend d={d} />
       </Panel>
 
       <div className="grid-7-5">
         <Panel title="What agents and people decide" sub="decisions per week, by type" aside={<Link href="#/pr">Example PR</Link>}>
-          <Mix from={from} />
+          <Mix d={d} />
           <div className="share">
             <div className="share-bar" role="img" aria-label={`Agent decided ${100 - humanShare}%, human decided ${humanShare}%`}>
               <i className="agent" style={{ width: `${100 - humanShare}%` }}><span className="w">Agent&nbsp;</span>{100 - humanShare}%</i>
@@ -203,7 +201,7 @@ export default function Exec() {
         </Panel>
         <Panel title="Where human decisions come from" sub="share of human decisions, by how they entered the record">
           <ul className="kinds">
-            {humanKinds.map((h) => (
+            {d.human_kinds.map((h) => (
               <li key={h.kind}><span>{h.label}</span><span className="track"><i style={{ width: `${h.pct * 2.2}%` }} /></span><b className="mono">{h.pct}%</b></li>
             ))}
           </ul>
@@ -221,7 +219,7 @@ export default function Exec() {
             <table className="table">
               <thead><tr><th>Agent</th><th>Verified</th><th>Unrequested</th><th>Attempts</th><th>Autonomy</th></tr></thead>
               <tbody>
-                {agents.map((a) => (
+                {d.agents.map((a) => (
                   <tr key={a.name} className={a.autonomy ? "" : "muted"}>
                     <td><b className="mono nm">{a.name}</b><div className="panel-sub">{a.tool}{a.decisions ? ` · ${a.decisions.toLocaleString("en-US")} decisions` : ""}</div></td>
                     <td>{a.verified != null ? <Meter v={a.verified} /> : "–"}</td>
@@ -238,24 +236,48 @@ export default function Exec() {
 
         <Panel title="Governance backlog" sub="policy candidates and expiries" aside={<Link href="#/govern">Open inbox</Link>}>
           <ul className="rows">
-            {backlog.map((b) => (
+            {d.backlog.map((b) => (
               <li key={b.id}>
-                <div><b>{b.statement}</b><div className="panel-sub">{b.id} · waiting {b.waitingDays}d</div></div>
+                <div><b>{b.statement}</b><div className="panel-sub">{b.id} · waiting {b.waiting_days}d</div></div>
                 <div className="chips left"><span className="chip human">{b.sessions} sessions</span><span className="chip">{b.teams} {b.teams === 1 ? "team" : "teams"}</span><span className="chip">{b.developers} devs</span></div>
               </li>
             ))}
           </ul>
           <p className="panel-sub sect">Expiring soon</p>
           <ul className="rows">
-            {expiring.map((e) => (
+            {d.expiring.map((e) => (
               <li key={e.id}>
                 <div><b>{e.statement}</b><div className="panel-sub">{e.id} · owner {e.owner}</div></div>
-                <span className={`chip ${e.inDays <= 14 ? "warn" : ""}`}>in {e.inDays} days</span>
+                <span className={`chip ${e.in_days <= 14 ? "warn" : ""}`}>in {e.in_days} days</span>
               </li>
             ))}
           </ul>
         </Panel>
       </div>
+    </>
+  );
+}
+
+export default function Exec() {
+  const [period, setPeriod] = useState<Period>("30d");
+  const q = useExec(period);
+  const sessions = q.data?.kpis.sessions;
+  return (
+    <main className="wrap page exec">
+      <PageHead
+        crumbs={<>Company <b>›</b> <span>Agent programme</span></>}
+        title="Can we trust our agent programme?"
+        sub="Adherence to our own rules, how often the same correction repeats, and whether claims hold up. Measured on agents, areas and policies, never on people."
+        meta={
+          <>
+            <Seg<Period> value={period} onChange={setPeriod} options={[{ id: "30d", label: "30 days" }, { id: "90d", label: "90 days" }]} />
+            <span className="chip"><Layers size={12} /> All teams</span>
+            {sessions !== undefined && <span className="chip mono">{sessions.toLocaleString("en-US")} sessions</span>}
+            <span className="chip sim">Illustrative data</span>
+          </>
+        }
+      />
+      <DataGate q={q}>{(d) => <ExecBody d={d} />}</DataGate>
     </main>
   );
 }

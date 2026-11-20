@@ -183,7 +183,7 @@ class TestSessionFinder(unittest.TestCase):
             self.assertEqual(len(trimmed["lines"]), 2)
 
             msg = trimmed["lines"][1]
-            self.assertNotIn("tokens", msg)
+            self.assertEqual(msg["tokens"], {"input": 1000, "output": 200})  # kept for per-tool token metrics
             self.assertNotIn("displayContent", msg)
             self.assertNotIn("displayName", msg)
             self.assertNotIn("renderOutputAsMarkdown", msg)

@@ -23,17 +23,22 @@ class Settings(BaseSettings):
 
     # Reasoning (LLM) is a placeholder in this build. Gemini settings are kept for later.
     REASONING_ENABLED: bool = False
+    DASHBOARD_TEAM_ID: str = "payments"  # measured sessions are shown under this team until a team mapping exists
+    CANDIDATE_MIN_SESSIONS: int = 2  # a repeated override becomes a policy candidate at this many sessions
     GEMINI_BACKEND: str = "ai_studio"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_PRIMARY: str = "gemini-3.1-pro-preview"
-    GEMINI_MODEL_FALLBACK: str = "gemini-2.5-pro"
+    GEMINI_MODEL_PRIMARY: str = "gemini-3.5-flash"
+    GEMINI_MODEL_FALLBACK: str = "gemini-3.7-flash"
     GEMINI_MODEL_REPAIR: str = "gemini-3.5-flash"
     GEMINI_TIMEOUT_S: int = 120
     GEMINI_CONCURRENCY: int = 2
     GEMINI_MAX_INPUT_TOKENS: int = 200000
     GEMINI_MAX_OUTPUT_TOKENS: int = 16384
     GEMINI_DAILY_TOKEN_BUDGET_PER_REPO: int = 5000000
-    PROMPT_VERSION: int = 1
+    PROMPT_VERSION: int = 2
+    GRAPH_CONTEXT_ENABLED: bool = True  # put callers, callees and test reach of changed functions in the prompts
+    LLM_GRAPH_TOOLS: bool = False  # let the model look things up in the code graph before it answers (extra calls)
+    GRAPH_TOOLS_MAX_CALLS: int = 24
 
     # GitHub App and OAuth
     GITHUB_API_URL: str = "https://api.github.com"

@@ -13,7 +13,8 @@ from sqlalchemy import func, select, text
 
 
 from ..db import session_scope
-from ..models import Analysis, FunctionReason, LLMCall, Push, Render, Repo, ReviewFinding, Session
+from ..models import Analysis, Decision, FunctionReason, SessionSignals, LLMCall, Push, Render, Repo, ReviewFinding, Session
+from ..pipeline.rollup import rollup_measured
 from ..pipeline.analysis import AnalysisFailed, analyze_push
 from ..pipeline.repos import CommitUnavailable, ensure_commit, ensure_mirror, save_cached_graph
 from ..security import new_file_name
@@ -90,7 +91,12 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
         )
     except AnalysisFailed as exc:
         await _store_failure(analysis_id, snapshot["push_id"], snapshot["repo_id"], snapshot["branch"],
-                             exc.code, exc.message)
+                             exc.code, exc.message, exc.governance)
+        if exc.governance is not None and exc.governance.signals:
+            try:
+                await rollup_measured()
+            except Exception:
+                log.exception("dashboard rollup failed")
         return
 
     async with session_scope() as session:
@@ -159,6 +165,8 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
                 confidence=reason.get("confidence", "high"), evidence=reason.get("evidence", []),
                 source=reason.get("source", "session"), rejected=reason.get("rejected"),
             ))
+        if outcome.signals:
+            _add_governance(session, analysis_id, outcome.signals, outcome.decisions, outcome.highlights, outcome.steering)
         for call in outcome.llm_calls:
             session.add(LLMCall(
                 analysis_id=analysis_id,
@@ -188,14 +196,34 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
                           dedupe_key=f"render:{analysis_id}")
         await _mark_publish_pending(session, snapshot["repo_id"], snapshot["branch"])
 
+    if outcome.signals:
+        try:
+            await rollup_measured()
+        except Exception:  # the dashboards are derived; a rollup problem must not fail the analysis
+            log.exception("dashboard rollup failed")
 
-async def _store_failure(analysis_id: int, push_id: int, repo_id: int, branch: str, code: str, message: str) -> None:
+
+def _add_governance(session: Any, analysis_id: int, signals: dict[str, Any], decisions: list[dict[str, Any]],
+                    highlights: list[dict[str, Any]], steering: dict[str, Any]) -> None:
+    for d in decisions:
+        session.add(Decision(
+            analysis_id=analysis_id, turn=int(d["turn"][1:]), actor=d["actor"], kind=d["kind"], type=d["type"],
+            proposal=d["proposal"], choice=d["choice"], statement=d.get("statement", ""), quote=d["quote"],
+            rule_id=d.get("rule_id"), rule_followed=d.get("rule_followed"), source=d.get("source", "llm"),
+        ))
+    session.add(SessionSignals(analysis_id=analysis_id, signals=signals, highlights=highlights, steering=steering))
+
+
+async def _store_failure(analysis_id: int, push_id: int, repo_id: int, branch: str, code: str, message: str,
+                         gov: Any = None) -> None:
     async with session_scope() as session:
         analysis = await session.get(Analysis, analysis_id)
         analysis.status = "failed"
         analysis.error_code = code
         analysis.error_message = message[:1000]
         analysis.finished_at = _now()
+        if gov is not None and gov.signals:  # the graph failed, but the session's metrics are still worth keeping
+            _add_governance(session, analysis_id, gov.signals, gov.decisions, gov.highlights, gov.steering)
         await _mark_publish_pending(session, repo_id, branch)
 
 

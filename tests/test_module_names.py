@@ -29,3 +29,11 @@ def test_relative_import_resolves_through_a_namespace_subpackage():
     # `Top()` resolves to the class in the sibling module (no __init__, so no edge; the site says so)
     site = [s for s in g.sites if s.path == "src/pkg/sub/mod.py" and s.kind == "call" and s.raw == "Top()"]
     assert site and site[0].status == "no_init"
+
+
+def test_import_through_a_top_level_dir_without_init_reaches_the_code_from_tests():
+    """`server/` holds no Python files itself, so its modules are named `app.x`, but `import server.app.x` works."""
+    g = build("rootpkg")
+    assert g.mods["shop/app/pricing.py"].name == "app.pricing"
+    assert g.reach["shop/app/pricing.py::apply_discount"].label == "direct"
+    assert g.reach["shop/app/pricing.py::untested_helper"].label == "none"

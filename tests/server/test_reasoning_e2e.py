@@ -26,6 +26,8 @@ class _FakeLLM:
         self._responses = list(responses)
 
     async def generate_json(self, **kwargs) -> RawLLMResponse:
+        if kwargs["response_schema"].__name__ == "LLMDecisionOutput":  # the governance pass has its own call
+            return RawLLMResponse(text='{"decisions": [], "highlights": []}', model="fake-decisions")
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -196,7 +198,7 @@ async def test_full_reasoning_pipeline_end_to_end(client, tmp_data_dir, tmp_path
             sess_row = (await db.execute(select(Session))).scalar_one()
             assert len(sess_row.turns) >= 5
 
-            llm_rows = (await db.execute(select(LLMCall))).scalars().all()
+            llm_rows = (await db.execute(select(LLMCall).where(LLMCall.purpose == "reasons"))).scalars().all()
             assert len(llm_rows) == 1
             assert llm_rows[0].input_tokens == 300 and llm_rows[0].output_tokens == 120
     finally:

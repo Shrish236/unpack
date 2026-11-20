@@ -33,6 +33,12 @@ dev-worker:
 dev-ui:
 	cd web && npm run dev
 
+rollup:
+	python -c "import asyncio; from server.app.pipeline.rollup import rollup_measured; print(asyncio.run(rollup_measured()))"
+
+seed-dashboard:
+	python -m server.app.dashboard_seed
+
 build-ui:
 	cd web && npm run build
 

@@ -17,7 +17,7 @@ from ..db import get_db
 from ..deps import require_repo_access, viewer
 from ..errors import ApiError
 from ..jobs.handlers import ensure_head_graph, read_payload
-from ..models import Analysis, FunctionReason, PRAnalysis, PullRequest, Push, Repo, ReviewFinding, Session, User
+from ..models import Analysis, Decision, SessionSignals, FunctionReason, PRAnalysis, PullRequest, Push, Repo, ReviewFinding, Session, User
 from ..pipeline.analysis import AnalysisFailed
 from ..pipeline.graph_view import _callees, _callers, _nearest_tested
 from ..pipeline.repos import data_dir, repo_dir, read_file_at
@@ -28,6 +28,10 @@ from ..schemas.api import (
     AnalysisStats,
     Banner,
     DiffHunk,
+    GovDecision,
+    GovFlag,
+    GovHighlight,
+    Governance,
     GraphPayload,
     ImpactData,
     PullRequestInfo,
@@ -91,6 +95,32 @@ async def _pr_for_analysis(db: AsyncSession, analysis: Analysis, push: Push) -> 
                            state="merged" if pr.state == "merged" else ("closed" if pr.state == "closed" else "open"))
 
 
+async def _governance(db: AsyncSession, analysis_id: int) -> Governance:
+    sig = await db.get(SessionSignals, analysis_id)
+    if sig is None:
+        return Governance()
+    rows = (await db.execute(select(Decision).where(Decision.analysis_id == analysis_id).order_by(Decision.turn))).scalars().all()
+    rules = {r["id"]: r["text"] for r in (sig.steering or {}).get("rules", [])}
+    signals = sig.signals or {}
+    decisions = [
+        GovDecision(turn=f"T{d.turn}", actor=d.actor, kind=d.kind, type=d.type, proposal=d.proposal, choice=d.choice,
+                    statement=d.statement, quote=d.quote, rule=rules.get(d.rule_id), rule_followed=d.rule_followed,
+                    source=d.source if d.source in ("parsed", "llm") else "llm")
+        for d in rows
+    ]
+    return Governance(
+        decisions=decisions,
+        highlights=[GovHighlight(**h) for h in (sig.highlights or [])],
+        flags=[GovFlag(**f) for f in signals.get("flags", [])],
+        tool_stats=signals.get("tool_stats", {}),
+        attempts=int(signals.get("attempts", 1)),
+        human_interventions=sum(1 for d in rows if d.actor == "human"),
+        steering_files=sorted((sig.steering or {}).get("files", {})),
+        steering_rules=len(rules),
+        available=True,
+    )
+
+
 async def _build_analysis(db: AsyncSession, analysis: Analysis, push: Push, repo: Repo) -> AnalysisResponse:
     reasons_rows = (await db.execute(select(FunctionReason).where(FunctionReason.analysis_id == analysis.id))).scalars().all()
     findings_rows = (await db.execute(select(ReviewFinding).where(ReviewFinding.analysis_id == analysis.id))).scalars().all()
@@ -119,7 +149,9 @@ async def _build_analysis(db: AsyncSession, analysis: Analysis, push: Push, repo
         error_code=analysis.error_code,
         error_message=analysis.error_message,
     )
+    governance = await _governance(db, analysis.id)
     return AnalysisResponse(
+        governance=governance,
         analysis=metadata,
         pull_request=await _pr_for_analysis(db, analysis, push),
         banner=Banner(**analysis.banner) if analysis.banner else None,

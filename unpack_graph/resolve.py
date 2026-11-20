@@ -130,6 +130,12 @@ class Resolver:
         for m in mods.values():
             if m.name not in self.mod_by_name or m.is_init:
                 self.mod_by_name[m.name] = m
+        # Run from the repository root, `import server.app.x` is valid even when `server/` holds no Python files
+        # itself (so the module name above starts at `app`). Register each module under its full path as well.
+        for m in mods.values():
+            full = (m.path[: -len("/__init__.py")] if m.is_init else m.path[:-3]).replace("/", ".")
+            if full and full not in self.mod_by_name:
+                self.mod_by_name[full] = m
         for m in mods.values():
             for f in m.funcs:
                 self.funcs[f.id] = f

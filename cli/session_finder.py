@@ -12,8 +12,16 @@ from typing import Any
 
 TOOL_RESULT_MAX_BYTES = 20 * 1024
 DROP_MESSAGE_KEYS = frozenset(
-    {"tokens", "displayContent", "displayName", "renderOutputAsMarkdown"}
+    {"displayContent", "displayName", "renderOutputAsMarkdown"}
 )
+# Token counts are small and the server needs them for per-tool token metrics, so they are kept, as plain numbers only.
+TOKEN_KEYS = ("input", "output", "cached", "thoughts", "tool", "total")
+
+
+def _compact_tokens(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {k: value[k] for k in TOKEN_KEYS if isinstance(value.get(k), (int, float))}
 DROP_TOOL_KEYS = frozenset({"displayContent", "displayName", "renderOutputAsMarkdown"})
 
 
@@ -233,6 +241,8 @@ def trim_session_line(
             continue
         if key == "toolCalls" and isinstance(val, list):
             cleaned[key] = [_trim_tool_call(tc, max_bytes) for tc in val]
+        elif key == "tokens":
+            cleaned[key] = _compact_tokens(val)
         else:
             cleaned[key] = val
     return cleaned

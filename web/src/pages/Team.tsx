@@ -1,21 +1,27 @@
 import { useState } from "react";
 import { ArrowRight } from "lucide-react";
-import { Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
-import { consistency, FLAG_LABEL, teams, WEEKS, type TeamId } from "../data.team";
+import { Kpi, PageHead, Panel, Seg, TypeChip, DataGate } from "../ui";
+import { type ConsistencyItem, type Flag, type TeamPage } from "../api";
+import { useTeam, useTeams } from "../queries";
+import { shortDay } from "../format";
 import "../styles/team.css";
+
+const FLAG_LABEL: Record<Flag, string> = {
+  unsupported: "Unsupported claim",
+  "new-dependency": "New dependency",
+  "skipped-test": "Skipped test",
+  "async-gap": "Untested path",
+};
 
 const fmtTok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`);
 
-export default function Team() {
-  const [id, setId] = useState<TeamId>("payments");
+function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: ConsistencyItem[]; names: Record<string, string> }) {
   const [metric, setMetric] = useState<"attempts" | "overrules">("attempts");
   const [tool, setTool] = useState<"calls" | "tokens">("calls");
   const [sel, setSel] = useState<{ area: string; week: number | null } | null>(null);
 
-  const t = teams[id];
   const k = t.kpis;
-  const pick = (next: TeamId) => { setId(next); setSel(null); };
-
+  const labels = t.weeks.map(shortDay);
   const prs = t.prs.filter((p) => !sel || (p.area === sel.area && (sel.week === null || p.week === sel.week)));
   const maxTool = Math.max(...t.tools.map((x) => x[tool]));
   const maxMix = Math.max(...t.mix.map((m) => m.agent + m.human));
@@ -27,21 +33,10 @@ export default function Team() {
   const heat = (v: number) => (metric === "attempts" ? Math.min(1, Math.max(0, (v - 1) / 1.6)) : Math.min(1, v / 6));
 
   return (
-    <main className="wrap page tm">
-      <PageHead
-        crumbs={<>Company <b>›</b> Engineering <b>›</b> <span>{t.name}</span></>}
-        title={`${t.name} team`}
-        sub="Where rework piles up, whether the agent or the brief caused it, and where teams decide the same thing differently."
-        meta={<><span className="chip">Last 8 weeks</span><span className="chip sim">Illustrative data</span></>}
-      />
-      <div className="tm-controls">
-        <Seg value={id} onChange={pick} options={[{ id: "payments", label: "Payments" }, { id: "auth", label: "Auth" }, { id: "search", label: "Search" }]} />
-        <span className="sim-note">Teams, areas and code. Never individuals.</span>
-      </div>
-
+    <>
       <section className="kpis" aria-label="Summary">
-        <Kpi value={k.prs} label="PRs with agent sessions" sub={<span className="delta up">{k.prsDelta} vs prior 8 wk</span>} />
-        <Kpi value={k.attempts.toFixed(2)} label="Attempts per criterion" sub={<span className={`delta ${k.attemptsDelta.startsWith("+") ? "down" : "up"}`}>{k.attemptsDelta} vs prior 8 wk</span>} />
+        <Kpi value={k.prs} label="PRs with agent sessions" sub={<span className="delta up">{k.prs_delta} vs prior 8 wk</span>} />
+        <Kpi value={k.attempts.toFixed(2)} label="Attempts per criterion" sub={<span className={`delta ${k.attempts_delta.startsWith("+") ? "down" : "up"}`}>{k.attempts_delta} vs prior 8 wk</span>} />
         <Kpi value={k.overrules.toFixed(1)} label="Human overrules per PR" tone="hot" sub="agent proposals rejected or redirected" />
         <Kpi value={`${k.thin}%`} label="Criteria that were thin" sub="requirement, not the agent" />
         <Kpi value={`${k.unsupported}%`} label="PRs with an unsupported claim" tone="bad" sub="checked against the code graph" />
@@ -54,7 +49,7 @@ export default function Team() {
       >
         <div className="tm-heat" role="grid" aria-label="Rework by area and week">
           <span />
-          {WEEKS.map((w) => <span key={w} className="hd">{w.slice(4)}</span>)}
+          {labels.map((w) => <span key={w} className="hd">{w.slice(4)}</span>)}
           {t.areas.map((a) => {
             const vals = metric === "attempts" ? a.attempts : a.overrules;
             return (
@@ -68,7 +63,7 @@ export default function Team() {
                       key={w}
                       className={`tm-cell ${empty ? "empty" : ""} ${on ? "on" : ""}`}
                       style={empty ? undefined : { ["--p" as string]: `${Math.round(8 + heat(v) * 62)}%` }}
-                      title={empty ? `${a.path}, week of ${WEEKS[w]}: no criteria` : `${a.path}, week of ${WEEKS[w]}: ${metric === "attempts" ? `${v.toFixed(1)} attempts per criterion` : `${v} overrules`}`}
+                      title={empty ? `${a.path}, week of ${labels[w]}: no criteria` : `${a.path}, week of ${labels[w]}: ${metric === "attempts" ? `${v.toFixed(1)} attempts per criterion` : `${v} overrules`}`}
                       onClick={() => setSel(on ? null : { area: a.path, week: w })}
                     >
                       {empty ? "·" : metric === "attempts" ? v.toFixed(1) : v}
@@ -115,8 +110,8 @@ export default function Team() {
                 <div className="tm-cc-top"><TypeChip t={c.type} /><span className="panel-sub">{c.rows.reduce((s, r) => s + r.prs, 0)} PRs</span></div>
                 <h3>{c.question}</h3>
                 {c.rows.map((r) => (
-                  <div key={r.team} className={`tm-ct ${r.team === id ? "me" : ""}`}>
-                    <span className="tn">{teams[r.team].name}</span>
+                  <div key={r.team} className={`tm-ct ${r.team === t.id ? "me" : ""}`}>
+                    <span className="tn">{names[r.team] ?? r.team}</span>
                     <span>{r.approach}</span>
                     <span className="n">{r.prs} PRs</span>
                   </div>
@@ -164,7 +159,7 @@ export default function Team() {
         sub={`${prs.length} of ${t.prs.length}`}
         aside={sel && (
           <div className="tm-filter">
-            <span className="chip human">{sel.area}{sel.week !== null && ` · wk ${WEEKS[sel.week]}`}</span>
+            <span className="chip human">{sel.area}{sel.week !== null && ` · wk ${labels[sel.week]}`}</span>
             <button className="tm-clear" onClick={() => setSel(null)}>Clear</button>
           </div>
         )}
@@ -175,13 +170,13 @@ export default function Team() {
             <tbody>
               {prs.length === 0 && <tr><td colSpan={6} className="tm-none">No PRs for that selection.</td></tr>}
               {prs.map((p) => (
-                <tr key={p.n} onClick={() => { location.hash = "#/pr"; }}>
-                  <td><span className="num">#{p.n}</span><a href="#/pr" onClick={(e) => e.stopPropagation()}>{p.title}</a><span className="ar">{p.area}</span></td>
+                <tr key={p.number} onClick={() => { location.hash = "#/pr"; }}>
+                  <td><span className="num">#{p.number}</span>{p.source === "measured" && <span className="chip ok" style={{ marginRight: 6 }}>Measured</span>}<a href="#/pr" onClick={(e) => e.stopPropagation()}>{p.title}</a><span className="ar">{p.area}</span></td>
                   <td>{p.agent}</td>
                   <td>
                     <div className="tm-dm">
-                      <div className="tm-split"><span className="a" style={{ flex: p.a }} /><span className="h" style={{ flex: p.h }} /></div>
-                      {p.a}/{p.h}
+                      <div className="tm-split"><span className="a" style={{ flex: p.agent_decisions }} /><span className="h" style={{ flex: p.human_decisions }} /></div>
+                      {p.agent_decisions}/{p.human_decisions}
                     </div>
                   </td>
                   <td className="mono">{p.overrules}</td>
@@ -197,6 +192,30 @@ export default function Team() {
           </table>
         </div>
       </Panel>
+    </>
+  );
+}
+
+export default function Team() {
+  const [id, setId] = useState("payments");
+  const index = useTeams();
+  const q = useTeam(id);
+  const names = Object.fromEntries(index.data?.teams.map((t) => [t.id, t.name]) ?? []);
+  return (
+    <main className="wrap page tm">
+      <PageHead
+        crumbs={<>Company <b>›</b> Engineering <b>›</b> <span>{q.data?.name ?? "Team"}</span></>}
+        title={`${q.data?.name ?? "Team"} team`}
+        sub="Where rework piles up, whether the agent or the brief caused it, and where teams decide the same thing differently."
+        meta={<><span className="chip">Last 8 weeks</span><span className="chip sim">Illustrative data</span></>}
+      />
+      <div className="tm-controls">
+        {index.data && <Seg value={id} onChange={setId} options={index.data.teams.map((t) => ({ id: t.id, label: t.name }))} />}
+        <span className="sim-note">Teams, areas and code. Never individuals.</span>
+      </div>
+      <DataGate q={q}>
+        {(t) => <TeamBody key={t.id} t={t} consistency={index.data?.consistency ?? []} names={names} />}
+      </DataGate>
     </main>
   );
 }

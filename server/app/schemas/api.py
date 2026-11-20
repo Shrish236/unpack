@@ -127,6 +127,46 @@ class AnalysisFacts(BaseModel):
     tested_after_final_edit: bool = False
 
 
+class GovDecision(BaseModel):
+    turn: str
+    actor: Literal["agent", "human"]
+    kind: str
+    type: str
+    proposal: str = ""
+    choice: str = ""
+    statement: str = ""
+    quote: str = ""
+    rule: str | None = None  # the steering rule text, when one applied
+    rule_followed: bool | None = None
+    source: Literal["parsed", "llm"] = "llm"
+
+
+class GovHighlight(BaseModel):
+    kind: Literal["went_right", "went_wrong"]
+    text: str
+    turn: str
+    quote: str = ""
+
+
+class GovFlag(BaseModel):
+    flag: str
+    path: str = ""
+    detail: str = ""
+
+
+class Governance(BaseModel):
+    """What the session says about how the agent was steered, and where people stepped in."""
+    decisions: list[GovDecision] = Field(default_factory=list)
+    highlights: list[GovHighlight] = Field(default_factory=list)
+    flags: list[GovFlag] = Field(default_factory=list)
+    tool_stats: dict[str, dict[str, int]] = Field(default_factory=dict)
+    attempts: int = 1
+    human_interventions: int = 0
+    steering_files: list[str] = Field(default_factory=list)
+    steering_rules: int = 0
+    available: bool = False  # false when the push had no session, or the governance pass did not run
+
+
 class NodeChange(BaseModel):
     kind: Literal["added", "functional", "signature", "text_only", "deleted"]
     source: Literal["session", "session_then_formatted", "session_partial", "outside_session"] = "session"
@@ -214,7 +254,7 @@ class ImpactData(BaseModel):
 
 class TimelineTurn(BaseModel):
     turn: str
-    kind: Literal["user_request", "edit", "test_run", "claim", "out_of_band"]
+    kind: Literal["user_request", "edit", "test_run", "claim", "out_of_band", "denied"]
     ts: str
     label: str
     nodes: list[str] = Field(default_factory=list)
@@ -296,6 +336,7 @@ class AnalysisResponse(BaseModel):
     reasons: dict[str, FunctionReason] = Field(default_factory=dict)
     findings: list[ReviewFinding] = Field(default_factory=list)
     diff_hunks: dict[str, list[DiffHunk]] = Field(default_factory=dict)
+    governance: Governance = Field(default_factory=Governance)
 
 
 # -------------------------------------------------------------

@@ -17,23 +17,66 @@ import re
 from collections import deque
 from typing import Any
 
-from .session import UnpackSession, UnpackTurn, normalize_repo_path
+from .session import UnpackSession, UnpackTurn, is_denied, normalize_repo_path
 
 AGY_AGENT = "antigravity-cli"
 
-EDIT_TOOL_NAMES = frozenset({"replace_file_content", "multi_replace_file_content", "write_to_file"})
+EDIT_TOOL_NAMES = frozenset({"edit_file", "replace_file_content", "multi_replace_file_content", "write_to_file"})
 SHELL_TOOL_NAMES = frozenset({"run_command"})
-READ_TOOL_NAMES = frozenset({"view_file", "list_dir", "grep_search", "find_by_name", "read_url_content"})
+READ_TOOL_NAMES = frozenset({"read_file", "view_file", "list_dir", "grep_search", "find_by_name", "read_url_content"})
 
 _USER_REQUEST_RE = re.compile(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", re.DOTALL)
 _EXIT_CODE_RE = re.compile(r"Command exited with code (-?\d+)")
 _OUTPUT_RE = re.compile(r"Command output:\r?\n(.*)", re.DOTALL)
-_EDIT_PATH_KEYS = ("TargetFile", "AbsolutePath", "file_path", "path")
-_READ_PATH_KEYS = ("AbsolutePath", "DirectoryPath", "SearchPath", "SearchDirectory", "file_path", "path")
+_EDIT_PATH_KEYS = ("Path", "TargetFile", "AbsolutePath", "file_path", "path")
+_READ_PATH_KEYS = ("Path", "AbsolutePath", "DirectoryPath", "SearchPath", "SearchDirectory", "file_path", "path")
 
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _text_raw(value: Any) -> str | None:
+    """Edit text keeps its whitespace: an indentation change is a real change."""
+    return value if isinstance(value, str) else None
+
+
+def _snippet_diff(path: str | None, old: str | None, new: str | None) -> str:
+    import difflib
+
+    return "".join(difflib.unified_diff(
+        (old or "").splitlines(keepends=True), (new or "").splitlines(keepends=True),
+        fromfile=f"a/{path or 'file'}", tofile=f"b/{path or 'file'}", n=1,
+    ))
+
+
+def reconstruct_edit_states(session: UnpackSession, base_contents: dict[str, str]) -> int:
+    """Fill original_content and new_content on snippet edits by replaying them over the base files.
+
+    The edit linker compares whole-file states. A snippet edit (Target -> Replacement) carries only the
+    snippet, so the state is rebuilt by applying each edit, in order, to the file as it stood. Returns how many
+    edits could be replayed. An edit whose Target is not in the file is left without a state and is not linked.
+    """
+    current: dict[str, str] = {}
+    done = 0
+    for turn in session.turns:
+        if turn.kind != "edit" or turn.edit_new is None or not turn.path:
+            continue
+        if (turn.status or "").upper() in ("ERROR", "CANCELED", "CANCELLED"):
+            continue
+        before = current.get(turn.path, base_contents.get(turn.path))
+        if before is None:
+            continue
+        if turn.edit_old:
+            if turn.edit_old not in before:
+                continue
+            after = before.replace(turn.edit_old, turn.edit_new, 1)
+        else:  # no Target: the Replacement is the whole new file
+            after = turn.edit_new
+        turn.original_content, turn.new_content = before, after
+        current[turn.path] = after
+        done += 1
+    return done
 
 
 def _first_arg(args: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -91,7 +134,10 @@ def parse_agy_transcript(
             tool_calls = rec.get("tool_calls")
             if not isinstance(tool_calls, list):
                 continue
+            rec_tokens = int(rec.get("input_tokens") or 0) + int(rec.get("output_tokens") or 0)
+            per_call_tokens = (rec_tokens // len(tool_calls)) or None
             for call in tool_calls:
+                first_new = len(turns)
                 if not isinstance(call, dict):
                     continue
                 name = str(call.get("name") or "")
@@ -104,18 +150,20 @@ def parse_agy_transcript(
                 elif name in EDIT_TOOL_NAMES:
                     raw = _first_arg(args, _EDIT_PATH_KEYS)
                     rel = normalize_repo_path(raw, [], paths_set) if raw else None
-                    add_turn(
-                        "edit", ts=ts, path=rel, tool_name=name,
+                    old, new = _text_raw(args.get("Target")), _text_raw(args.get("Replacement"))
+                    pending.append(add_turn(
+                        "edit", ts=ts, path=rel, tool_name=name, edit_old=old, edit_new=new,
+                        file_diff=_snippet_diff(rel, old, new) if (old is not None or new is not None) else None,
                         text=f"{name} {rel}" if rel else name,
-                    )
-                    pending.append(None)
+                    ))
                 elif name in READ_TOOL_NAMES:
                     raw = _first_arg(args, _READ_PATH_KEYS)
                     rel = normalize_repo_path(raw, [], paths_set) if raw else None
-                    add_turn("read", ts=ts, path=rel, tool_name=name, text=f"{name} {rel or raw or ''}".strip())
-                    pending.append(None)
+                    pending.append(add_turn("read", ts=ts, path=rel, tool_name=name, text=f"{name} {rel or raw or ''}".strip()))
                 else:
                     pending.append(None)
+                for new_turn in turns[first_new:]:
+                    new_turn.tokens = per_call_tokens
             continue
 
         if rec_type == "GENERIC":
@@ -125,6 +173,10 @@ def parse_agy_transcript(
             if shell_turn is None:
                 continue
             content = _text(rec.get("content"))
+            shell_turn.status = str(rec.get("status") or "") or None
+            shell_turn.denied = is_denied(shell_turn.status, f"{_text(rec.get('error'))} {content}")
+            if shell_turn.kind != "shell":  # edit or read: only the outcome matters
+                continue
             exit_match = _EXIT_CODE_RE.search(content)
             if exit_match:
                 shell_turn.exit_code = int(exit_match.group(1))
