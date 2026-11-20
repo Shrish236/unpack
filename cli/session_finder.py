@@ -244,8 +244,23 @@ def load_and_trim_session(
     agent: str = "gemini-cli",
     agent_version: str | None = None,
     max_bytes: int = TOOL_RESULT_MAX_BYTES,
+    repo_root: Path | None = None,
+    base_sha: str | None = None,
 ) -> dict[str, Any]:
-    """Read a JSONL session file, trim noisy fields, and return a SessionPayload dict."""
+    """Read a JSONL session file, trim noisy fields, and return a SessionPayload dict.
+
+    A Claude Code transcript is converted to the Gemini CLI format first (cli/adapters/claude_code.py).
+    """
+    from .adapters.claude_code import convert_claude_code, is_claude_code_transcript
+
+    if is_claude_code_transcript(session_path):
+        converted = convert_claude_code(session_path, repo_root=repo_root, base_sha=base_sha)
+        return {
+            "agent": "claude-code",
+            "agent_version": agent_version,
+            "file_name": session_path.name,
+            "lines": [trim_session_line(r, max_bytes=max_bytes) for r in converted],
+        }
     lines: list[dict[str, Any]] = []
     with session_path.open("r", encoding="utf-8", errors="replace") as fh:
         for raw_line in fh:
