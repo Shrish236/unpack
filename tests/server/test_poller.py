@@ -163,7 +163,7 @@ async def test_failing_installation_sync_backs_off_instead_of_retrying_every_swe
         raise RuntimeError("github down")
 
     monkeypatch.setattr(reconciler, "sync_installations", failing)
-    monkeypatch.setattr(reconciler, "_last_installation_sync", 0.0)
+    monkeypatch.setattr(reconciler, "_last_installation_sync", None)
     await reconciler._maybe_sync_installations()
     await reconciler._maybe_sync_installations()  # the very next sweep must not call GitHub again
     assert len(calls) == 1
@@ -180,3 +180,19 @@ async def test_setup_page_answers_503_when_github_is_unreachable(client, tmp_dat
     response = await client.get("/github/setup?installation_id=1")
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "unavailable"
+
+
+async def test_first_installation_sync_runs_even_on_a_young_host(monkeypatch):
+    """monotonic() counts from boot: a fresh process must sync once immediately, whatever the clock says."""
+    from server.app.jobs import reconciler
+
+    calls = []
+
+    async def ok():
+        calls.append(1)
+
+    monkeypatch.setattr(reconciler, "sync_installations", ok)
+    monkeypatch.setattr(reconciler, "_last_installation_sync", None)
+    monkeypatch.setattr(reconciler.time, "monotonic", lambda: 5.0)  # a host that booted 5 seconds ago
+    await reconciler._maybe_sync_installations()
+    assert calls == [1]

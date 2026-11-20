@@ -30,7 +30,8 @@ log = logging.getLogger("unpack.reconciler")
 ACTIVE_STATUSES = ("waiting_for_pr", "linked")
 PUBLISH_WAIT_SECONDS = 600  # wait this long for GitHub to catch up with a push before using an older analysis
 
-_last_installation_sync = 0.0
+# None = never synced. monotonic() counts from boot, so 0.0 would wrongly read as recent on a young host.
+_last_installation_sync: float | None = None
 
 
 @dataclass
@@ -289,7 +290,7 @@ async def _enqueue_publish(session: Any, pr_id: int, target: Target) -> None:
 async def _maybe_sync_installations() -> None:
     """Keeps repo.installation_id and status in step with the App's installations (replaces webhooks)."""
     global _last_installation_sync
-    if time.monotonic() - _last_installation_sync < settings.INSTALLATION_SYNC_SECONDS:
+    if _last_installation_sync is not None and time.monotonic() - _last_installation_sync < settings.INSTALLATION_SYNC_SECONDS:
         return
     _last_installation_sync = time.monotonic()
     try:
