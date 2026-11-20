@@ -303,16 +303,11 @@
           "type": "string"
         },
         "history": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "History"
+          "items": {
+            "$ref": "#/$defs/HistoryStep"
+          },
+          "title": "History",
+          "type": "array"
         },
         "confidence": {
           "default": "high",
@@ -617,6 +612,24 @@
         }
       },
       "title": "GraphPayload",
+      "type": "object"
+    },
+    "HistoryStep": {
+      "properties": {
+        "turn": {
+          "title": "Turn",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn",
+        "text"
+      ],
+      "title": "HistoryStep",
       "type": "object"
     },
     "ImpactData": {

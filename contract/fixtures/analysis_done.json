@@ -156,7 +156,9 @@
     "httpx/_client.py::AsyncClient._send_single_request": {
       "reason": "Mirrors the sync retry so both clients behave the same, as the user asked.",
       "driver": "user_asked",
-      "history": "Added after the sync version passed its tests (T38).",
+      "history": [
+        { "turn": "T38", "text": "Added after the sync version passed its tests." }
+      ],
       "confidence": "high",
       "source": "session",
       "evidence": [ { "turn": "T1", "quote": "keep the async client in sync" } ]
@@ -164,7 +166,11 @@
     "httpx/_client.py::Client._send_single_request": {
       "reason": "Implements retry loop on connect error inside request dispatch.",
       "driver": "user_asked",
-      "history": "Initially wrapped send() in T14, failed test_retry in T15, moved into _send_single_request in T22.",
+      "history": [
+        { "turn": "T14", "text": "Initially wrapped send()." },
+        { "turn": "T15", "text": "Failed test_retry." },
+        { "turn": "T22", "text": "Moved retry logic into _send_single_request." }
+      ],
       "confidence": "high",
       "source": "session",
       "evidence": [ { "turn": "T1", "quote": "Add retries" } ]

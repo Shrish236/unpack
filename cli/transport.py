@@ -74,7 +74,7 @@ def send_ingest_payload(
             "Run `unpack install --server ... --token ...` or set UNPACK_TOKEN."
         )
 
-    endpoint = f"{server_url.rstrip('/')}/ingest"
+    endpoint = f"{server_url.rstrip('/')}/v1/ingest"
     raw_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     compressed = gzip.compress(raw_bytes)
 

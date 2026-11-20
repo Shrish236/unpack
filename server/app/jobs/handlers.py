@@ -6,16 +6,16 @@ import asyncio
 import gzip
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from unpack_graph.graph import build_graph
 from unpack_graph.source import GitSource
 
 from ..db import session_scope
-from ..models import Analysis, Push, Render, ReviewFinding, FunctionReason, Repo, Session
+from ..models import Analysis, FunctionReason, LLMCall, Push, Render, Repo, ReviewFinding, Session
 from ..pipeline.analysis import AnalysisFailed, analyze_push
 from ..pipeline.repos import CommitUnavailable, ensure_commit, ensure_mirror, save_cached_graph
 from ..security import new_file_name
@@ -48,6 +48,19 @@ async def _mark_tracked_due(session: Any, repo_id: int, branch: str) -> None:
     )
 
 
+async def _daily_tokens_used(session: Any, repo_id: int) -> int:
+    since = _now() - timedelta(hours=24)
+    total = (
+        await session.execute(
+            select(func.coalesce(func.sum(LLMCall.input_tokens + LLMCall.output_tokens), 0))
+            .join(Analysis, Analysis.id == LLMCall.analysis_id)
+            .join(Push, Push.id == Analysis.push_id)
+            .where(Push.repo_id == repo_id, LLMCall.created_at >= since)
+        )
+    ).scalar_one()
+    return int(total or 0)
+
+
 async def analyze_push_job(payload: dict[str, Any]) -> None:
     analysis_id = int(payload["analysis_id"])
     async with session_scope() as session:
@@ -58,12 +71,14 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
         repo = await session.get(Repo, push.repo_id)
         analysis.status = "running"
         analysis.started_at = _now()
+        tokens_today = await _daily_tokens_used(session, repo.id)
         snapshot = {
             "repo_id": repo.id, "owner": repo.owner, "name": repo.name,
             "remote_url": repo.remote_url or f"https://github.com/{repo.owner}/{repo.name}.git",
             "installation_id": repo.installation_id, "payload_path": push.payload_path,
             "push_id": push.id, "branch": push.branch,
             "agent": (push.session_agent or None),
+            "tokens_today": tokens_today,
         }
 
     token = await _installation_token(snapshot["installation_id"])
@@ -72,6 +87,7 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
         outcome = await analyze_push(
             repo_id=snapshot["repo_id"], owner=snapshot["owner"], name=snapshot["name"],
             remote_url=snapshot["remote_url"], token=token, payload=data,
+            daily_tokens_used=snapshot["tokens_today"],
         )
     except AnalysisFailed as exc:
         await _store_failure(analysis_id, snapshot["push_id"], snapshot["repo_id"], snapshot["branch"],
@@ -80,6 +96,47 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
 
     async with session_scope() as session:
         analysis = await session.get(Analysis, analysis_id)
+        # Insert findings FIRST and flush to obtain real DB IDs for graph_view & timeline links
+        finding_rows: list[ReviewFinding] = []
+        for finding in outcome.findings:
+            row = ReviewFinding(
+                analysis_id=analysis_id, kind=finding["kind"], finding=finding["finding"],
+                functions=finding.get("functions", []), evidence=finding.get("evidence", []),
+            )
+            session.add(row)
+            finding_rows.append(row)
+        if finding_rows:
+            await session.flush()
+
+        # Populate node.finding_ids on graph_view using real ReviewFinding IDs
+        finding_ids_by_node: dict[str, list[int]] = {}
+        for row in finding_rows:
+            for fid in row.functions or []:
+                finding_ids_by_node.setdefault(fid, []).append(row.id)
+        for node in outcome.graph_view.get("nodes", []):
+            fids = finding_ids_by_node.get(node["id"])
+            if fids:
+                node["finding_ids"] = fids
+
+        # Append claim timeline entries with their real DB finding_id
+        timeline = list(outcome.timeline)
+        turn_ts_map = {t["turn_id"]: t.get("ts", "") for t in outcome.session_turns}
+        for turn_id, label, finding_idx in outcome.claim_turns:
+            if 0 <= finding_idx < len(finding_rows):
+                row = finding_rows[finding_idx]
+                timeline.append(
+                    {
+                        "turn": turn_id,
+                        "kind": "claim",
+                        "ts": turn_ts_map.get(turn_id, ""),
+                        "label": label,
+                        "nodes": list(row.functions or []),
+                        "reverted": False,
+                        "exit_code": None,
+                        "finding_id": row.id,
+                    }
+                )
+
         analysis.status = "done"
         analysis.error_code = None
         analysis.error_message = None
@@ -91,27 +148,42 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
         analysis.reading_order = outcome.reading_order
         analysis.impact = outcome.impact
         analysis.diff_hunks = outcome.diff_hunks
-        analysis.timeline = outcome.timeline
+        analysis.timeline = timeline
         analysis.llm_model = outcome.llm_model
         analysis.rejected_count = outcome.rejected_count
         analysis.finished_at = _now()
+
         for node_id, reason in outcome.reasons.items():
             session.add(FunctionReason(
                 analysis_id=analysis_id, node_id=node_id, reason=reason["reason"],
-                driver=reason["driver"], history=reason.get("history"),
+                driver=reason["driver"], history=reason.get("history", []),
                 confidence=reason.get("confidence", "high"), evidence=reason.get("evidence", []),
-                source=reason.get("source", "session"),
+                source=reason.get("source", "session"), rejected=reason.get("rejected"),
             ))
-        for finding in outcome.findings:
-            session.add(ReviewFinding(
-                analysis_id=analysis_id, kind=finding["kind"], finding=finding["finding"],
-                functions=finding.get("functions", []), evidence=finding.get("evidence", []),
+        for call in outcome.llm_calls:
+            session.add(LLMCall(
+                analysis_id=analysis_id,
+                purpose=call.purpose,
+                model=call.model,
+                attempt=call.attempt,
+                prompt_version=call.prompt_version,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                thinking_tokens=call.thinking_tokens,
+                latency_ms=call.latency_ms,
+                status=call.status,
+                error=call.error,
+                finish_reason=call.finish_reason,
+                request_hash=call.request_hash,
+                response_text=call.response_text,
             ))
         if data.get("session") is not None:
-            existing = (await session.execute(select(Session).where(Session.push_id == push.id))).scalar_one_or_none()
+            existing = (await session.execute(select(Session).where(Session.push_id == snapshot["push_id"]))).scalar_one_or_none()
             if existing is None:
-                session.add(Session(push_id=push.id, agent=data["session"]["agent"],
-                                    file_name=data["session"]["file_name"], turns=[]))
+                session.add(Session(push_id=snapshot["push_id"], agent=data["session"]["agent"],
+                                    file_name=data["session"]["file_name"], turns=outcome.session_turns))
+            else:
+                existing.turns = outcome.session_turns
         if outcome.has_python_changes and outcome.changed_count > 0:
             await enqueue(session, "render_image", {"analysis_id": analysis_id},
                           dedupe_key=f"render:{analysis_id}")
