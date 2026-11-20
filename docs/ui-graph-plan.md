@@ -593,10 +593,10 @@ Status of this section: **Proposed** unless marked otherwise. Review layout: [PR
 
 | ID | Decision | Alternatives | Why |
 |---|---|---|---|
-| G71 | The canonical graph URL is `/a/{analysis_id}`, where `analysis_id` is the database primary key of the `analyses` row. The PR comment and the dashboard both link to this same URL for the same analysis | Keep `public_id` in the URL (current); a branch-based URL | The dashboard and the PR comment share one address per analysis, so a link can be pasted anywhere and shows the same page |
+| G71 | **Confirmed.** The canonical graph URL is `/a/{analysis_id}`, where `analysis_id` is the database primary key of the `analyses` row. The PR comment and the dashboard both link to this same URL for the same analysis | Keep `public_id` in the URL (current); a branch-based URL | The dashboard and the PR comment share one address per analysis, so a link can be pasted anywhere and shows the same page |
 | G72 | Each branch has a database id (`tracked_branches.id`). `/b/{branch_id}` redirects (302) to the newest `done` analysis of that branch. Optional: only if the PR should always show the latest push | Only per-analysis URLs | A PR can be read as "latest state" without changing the per-analysis links |
-| G73 | The PR comment links to the analysis it describes, so an old comment keeps showing the push it was written for. Its "latest" link can use `/b/{branch_id}` | Always latest | Matches how the comment is already written per push |
-| G74 | A missing analysis and an analysis the viewer cannot access both return `404`. The current `403 no_repo_access` is replaced for this route | Keep `403` | An unauthenticated or unrelated viewer should not learn which ids exist. Sequential ids make this more important |
+| G73 | **Confirmed.** The PR comment always links to the latest push's analysis (`/a/{latest analysis id}`). Older analyses stay reachable from the dashboard | Link to the push each comment describes | Owner's call: the PR should show the current state |
+| G74 | **Confirmed.** A missing analysis and an analysis the viewer cannot access both return `404`. The current `403 no_repo_access` is replaced for this route | Keep `403` | An unauthenticated or unrelated viewer should not learn which ids exist. Sequential ids make this more important |
 | G75 | `public_id` stays as the random key for the image file name (`/img/{32 hex}`) and the render token. It is no longer in the page URL | Remove it | GitHub's image proxy caches by URL, so the image name must stay random |
 
 **What changes in the code:** `Analysis.id` already exists as the primary key. The change is in `publish.py` (the link), `routers/live.py` and `routers/images.py` (route and lookup), and the contract (`AnalysisMetadata` gains `id`). Routes move to `/a/{id}`; the old `/a/{public_id}` should keep working as a redirect so links already posted in PR comments still open.
@@ -632,3 +632,19 @@ Not written yet: `analysis_large.json` (generated, at the node and edge caps). I
 ### 20.4 Render token and the page
 
 Before the UI is wired to the API, the render route needs the change in §15.1 (accept the render token on `GET /api/analyses/{id}`). Until then the image cannot be made from the real page.
+
+### 20.5 Decisions after the owner's review
+
+| ID | Decision | Status |
+|---|---|---|
+| G71 | `/a/{analyses.id}` is the canonical URL | Confirmed |
+| G73 | PR comment always links to the latest push's analysis | Confirmed |
+| G74 | Missing and forbidden analyses return 404 | Confirmed |
+| G77 | The wireframe in the Design canvas is rejected. The owner asked for a graph style like Graphify and nexus-graph, and to use the Neo4j graph | Owner's direction; design to be re-proposed |
+
+**Research (public pages, read through the web-fetch stand-in):**
+- **GitNexus** names its renderer: Sigma.js (WebGL) with Graphology for the data, and LadybugDB (formerly KuzuDB) as the graph database. Licence PolyForm Noncommercial, so ideas only.
+- **Graphify** (Apache-2.0 / MIT) exports a self-contained `graph.html`: a force-directed layout with colour by detected community, click, filter and search, edges tagged EXTRACTED or INFERRED, and an aggregated community view above 5,000 nodes. The renderer library is not named on the page. The earlier research in `ui-design.md` says vis-network; that is unverified.
+- **nexus-graph** (AKhileshPothuri, MIT): a "neon graph UI" with a directory overview that drills into files and symbols. Stores the graph in SQLite. Renderer not named.
+
+**Neo4j:** the repo does not show a deployed Neo4j. The server does not read it, and `docker-compose.yml` has no Neo4j service (status D1). The library has a Neo4j loader and a single-query region (`unpack_graph/neo4j_io.py`, `region.py`). Where the deployed instance runs, and what it holds, needs confirming before the design depends on it.
