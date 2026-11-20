@@ -1,0 +1,169 @@
+/* Isometric scene. Default styles are the finished state; animations play only under [data-step].
+   Neutral slate does 90% of the work; yellow is only the human voice and the policy slab. */
+
+.iso { --c: var(--agent); position: relative; width: 100%; aspect-ratio: 600 / 630; container-type: inline-size; }
+.iso-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.iso-svg g, .iso-svg polygon { transform-box: fill-box; }
+
+/* faces: three tones from one colour */
+.iso .fl, .iso .fr, .iso .ft { stroke: rgb(0 0 0 / 0.13); stroke-width: 0.7; stroke-linejoin: round; }
+.iso .ft { fill: color-mix(in oklab, var(--c), white 16%); }
+.iso .fl { fill: var(--c); }
+.iso .fr { fill: color-mix(in oklab, var(--c), black 24%); }
+.iso-shadow polygon { fill: rgb(15 23 42 / 0.2); }
+
+.tile, .skill { --c: var(--sunken); }
+.tile .ft, .skill .ft { fill: var(--raised); }
+.tile .fl, .skill .fl { fill: var(--sunken); }
+.tile .fr, .skill .fr { fill: color-mix(in oklab, var(--sunken), var(--ink) 10%); }
+.tile.has.agent { --g: var(--agent); } .tile.has.human { --g: var(--human); }
+.tl-glow { fill: var(--g, transparent); opacity: 0; stroke: none !important; }
+
+.cube { transform-box: fill-box; transform-origin: 50% 100%; transition: transform 0.6s var(--ease), opacity 0.5s var(--ease), filter 0.5s; }
+.cube.agent { --c: var(--agent); } .cube.human { --c: var(--human); }
+.cube.bumped { opacity: 0.34; filter: grayscale(0.7); }
+.dot { stroke: var(--raised); stroke-width: 0.9; }
+.td-architecture { fill: var(--t-architecture); } .td-design { fill: var(--t-design); } .td-dependency { fill: var(--t-dependency); }
+.td-retries { fill: var(--t-retries); } .td-test { fill: var(--t-test); } .td-scope { fill: var(--t-scope); }
+
+/* policy pad, pile and slab */
+.pad-ring { fill: color-mix(in oklab, var(--human) 9%, transparent); stroke: var(--human-line); stroke-width: 1.4; stroke-dasharray: 4 5; }
+.mc { --c: var(--human); opacity: 0; transition: opacity 0.5s var(--ease); transform-origin: 50% 100%; }
+.slab { --c: var(--human); opacity: 0; transition: opacity 0.4s; }
+.slab .ft { fill: var(--human); } .slab .fl { fill: color-mix(in oklab, var(--human), black 14%); } .slab .fr { fill: color-mix(in oklab, var(--human), black 30%); }
+.slab .fl, .slab .fr, .slab .ft { stroke: var(--human-line); stroke-width: 0.9; }
+
+/* skill file, conveyor, agent, feedback loop */
+.sk-ln { stroke: var(--ink-3); stroke-width: 1.4; stroke-linecap: round; opacity: 0.5; }
+.sk-on { opacity: 0; }
+.sk-ln-on { stroke: var(--human-line); stroke-width: 2.2; stroke-linecap: round; }
+.sk-edge { fill: none; stroke: var(--human-line); stroke-width: 1.8; }
+.conv { fill: var(--sunken); stroke: var(--line-2); stroke-width: 0.8; }
+.conv-ln { stroke: var(--line-2); stroke-width: 1.2; stroke-dasharray: 3 5; }
+.conv-pulse { stroke: var(--human); stroke-width: 6; stroke-linecap: round; stroke-dasharray: 8 100; stroke-dashoffset: -46; opacity: 0; fill: none; }
+.agent-node { --c: var(--agent); }
+.visor { fill: var(--ink); opacity: 0.72; stroke: none; }
+.antenna { stroke: var(--ink-2); stroke-width: 1.6; } .antenna-tip { fill: var(--ink-2); }
+.ag-ring { fill: none; stroke: var(--line-2); stroke-width: 1.3; stroke-dasharray: 3 4; }
+.loop-path { fill: none; stroke: var(--ink-3); stroke-width: 1.6; stroke-dasharray: 5 7; opacity: 0.6; }
+.loop-head { fill: var(--ink-3); opacity: 0.75; }
+
+/* governance gate */
+.post { --c: var(--ink-2); }
+.curtain { fill: color-mix(in oklab, var(--ink-2) 13%, transparent); stroke: var(--ink-2); stroke-width: 0.9; stroke-dasharray: 3 3; }
+.badge { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.badge circle { stroke-width: 1.4; }
+.badge.ok circle { fill: color-mix(in oklab, var(--raised) 78%, var(--ok)); stroke: var(--ok); }
+.badge.bad circle { fill: color-mix(in oklab, var(--raised) 80%, var(--bad)); stroke: var(--bad); }
+.badge text { font: 600 10px var(--font-body); }
+.badge.ok text { fill: var(--ok); } .badge.bad text { fill: var(--bad); }
+
+/* layers: focus per step, and pointer parallax (fine pointers only, set from JS) */
+.ly { transition: opacity 0.5s var(--ease), translate 0.25s linear; translate: calc(var(--px, 0) * var(--k, 0) * 1px) calc(var(--py, 0) * var(--k, 0) * 1px); }
+.ly-ground { --k: 2; } .ly-plane { --k: 3; } .ly-pad, .ly-skill, .ly-conv, .ly-agent, .ly-loop { --k: 5; } .ly-gate { --k: 6; } .ly-cubes, .ly-badges { --k: 8; }
+
+.iso[data-step="1"] :is(.ly-gate, .ly-pad, .ly-skill, .ly-conv, .ly-agent, .ly-loop),
+.iso[data-step="2"] :is(.ly-gate, .ly-pad, .ly-skill, .ly-conv, .ly-agent, .ly-loop),
+.iso[data-step="3"] :is(.ly-pad, .ly-skill, .ly-conv, .ly-agent, .ly-loop),
+.iso[data-step="4"] :is(.ly-gate, .ly-skill, .ly-conv, .ly-agent, .ly-loop),
+.iso[data-step="5"] :is(.ly-gate, .ly-skill, .ly-conv, .ly-agent, .ly-loop) { opacity: 0.28; }
+.iso[data-step="6"] .ly-gate { opacity: 0.28; }
+.iso[data-step="4"] .ly-plane { opacity: 0.6; } .iso[data-step="4"] .ly-cubes { opacity: 0.5; }
+.iso[data-step="5"] .ly-plane { opacity: 0.5; } .iso[data-step="5"] .ly-cubes { opacity: 0.4; }
+.iso[data-step="6"] .ly-plane { opacity: 0.5; } .iso[data-step="6"] .ly-cubes { opacity: 0.35; }
+
+/* finished state per step */
+.iso[data-step="4"] .mc { opacity: 1; }
+.iso[data-step="5"] .slab { opacity: 1; }
+.iso[data-step="0"] .sk-on, .iso[data-step="6"] .sk-on { opacity: 1; }
+.iso[data-step="0"] .conv-pulse, .iso[data-step="6"] .conv-pulse { opacity: 1; }
+.iso[data-step="3"] .badge { opacity: 1; }
+.iso[data-step="6"] .ag-ring { stroke: var(--ok); }
+.iso[data-step="0"] .loop-path, .iso[data-step="6"] .loop-path { opacity: 0.85; }
+
+/* callouts: flat HTML cards, product type scale, anchored in percentages */
+.iso-cos { position: absolute; inset: 0; pointer-events: none; }
+.iso-co { position: absolute; display: grid; gap: 3px; min-width: 150px; max-width: 200px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-2); font: 400 var(--fs-2)/1.35 var(--font-body); color: var(--ink); box-shadow: 0 12px 24px -16px rgb(30 41 59 / 0.45); animation: iso-co-in 0.5s var(--ease) 0.9s both; }
+.iso-co.side-r { transform: translate(-100%, -50%); } .iso-co.side-l { transform: translate(0, -50%); } .iso-co.side-b { transform: translate(-50%, -100%); }
+.iso-co .chip { height: 18px; padding: 0 7px; }
+.iso-k { font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); display: flex; gap: 6px; align-items: center; }
+.iso-k-h { color: var(--human-text); }
+.iso-dim { color: var(--ink-3); }
+.iso-q { font-weight: 500; font-size: var(--fs-3); }
+.iso-row { display: flex; align-items: center; gap: 6px; font-size: var(--fs-3); white-space: nowrap; }
+.iso-row b { font: 600 var(--fs-6)/1 var(--font-body); letter-spacing: -0.02em; }
+.iso-big b { font-size: var(--fs-7); } .iso-big .was { color: var(--human-text); } .iso-big .now { color: var(--ok); }
+.iso-tk { font-style: normal; width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; }
+.iso-tk.ok { background: var(--ok-soft); color: var(--ok); } .iso-tk.bad { background: var(--bad-soft); color: var(--bad); }
+.iso-form { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-3); }
+.iso-form em { font: normal var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); align-self: center; }
+.iso-btn { margin-top: 4px; text-align: center; padding: 5px 10px; border-radius: 999px; background: var(--human); color: var(--human-on); font-weight: 500; font-size: var(--fs-3); }
+.iso-leaders line { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.8; }
+.iso-leaders circle { fill: var(--ink-3); }
+.iso-leaders { animation: iso-fade 0.5s ease 0.9s both; }
+
+/* narrow containers (phones): the scene shrinks to the top 74% and the one callout becomes a caption underneath */
+@container (max-width: 440px) {
+  .iso-co.sec, .iso-leaders { display: none; }
+  .iso-svg { height: 74%; margin: 0 auto; }
+  .iso[data-step="5"] .iso-svg { height: 62%; }
+  .iso-co { left: 0 !important; right: 0; top: auto !important; bottom: 0; transform: none !important; max-width: none; min-width: 0; padding: 6px 10px; }
+}
+
+/* ---------- step motion ---------- */
+.iso[data-step="1"] .cube { animation: iso-rise 0.6s var(--ease) both; animation-delay: calc(0.2s + var(--i) * 0.32s); }
+.iso[data-step="1"] .tile.has .tl-glow { animation: iso-glow 0.9s ease-out both; animation-delay: calc(var(--i) * 0.32s); }
+
+.iso[data-step="2"] .c-h1 { animation: iso-drop 0.7s cubic-bezier(0.6, 0, 0.9, 0.5) 0.2s both; }
+.iso[data-step="2"] .c-h2 { animation: iso-drop 0.7s cubic-bezier(0.6, 0, 0.9, 0.5) 1.3s both; }
+.iso[data-step="2"] .c-a2.bumped { transition-delay: 0.8s; }
+.iso[data-step="2"] .c-a4.bumped { transition-delay: 1.9s; }
+
+.iso[data-step="3"] .gate { animation: iso-sweep 3.2s linear 0.2s both; }
+.iso[data-step="3"] .badge { animation: iso-pop 0.4s var(--ease) var(--dl) both; }
+
+.iso[data-step="4"] .mc { animation: iso-conv 3.4s var(--ease) both; animation-delay: calc(var(--i) * 0.12s); }
+.iso[data-step="4"] .pad-ring { animation: iso-ring 1.4s ease-in-out 1.4s 3; }
+
+.iso[data-step="5"] .slab { animation: iso-click 1.8s var(--ease) 0.3s both; }
+.iso[data-step="5"] .iso-btn { animation: iso-pulse 1.4s ease-in-out 1.4s infinite; }
+
+.iso[data-step="6"] .slab { animation: iso-merge 2.2s var(--ease) 0.2s both; }
+.iso[data-step="6"] .sk-on { animation: iso-fade 0.8s ease 1.9s both; }
+.iso[data-step="6"] .conv-pulse { animation: iso-run 2.4s linear 2.2s infinite; }
+.iso[data-step="6"] .loop-path, .iso[data-step="0"] .loop-path { animation: iso-march 1.6s linear infinite; }
+.iso[data-step="6"] .ag-ring { animation: iso-fade 0.5s ease 4.2s both; }
+
+/* step 0: a slow ~12 s miniature of the whole story, on repeat */
+.iso[data-step="0"] .cube { animation: lp-cube 12s ease-in-out infinite both; animation-delay: calc(var(--i) * 0.18s); }
+.iso[data-step="0"] .c-h1 { animation-name: lp-h1; animation-delay: 0s; }
+.iso[data-step="0"] .c-a2 { animation-name: lp-a2; animation-delay: 0s; }
+.iso[data-step="0"] .gate { animation: lp-gate 12s linear infinite both; }
+.iso[data-step="0"] .mc { animation: lp-mc 12s ease-in-out infinite both; animation-delay: calc(var(--i) * 0.06s); }
+.iso[data-step="0"] .slab { animation: lp-slab 12s var(--ease) infinite both; }
+.iso[data-step="0"] .sk-on { animation: lp-sk 12s ease infinite both; }
+.iso[data-step="0"] .conv-pulse { animation: lp-pulse 12s linear infinite both; }
+
+@keyframes iso-co-in { from { opacity: 0; translate: 0 8px; } }
+@keyframes iso-fade { from { opacity: 0; } }
+@keyframes iso-rise { from { opacity: 0; translate: 0 18px; scale: 0.6; } }
+@keyframes iso-glow { 0% { opacity: 0; } 30% { opacity: 0.55; } 100% { opacity: 0; } }
+@keyframes iso-drop { from { opacity: 0; translate: 0 -120px; } 82% { translate: 0 0; } 91% { translate: 0 -4px; } }
+@keyframes iso-sweep { from { translate: var(--gx) var(--gy); opacity: 0; } 5% { opacity: 1; } }
+@keyframes iso-pop { from { opacity: 0; scale: 0.3; } }
+@keyframes iso-conv { 0% { opacity: 0; scale: 0; translate: var(--fx) var(--fy); } 18% { opacity: 1; scale: 1; translate: var(--fx) var(--fy); } 46% { translate: var(--fx) var(--fy); } 100% { opacity: 1; scale: 1; translate: 0 0; } }
+@keyframes iso-ring { 50% { stroke-width: 3; opacity: 0.6; } }
+@keyframes iso-click { 0% { opacity: 0; translate: 0 -64px; } 25% { opacity: 1; translate: 0 -58px; } 62% { translate: 0 -58px; } 82% { translate: 0 3px; } 100% { translate: 0 0; } }
+@keyframes iso-pulse { 50% { scale: 1.06; } }
+@keyframes iso-merge { 0% { opacity: 1; translate: 0 0; } 30% { opacity: 1; } 70% { opacity: 1; translate: var(--sx) var(--sy); } 100% { opacity: 0; translate: var(--sx) var(--sy); } }
+@keyframes iso-run { from { stroke-dashoffset: 8; } to { stroke-dashoffset: -100; } }
+@keyframes iso-march { to { stroke-dashoffset: -24; } }
+
+@keyframes lp-cube { 0% { opacity: 0; translate: 0 16px; scale: 0.7; } 5%, 92% { opacity: 1; translate: 0 0; scale: 1; } 100% { opacity: 0; } }
+@keyframes lp-h1 { 0%, 13% { opacity: 0; translate: 0 -110px; } 17% { opacity: 1; translate: 0 0; } 92% { opacity: 1; translate: 0 0; } 100% { opacity: 0; } }
+@keyframes lp-a2 { 0% { opacity: 0; translate: var(--bx) calc(var(--by) + 16px); } 5%, 15% { opacity: 1; translate: var(--bx) var(--by); } 21%, 92% { opacity: 0.34; translate: 0 0; } 100% { opacity: 0; translate: 0 0; } }
+@keyframes lp-gate { 0%, 28% { opacity: 0; translate: var(--gx) var(--gy); } 29% { opacity: 1; translate: var(--gx) var(--gy); } 41%, 94% { opacity: 1; translate: 0 0; } 100% { opacity: 0; translate: 0 0; } }
+@keyframes lp-mc { 0%, 40% { opacity: 0; scale: 0; translate: var(--fx) var(--fy); } 44%, 50% { opacity: 1; scale: 1; translate: var(--fx) var(--fy); } 62% { opacity: 1; scale: 1; translate: 0 0; } 70% { opacity: 1; translate: 0 0; } 72%, 100% { opacity: 0; translate: 0 0; } }
+@keyframes lp-slab { 0%, 66% { opacity: 0; translate: 0 -60px; } 71%, 76% { opacity: 1; translate: 0 0; } 86% { opacity: 1; translate: var(--sx) var(--sy); } 89%, 100% { opacity: 0; translate: var(--sx) var(--sy); } }
+@keyframes lp-sk { 0%, 86% { opacity: 0; } 90%, 97% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes lp-pulse { 0%, 88% { opacity: 0; stroke-dashoffset: 8; } 89% { opacity: 1; } 97% { opacity: 1; stroke-dashoffset: -100; } 98%, 100% { opacity: 0; stroke-dashoffset: -100; } }

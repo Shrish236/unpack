@@ -15,7 +15,7 @@ body {
 h1, h2, h3, p { margin: 0; }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
-:focus-visible { outline: 2px solid var(--human); outline-offset: 2px; border-radius: 4px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
 
 .wrap { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 var(--gutter); }
 .mono { font-family: var(--font-mono); font-feature-settings: "tnum"; }
@@ -27,11 +27,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .display {
   font-family: var(--font-display);
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  line-height: 0.98;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.03;
 }
-.display em { font-style: italic; color: var(--human); }
+.display em {
+  font-style: normal; color: inherit; padding: 0 0.08em;
+  background: linear-gradient(transparent 60%, var(--human) 60% 93%, transparent 93%);
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
 
 /* ---------- nav ---------- */
 .nav {
@@ -57,8 +61,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .btn:hover { background: var(--sunken); }
 .btn:active { transform: scale(0.97); }
-.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.btn.primary:hover { background: color-mix(in oklab, var(--ink) 86%, var(--human)); }
+.btn.primary { background: var(--human-strong); color: var(--human-on); border-color: var(--human-strong); }
+.btn.primary:hover { filter: brightness(0.94); }
 .btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
 .icon-btn { width: 36px; height: 36px; padding: 0; justify-content: center; }
 
@@ -70,7 +74,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--ink-3)); }
 .chip.agent { background: var(--agent-soft); color: var(--agent); }
-.chip.human { background: var(--human-soft); color: var(--human); }
+.chip.human { background: var(--human-soft); color: var(--human-text); }
 .chip.ok { background: var(--ok-soft); color: var(--ok); }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .chip.warn { background: var(--warn-soft); color: color-mix(in oklab, var(--warn) 60%, var(--ink)); }
@@ -107,7 +111,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--sp-3); }
 .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3); padding: var(--sp-4); display: grid; gap: 2px; align-content: start; }
 .kpi-num { font: 500 var(--fs-8)/1.05 var(--font-body); letter-spacing: -0.03em; font-feature-settings: "tnum"; }
-.kpi-num.hot { color: var(--human); } .kpi-num.bad { color: var(--bad); } .kpi-num.ok { color: var(--ok); } .kpi-num.agent { color: var(--agent); }
+.kpi-num.hot { color: var(--human-text); } .kpi-num.bad { color: var(--bad); } .kpi-num.ok { color: var(--ok); } .kpi-num.agent { color: var(--agent); }
 .kpi-label { font-size: var(--fs-3); color: var(--ink-2); margin-top: var(--sp-1); }
 .kpi-sub { font: var(--fs-2) var(--font-mono); color: var(--ink-3); display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 .delta.up { color: var(--ok); } .delta.down { color: var(--bad); }
@@ -134,3 +138,5 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .nav-links a { white-space: nowrap; padding-bottom: 8px; }
 }
 @media (max-width: 560px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpi-num { font-size: 32px; } }
+/* On the dark theme a highlight bar would sit behind light text, so the emphasis is the accent colour instead. */
+:root[data-theme="dark"] .display em { background: none; color: var(--human); padding: 0; }

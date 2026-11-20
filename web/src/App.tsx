@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import Home from "./pages/Home";
+import HomeV1 from "./pages/HomeV1";
 import PrPage from "./pages/PrPage";
 import Exec from "./pages/Exec";
 import Team from "./pages/Team";
@@ -64,11 +65,11 @@ export default function App() {
             <button className="btn icon-btn" onClick={toggle} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
               {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
             </button>
-            <a className="btn primary" href="#/pr">See a PR unpacked</a>
+            <a className="btn primary" href="#/govern">Governance inbox</a>
           </div>
         </div>
       </header>
-      {route.startsWith("/pr") ? <PrPage id={route.split("/")[2]} /> : route === "/exec" ? <Exec /> : route === "/team" ? <Team /> : route === "/govern" ? <Govern /> : <Home />}
+      {route === "/home-v1" ? <HomeV1 /> : route.startsWith("/pr") ? <PrPage id={route.split("/")[2]} /> : route === "/exec" ? <Exec /> : route === "/team" ? <Team /> : route === "/govern" ? <Govern /> : <Home />}
     </>
   );
 }
