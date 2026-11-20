@@ -18,7 +18,7 @@
 .lv-tl { position: relative; height: 176px; margin: 0 var(--sp-2); }
 .lv-axis { position: absolute; left: 0; right: 0; top: 87px; height: 2px; background: var(--line-2); }
 .lv-lane { position: absolute; left: 0; font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
-.lv-lane.a { top: 0; color: var(--agent); } .lv-lane.h { bottom: 0; color: var(--human); }
+.lv-lane.a { top: 0; color: var(--agent); } .lv-lane.h { bottom: 0; color: var(--human-text); }
 .lv-ev { position: absolute; left: calc(8% + 84% * var(--p)); transform: translateX(-50%); width: 104px; border: 0; background: none; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; transition: opacity 0.2s; }
 .lv-ev.above { bottom: calc(176px - 88px - 7px); } .lv-ev.below { top: calc(88px - 7px); }
 .lv-ev.below { flex-direction: column-reverse; }
@@ -34,12 +34,12 @@
 .lv-ev.on .lv-m { box-shadow: 0 0 0 4px color-mix(in oklab, var(--ink) 30%, transparent); }
 .lv-tl:has(.hot) .lv-ev:not(.hot) { opacity: 0.45; }
 .lv-arcs, .lv-note { font: var(--fs-2) var(--font-mono); color: var(--ink-3); }
-.lv-arcs { position: absolute; right: 0; top: 0; color: var(--human); }
+.lv-arcs { position: absolute; right: 0; top: 0; color: var(--human-text); }
 .lv-note { margin-top: var(--sp-3); }
 
 /* decisions */
 .lv-lanes-h { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: var(--sp-3); }
-.lv-lanes-h span { display: flex; gap: 6px; align-items: center; } .lv-lanes-h .a { color: var(--agent); } .lv-lanes-h .h { color: var(--human); }
+.lv-lanes-h span { display: flex; gap: 6px; align-items: center; } .lv-lanes-h .a { color: var(--agent); } .lv-lanes-h .h { color: var(--human-text); }
 .lv-file { margin-bottom: var(--sp-4); } .lv-file:last-child { margin: 0; }
 .lv-file-h { font-size: var(--fs-2); color: var(--ink-3); margin-bottom: var(--sp-2); overflow-wrap: anywhere; }
 .lv-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); grid-auto-flow: dense; }

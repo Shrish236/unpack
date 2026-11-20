@@ -42,7 +42,7 @@
 .tm-cc-top { display: flex; justify-content: space-between; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 .tm-ct { display: grid; grid-template-columns: 72px 1fr auto; gap: var(--sp-3); align-items: center; font-size: var(--fs-3); }
 .tm-ct .tn { font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
-.tm-ct.me .tn { color: var(--human); }
+.tm-ct.me .tn { color: var(--human-text); }
 .tm-ct .n { font: var(--fs-2) var(--font-mono); color: var(--ink-3); }
 .tm-cta { justify-self: start; }
 

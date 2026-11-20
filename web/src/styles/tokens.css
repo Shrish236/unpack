@@ -1,46 +1,54 @@
 /* Unpack design system: tokens.
-   Idea: a ledger. Warm paper in light, ink in dark. Two voices: the agent (cool) and the human (hot).
-   Every decision type owns one hue; lightness comes from --tl so the same hue works in both themes. */
+   60-30-10. Cool neutral ground (60%), slate for type and cards (30%), one accent (10%).
+   The accent (signal yellow) is the HUMAN voice: the product is about human decisions, so only they get the colour.
+   The agent is slate ink. No pure black, no pure white. Decision types are muted dots, not colours to read. */
 
 :root {
   color-scheme: light;
-  --tl: 0.56; /* lightness of type colours */
+  --tl: 0.5; /* lightness of the muted decision-type colours */
 
-  --bg: oklch(0.968 0.009 85);
-  --surface: oklch(0.985 0.006 85);
-  --raised: oklch(1 0 0);
-  --sunken: oklch(0.94 0.01 85);
-  --ink: oklch(0.2 0.012 85);
-  --ink-2: oklch(0.42 0.014 85);
-  --ink-3: oklch(0.58 0.014 85);
-  --line: oklch(0.2 0.012 85 / 0.12);
-  --line-2: oklch(0.2 0.012 85 / 0.22);
+  /* 60% ground */
+  --bg: #f4f6f8;
+  --surface: #fafbfc;
+  --raised: #fdfdfe;
+  --sunken: #eaedf1;
 
-  /* the two voices */
-  --agent: oklch(0.5 0.2 268);
-  --agent-soft: oklch(0.5 0.2 268 / 0.1);
-  --human: oklch(0.63 0.21 38);
-  --human-soft: oklch(0.63 0.21 38 / 0.12);
+  /* 30% slate: type, lines, cards */
+  --ink: #1e293b;
+  --ink-2: #475569;
+  --ink-3: #64748b;
+  --line: rgb(30 41 59 / 0.12);
+  --line-2: rgb(30 41 59 / 0.22);
 
-  /* verdicts */
-  --ok: oklch(0.56 0.15 155);
-  --ok-soft: oklch(0.56 0.15 155 / 0.12);
-  --bad: oklch(0.55 0.22 22);
-  --bad-soft: oklch(0.55 0.22 22 / 0.1);
-  --warn: oklch(0.7 0.15 80);
-  --warn-soft: oklch(0.7 0.15 80 / 0.16);
+  /* the two voices: agent = slate, human = the one accent (vermilion) */
+  --agent: #475569;
+  --agent-soft: rgb(71 85 105 / 0.1);
+  --human: #f5b301;               /* signal yellow: fills, marks, highlights */
+  --human-line: #c98f00;          /* thin strokes and lines: yellow needs more weight on a light ground */
+  --human-text: #7a5a00;          /* the accent as small text: 6:1 on the ground */
+  --human-strong: #f5b301;        /* primary button fill */
+  --human-on: #1e293b;            /* text on the accent: slate, 9:1 */
+  --human-soft: rgb(245 179 1 / 0.18);
 
-  /* decision types */
-  --t-architecture: oklch(var(--tl) 0.17 275);
-  --t-design: oklch(var(--tl) 0.19 335);
-  --t-dependency: oklch(calc(var(--tl) + 0.12) 0.15 85);
-  --t-retries: oklch(var(--tl) 0.12 205);
-  --t-test: oklch(var(--tl) 0.14 165);
-  --t-scope: oklch(var(--tl) 0.02 85);
-  --t-security: oklch(var(--tl) 0.2 22);
-  --t-data: oklch(var(--tl) 0.14 240);
+  /* verdicts: semantic only, always small */
+  --ok: #1f7a4d;
+  --ok-soft: rgb(31 122 77 / 0.12);
+  --bad: #b4232f;
+  --bad-soft: rgb(180 35 47 / 0.1);
+  --warn: #a96a0c;
+  --warn-soft: rgb(169 106 12 / 0.14);
 
-  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  /* decision types: muted, so they label without competing with the accent */
+  --t-architecture: oklch(var(--tl) 0.07 255);
+  --t-design: oklch(var(--tl) 0.07 315);
+  --t-dependency: oklch(calc(var(--tl) + 0.1) 0.08 85);
+  --t-retries: oklch(var(--tl) 0.06 200);
+  --t-test: oklch(var(--tl) 0.07 160);
+  --t-scope: oklch(var(--tl) 0.015 250);
+  --t-security: oklch(var(--tl) 0.09 25);
+  --t-data: oklch(var(--tl) 0.07 235);
+
+  --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
@@ -51,7 +59,7 @@
   --gutter: clamp(16px, 4vw, 32px);
   --maxw: 1200px;
 
-  /* Type scale. One scale for every page. Sans for all product UI; serif only for marketing display on the home page. */
+  /* Type scale. One scale for every page. Sans everywhere (Geist); display sizes just get weight and tighter tracking. */
   --fs-1: 11px;  /* mono caps: eyebrows, chips, axis labels */
   --fs-2: 12px;  /* mono/sans small: meta, captions, table heads */
   --fs-3: 13px;  /* secondary text, dense rows */
@@ -66,30 +74,34 @@
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
   --section-y: clamp(48px, 7vw, 80px);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --shadow: 0 1px 0 var(--line), 0 24px 48px -28px oklch(0.2 0.02 85 / 0.35);
+  --shadow: 0 1px 0 var(--line), 0 24px 48px -28px rgb(30 41 59 / 0.28);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --tl: 0.76;
-  --bg: oklch(0.165 0.012 150);
-  --surface: oklch(0.2 0.013 150);
-  --raised: oklch(0.235 0.014 150);
-  --sunken: oklch(0.14 0.01 150);
-  --ink: oklch(0.95 0.01 85);
-  --ink-2: oklch(0.78 0.012 85);
-  --ink-3: oklch(0.6 0.012 85);
-  --line: oklch(0.95 0.01 85 / 0.1);
-  --line-2: oklch(0.95 0.01 85 / 0.2);
-  --agent: oklch(0.76 0.14 268);
-  --agent-soft: oklch(0.76 0.14 268 / 0.14);
-  --human: oklch(0.76 0.17 45);
-  --human-soft: oklch(0.76 0.17 45 / 0.15);
-  --ok: oklch(0.78 0.16 155);
-  --ok-soft: oklch(0.78 0.16 155 / 0.14);
-  --bad: oklch(0.72 0.19 22);
-  --bad-soft: oklch(0.72 0.19 22 / 0.14);
-  --warn: oklch(0.82 0.14 85);
-  --warn-soft: oklch(0.82 0.14 85 / 0.16);
-  --shadow: 0 1px 0 var(--line), 0 28px 56px -24px oklch(0 0 0 / 0.7);
+  --tl: 0.74;
+  --bg: #15171b;
+  --surface: #1b1e23;
+  --raised: #20242a;
+  --sunken: #111316;
+  --ink: #e6e8ec;
+  --ink-2: #a8b0bd;
+  --ink-3: #7d8696;
+  --line: rgb(230 232 236 / 0.1);
+  --line-2: rgb(230 232 236 / 0.2);
+  --agent: #a8b3c4;
+  --agent-soft: rgb(168 179 196 / 0.12);
+  --human: #ffc633;
+  --human-line: #ffc633;
+  --human-text: #ffd56b;
+  --human-strong: #ffc633;
+  --human-on: #1a1405;
+  --human-soft: rgb(255 198 51 / 0.16);
+  --ok: #5dbb87;
+  --ok-soft: rgb(93 187 135 / 0.15);
+  --bad: #f27474;
+  --bad-soft: rgb(242 116 116 / 0.14);
+  --warn: #e0b04f;
+  --warn-soft: rgb(224 176 79 / 0.16);
+  --shadow: 0 1px 0 var(--line), 0 28px 56px -24px rgb(0 0 0 / 0.6);
 }

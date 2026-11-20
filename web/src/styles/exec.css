@@ -9,9 +9,9 @@
 .chart svg { display: block; overflow: visible; }
 .chart .grid { stroke: var(--line); }
 .chart .ax { font: var(--fs-1) var(--font-mono); fill: var(--ink-3); }
-.chart .ax.human { fill: var(--human); }
+.chart .ax.human { fill: var(--human-text); }
 .chart .line { fill: none; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
-.chart .line.agent { stroke: var(--agent); } .chart .line.human { stroke: var(--human); }
+.chart .line.agent { stroke: var(--agent); } .chart .line.human { stroke: var(--human-line); }
 .chart .pt.agent { fill: var(--agent); } .chart .pt.human { fill: var(--human); }
 .chart .pt { stroke: var(--surface); stroke-width: 1.5; }
 .chart .end { font: 500 var(--fs-2) var(--font-mono); }
@@ -31,7 +31,7 @@
 .share-bar { display: flex; height: 28px; border-radius: 8px; overflow: hidden; font: 500 var(--fs-2) var(--font-mono); }
 .share-bar i { display: flex; align-items: center; padding: 0 var(--sp-3); font-style: normal; white-space: nowrap; overflow: hidden; }
 .share-bar .agent { background: var(--agent-soft); color: var(--agent); }
-.share-bar .human { background: var(--human-soft); color: var(--human); }
+.share-bar .human { background: var(--human-soft); color: var(--human-text); }
 .kinds { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
 .kinds li { display: grid; grid-template-columns: minmax(120px, 170px) 1fr 40px; gap: var(--sp-3); align-items: center; font-size: var(--fs-3); }
 .kinds b { text-align: right; font-weight: 500; }
