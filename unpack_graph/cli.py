@@ -136,7 +136,17 @@ def graph_summary(g) -> dict:
 
 def cmd_build(args) -> int:
     g = build_graph(_source(args.repo, args.rev))
-    print(json.dumps(graph_summary(g), indent=2))
+    summary = graph_summary(g)
+    if args.neo4j:
+        from . import neo4j_io
+
+        driver = neo4j_io.connect()
+        try:
+            summary["neo4j"] = neo4j_io.load_graph(g, driver)
+            summary["neo4j"]["db_counts"] = neo4j_io.db_counts(driver)
+        finally:
+            driver.close()
+    print(json.dumps(summary, indent=2))
     return 0
 
 
@@ -168,7 +178,18 @@ def cmd_region(args) -> int:
     from .region import build_region
 
     cs = detect_changes(args.repo, args.base, args.head)
-    view = build_region(cs, args.cap, args.tests_per_node)
+    if args.neo4j:
+        from . import neo4j_io
+
+        driver = neo4j_io.connect()
+        try:
+            neo4j_io.load_graph(cs.head_graph, driver)
+            neo4j_io.annotate_changes(driver, cs)
+            view = neo4j_io.region_query(driver, cs, args.cap, args.tests_per_node)
+        finally:
+            driver.close()
+    else:
+        view = build_region(cs, args.cap, args.tests_per_node)
     text = json.dumps(view, indent=2)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
@@ -191,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     bd = sub.add_parser("build", help="build the call graph with confidence tiers (passes 1 and 2)")
     bd.add_argument("repo", help="repository root (working tree)")
     bd.add_argument("--rev", default=None, help="read a git revision instead of the working tree")
+    bd.add_argument("--neo4j", action="store_true",
+                    help="also load the graph into Neo4j (UNPACK_NEO4J_URI/USER/PASSWORD)")
     bd.set_defaults(func=cmd_build)
 
     ch = sub.add_parser("changed", help="classify functions changed between two git revisions")
@@ -207,6 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--cap", type=int, default=15, help="max callers and max callees kept per function")
     rg.add_argument("--tests-per-node", type=int, default=5, help="max tests listed per changed function")
     rg.add_argument("--out", default=None, help="write to a file instead of stdout")
+    rg.add_argument("--neo4j", action="store_true",
+                    help="answer with the single Cypher region query instead of the in-memory builder")
     rg.set_defaults(func=cmd_region)
     return parser
 
