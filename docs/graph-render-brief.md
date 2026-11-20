@@ -77,7 +77,7 @@ A small banner states what is missing for the analysis (no session, reasons unav
 
 ### 4.5 Scale
 - Up to 200 changed and context nodes: full detail, labels, edges on selection, smooth pan and zoom.
-- Up to about 12,000 functions (the map): WebGL dots, labels only for changed nodes and on zoom, edges hidden. Measure before promising a frame rate; numbers are in `docs/ui-graph-plan.md` §22 once the benchmark is recorded.
+- Up to about 12,000 functions (the map): WebGL dots, labels only for changed nodes and on zoom, edges hidden. Measured limits are in §8 below.
 - Large changes (over 40 changed functions): a file summary first, with the graph opened per file.
 - Whatever cannot be drawn is counted, never silently dropped: "+N more not shown".
 
@@ -167,3 +167,33 @@ ACCEPTANCE
 - Dark or light for the static PR image.
 - Whether the map ships in the first release or after the change view.
 - The render numbers from the benchmark (pending), which set the node and edge caps the design can promise.
+
+## 8. Measured limits
+
+Measured on SQLAlchemy (11,756 functions, 59,221 call edges, real graph from `unpack_graph`). Folder packing (d3-hierarchy `pack`) is computed in the browser. Browser: headless Chromium in a sandbox with **no GPU**, so WebGL runs in software (SwiftShader). Treat the Sigma frame rates as a floor. A machine with a GPU will be faster. Re-measure on the target hardware before fixing the caps.
+
+| Renderer | Nodes | Edges drawn | Pack layout | First frame | Median frame | Frame rate during pan and zoom |
+|---|---|---|---|---|---|---|
+| Sigma (WebGL) | 1,000 | 0 | 31 ms | 235 ms | 50 ms | about 20 fps |
+| Sigma (WebGL) | 5,000 | 0 | 65 ms | 456 ms | 217 ms | about 5 fps |
+| Sigma (WebGL) | 11,756 | 0 | 95 ms | 728 ms | 483 ms | about 2 fps |
+| Sigma (WebGL) | 1,000 | 798 | 22 ms | 269 ms | 67 ms | about 15 fps |
+| React Flow (cards) | 50 | 31 | n/a | 48 ms | 17 ms | 60 fps |
+| React Flow (cards) | 100 | 43 | n/a | 61 ms | 17 ms | 60 fps |
+| React Flow (cards) | 200 | 110 | n/a | 109 ms | 17 ms | 60 fps |
+| React Flow (cards) | 500 | 300 | n/a | 174 ms | 17 ms | 60 fps |
+
+ELK layout for cards (Node, `elkjs` 0.9, layered, DOWN): 50 nodes 157 ms, 100 nodes 75 ms, 200 nodes 137 ms, 500 nodes 326 ms.
+
+What the numbers say:
+- **Cards are not the bottleneck at the server's cap.** 200 cards with their edges render at 60 fps. The cap of 200 non-container nodes is comfortably inside the range.
+- **Dots with no edges stay usable to about 1,000 nodes** here (20 fps in software). At 5,000 and above, the frame rate drops below what pan and zoom need, so the whole-repository map must draw fewer things per frame: labels only for changed nodes, and edges off.
+- **Edges cost frames.** 798 edges among 1,000 nodes cut the frame rate from about 20 to about 15 fps. Show edges only for the selected node.
+- **The all-edges case (59,221 edges across the whole package) was not measured.** The first attempt timed out in software rendering. Treat it as not renderable at speed; draw only the selected neighbourhood.
+
+Limits this implies for the design:
+- Change view: up to 200 non-container nodes, cards or dots, full detail.
+- Map: a whole-repository view is usable at about 1,000 dots with no edges here. Above that, aggregate by folder (or draw only the changed region plus folder tints) until measured on target hardware.
+- Large changes: the file summary (over 40 changed functions) is needed regardless of renderer.
+
+Benchmark scripts: `scratchpad/bench/` in the working session (not committed). Sigma's first-frame event fires during construction in this version, so the harness times the first frame from two animation frames after construction.
