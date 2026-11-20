@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
@@ -21,6 +21,7 @@ from ..models import Analysis, Decision, SessionSignals, FunctionReason, PRAnaly
 from ..pipeline.analysis import AnalysisFailed
 from ..pipeline.graph_view import _callees, _callers, _nearest_tested
 from ..pipeline.repos import data_dir, repo_dir, read_file_at
+from ..pipeline.rollup import AGENT_LABEL, OVERRIDE_KINDS, _area
 from ..schemas.api import (
     AnalysisFacts,
     AnalysisMetadata,
@@ -175,6 +176,90 @@ async def _build_analysis(db: AsyncSession, analysis: Analysis, push: Push, repo
         diff_files=[DiffFile(**f) for f in (analysis.diff_files or [])],
         flow=Flow(**analysis.flow) if analysis.flow else None,
     )
+
+
+@router.get("/api/analyses")
+async def list_analyses(
+    repo: str | None = None,
+    limit: int = 50,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """List finished analyses directly from the database, optionally filtered by repository."""
+    stmt = (
+        select(Analysis, Push, Repo, SessionSignals)
+        .join(Push, Push.id == Analysis.push_id)
+        .join(Repo, Repo.id == Push.repo_id)
+        .outerjoin(SessionSignals, SessionSignals.analysis_id == Analysis.id)
+        .where(Analysis.status == "done")
+        .order_by(Analysis.id.desc())
+        .limit(max(1, min(limit, 200)))
+    )
+    if repo:
+        q = repo.strip().lower()
+        if "/" in q:
+            owner_q, name_q = q.split("/", 1)
+            stmt = stmt.where(func.lower(Repo.owner) == owner_q, func.lower(Repo.name) == name_q)
+        else:
+            stmt = stmt.where(func.lower(Repo.name) == q)
+
+    rows = (await db.execute(stmt)).all()
+    if not rows:
+        return {"analyses": []}
+
+    aids = [a.id for a, _, _, _ in rows]
+    pr_rows = (await db.execute(
+        select(PRAnalysis.analysis_id, PullRequest)
+        .join(PullRequest, PullRequest.id == PRAnalysis.pr_id)
+        .where(PRAnalysis.analysis_id.in_(aids))
+    )).all()
+    pr_by_aid = {aid: pr for aid, pr in pr_rows}
+
+    dec_rows = (await db.execute(
+        select(Decision.analysis_id, Decision.actor, Decision.kind)
+        .where(Decision.analysis_id.in_(aids))
+    )).all()
+    dec_counts: dict[int, dict[str, int]] = {}
+    for aid, actor, kind in dec_rows:
+        c = dec_counts.setdefault(aid, {"agent": 0, "human": 0, "overrules": 0})
+        if actor == "agent":
+            c["agent"] += 1
+        elif actor == "human":
+            c["human"] += 1
+            if kind in OVERRIDE_KINDS:
+                c["overrules"] += 1
+
+    items = []
+    for a, push, repo_row, sig in rows:
+        pr = pr_by_aid.get(a.id)
+        signals = (sig.signals if sig else None) or {}
+        counts = dec_counts.get(a.id, {"agent": 0, "human": 0, "overrules": 0})
+        pr_url = (pr.html_url or f"https://github.com/{repo_row.owner}/{repo_row.name}/pull/{pr.number}") if pr else None
+        commit_url = f"https://github.com/{repo_row.owner}/{repo_row.name}/commit/{push.head_sha}"
+        title = (pr.title if pr and pr.title else (a.summary or f"{push.branch} @ {push.head_sha[:7]}"))[:120]
+        agent_raw = signals.get("agent") or push.session_agent or ""
+        items.append({
+            "public_id": a.public_id,
+            "repo": {"owner": repo_row.owner, "name": repo_row.name, "full_name": f"{repo_row.owner}/{repo_row.name}"},
+            "branch": push.branch,
+            "short_sha": push.head_sha[:7],
+            "head_sha": push.head_sha,
+            "created_at": _iso(a.created_at) or "",
+            "agent": AGENT_LABEL.get(agent_raw, agent_raw or "Agent"),
+            "llm_model": a.llm_model,
+            "title": title,
+            "area": _area(a.graph_view, repo_row.name),
+            "pr_number": pr.number if pr else None,
+            "pr_state": pr.state if pr else None,
+            "pr_url": pr_url,
+            "commit_url": commit_url,
+            "agent_decisions": counts["agent"],
+            "human_decisions": counts["human"],
+            "overrules": counts["overrules"],
+            "attempts": float(signals.get("attempts", 1)),
+            "flags": [f["flag"] for f in signals.get("flags", [])],
+        })
+    return {"analyses": items}
 
 
 @router.get("/api/analyses/{public_id}")

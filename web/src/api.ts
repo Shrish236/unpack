@@ -28,6 +28,7 @@ export interface ImpactHit { id: string; depth: number; tier: string; uncertain:
 export interface AnalysisResponse {
   analysis: {
     public_id: string; status: string; repo: { owner: string; name: string }; branch: string; short_sha: string;
+    head_sha?: string;
     created_at: string; agent: string | null; llm_model: string | null; has_session: boolean;
     error_code?: string | null; error_message?: string | null;
   };
@@ -110,7 +111,39 @@ async function request<T>(path: string, init: RequestInit2 = {}): Promise<T> {
 
 
 // While queued or running the API returns only {analysis:{public_id,status}}; a failed one adds error fields.
+export interface RepoItem {
+  id: number;
+  owner: string;
+  name: string;
+  full_name: string;
+  analyses: number;
+}
+
+export interface AnalysisListItem {
+  public_id: string;
+  repo: { owner: string; name: string; full_name: string };
+  branch: string;
+  short_sha: string;
+  head_sha: string;
+  created_at: string;
+  agent: string;
+  llm_model: string | null;
+  title: string;
+  area: string;
+  pr_number: number | null;
+  pr_state: string | null;
+  pr_url: string | null;
+  commit_url: string;
+  agent_decisions: number;
+  human_decisions: number;
+  overrules: number;
+  attempts: number;
+  flags: Flag[];
+}
+
 export const fetchAnalysis = (id: string) => request<AnalysisResponse>(`/api/analyses/${encodeURIComponent(id)}`);
+export const fetchAnalyses = (repo?: string) =>
+  request<{ analyses: AnalysisListItem[] }>(repo ? `/api/analyses?repo=${encodeURIComponent(repo)}` : "/api/analyses");
 export const fetchTurns = (id: string, ids: string[]) =>
   request<{ turns: Turn[] }>(`/api/analyses/${encodeURIComponent(id)}/turns?ids=${ids.join(",")}`);
 
@@ -133,6 +166,8 @@ export type Source = "sample" | "measured";
 
 export interface ExecData {
   period: Period;
+  repos?: string[];
+  repo_count?: number;
   measured?: Measured;
   sources: Record<"trend" | "kpis" | "rework" | "human_kinds" | "agents", Source>;
   weeks: string[]; // ISO Mondays, oldest first, within the period
@@ -172,18 +207,22 @@ export interface TeamsIndex {
 export interface TeamPage {
   id: string;
   name: string;
+  full_name?: string;
   sources: Record<"kpis" | "areas" | "funnel" | "suggestions" | "mix" | "tools" | "consistency", Source>;
   weeks: string[]; // ISO Mondays, oldest first
   kpis: { prs: number; prs_delta: string; attempts: number; attempts_delta: string; overrules: number; thin: number; unsupported: number };
   areas: { path: string; attempts: number[]; overrules: number[] }[]; // one value per week, 0 = no criteria
   funnel: { total: number; first: number; second: { agent: number; thin: number }; third: { agent: number; thin: number } };
-  suggestions: { cause: "requirement-thin" | "agent-missed"; text: string; prs: number[] }[];
+  suggestions: { cause: "requirement-thin" | "agent-missed"; text: string; prs: number[]; public_ids?: string[] }[];
   mix: { type: DType; agent: number; human: number }[];
   tools: { name: string; calls: number; tokens: number }[];
+  consistency?: ConsistencyItem[];
   prs: {
-    number: number; title: string; area: string; week: number; agent: string; agent_decisions: number;
+    number: number | null; short_sha?: string | null; branch?: string | null; title: string; area: string; week: number; agent: string; agent_decisions: number;
     human_decisions: number; overrules: number; attempts: number; flags: Flag[]; source?: "sample" | "measured";
     public_id?: string | null; // the analysis a measured row came from
+    pr_url?: string | null;
+    commit_url?: string | null;
   }[];
 }
 
@@ -234,6 +273,8 @@ export interface GovHistory { id: string; statement: string; outcome: "approved"
 
 export interface GovernanceState {
   today: string;
+  repo?: string | null;
+  source?: Source;
   candidates: GovCandidate[];
   policies: GovPolicy[];
   rules: GovRule[];
@@ -242,21 +283,25 @@ export interface GovernanceState {
 
 export interface ApproveBody { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string; target?: number | null; review?: string | null }
 
+const repoQ = (repo?: string) => (repo ? `?repo=${encodeURIComponent(repo)}` : "");
+
 export const fetchExec = (period: Period) => request<ExecData>(`/api/dashboard/exec?period=${period}`);
+export const fetchRepos = () => request<{ repos: RepoItem[] }>("/api/dashboard/repos");
+export const fetchRepoDashboard = (repo: string) => request<TeamPage>(`/api/dashboard/repo?repo=${encodeURIComponent(repo)}`);
 export const fetchTeams = () => request<TeamsIndex>("/api/dashboard/teams");
 export const fetchTeam = (id: string) => request<TeamPage>(`/api/dashboard/teams/${encodeURIComponent(id)}`);
-export const fetchGovernance = () => request<GovernanceState>("/api/governance");
-export const approveCandidate = (id: string, body: ApproveBody) =>
-  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/approve`, { method: "POST", body });
-export const rejectCandidate = (id: string, reason: string) =>
-  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/reject`, { method: "POST", body: { reason } });
-export const retirePolicy = (id: string) =>
-  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/retire`, { method: "POST" });
-export const revisePolicy = (id: string) =>
-  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/revise`, { method: "POST" });
-export const watchCandidate = (id: string) =>
-  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/watch`, { method: "POST" });
-export const renewPolicy = (id: string) =>
-  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/renew`, { method: "POST" });
-export const relaxPolicy = (id: string) =>
-  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/relax`, { method: "POST" });
+export const fetchGovernance = (repo?: string) => request<GovernanceState>(`/api/governance${repoQ(repo)}`);
+export const approveCandidate = (id: string, body: ApproveBody, repo?: string) =>
+  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/approve${repoQ(repo)}`, { method: "POST", body });
+export const rejectCandidate = (id: string, reason: string, repo?: string) =>
+  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/reject${repoQ(repo)}`, { method: "POST", body: { reason } });
+export const retirePolicy = (id: string, repo?: string) =>
+  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/retire${repoQ(repo)}`, { method: "POST" });
+export const revisePolicy = (id: string, repo?: string) =>
+  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/revise${repoQ(repo)}`, { method: "POST" });
+export const watchCandidate = (id: string, repo?: string) =>
+  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/watch${repoQ(repo)}`, { method: "POST" });
+export const renewPolicy = (id: string, repo?: string) =>
+  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/renew${repoQ(repo)}`, { method: "POST" });
+export const relaxPolicy = (id: string, repo?: string) =>
+  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/relax${repoQ(repo)}`, { method: "POST" });

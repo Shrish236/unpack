@@ -34,10 +34,11 @@ function Trend({ v, target }: { v: number[]; target?: number | null }) {
   );
 }
 
-export default function PolicyHealth({ actives, today, busy, onRevise, onRetire, onRenew, onRelax }: {
+export default function PolicyHealth({ actives, today, busy, sourceBadge, onRevise, onRetire, onRenew, onRelax }: {
   actives: ActivePolicy[];
   today: string;
   busy?: boolean;
+  sourceBadge?: React.ReactNode;
   onRevise: (p: ActivePolicy) => void;
   onRetire: (p: ActivePolicy) => void;
   onRenew: (p: ActivePolicy) => void;
@@ -48,7 +49,7 @@ export default function PolicyHealth({ actives, today, busy, onRevise, onRetire,
 
   return (
     <Panel title={`Needs attention · ${flagged.length}`} sub="A policy is only useful if overrides fall and reviewers trust the check. These are not doing that yet."
-      aside={<span className="chip sim">Illustrative data</span>}>
+      aside={sourceBadge}>
       {flagged.length === 0 && <div className="gv-empty"><Check size={20} /><b>Every policy is working</b><span>Overrides are falling, checks are accurate and nothing expires soon.</span></div>}
       <div className="gh-list">
         {flagged.map((p) => {

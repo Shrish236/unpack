@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
-import { ApiError } from "./api";
+import { useEffect, useState, type ReactNode } from "react";
+import { FolderGit2 } from "lucide-react";
+import { ApiError, type RepoItem } from "./api";
 import { TYPE_LABEL, type DType } from "./data";
+import { useRepos } from "./queries";
 
 // Shared primitives so every product page uses identical markup and type sizes.
 export function Panel({ title, sub, aside, children, className = "" }: { title?: ReactNode; sub?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string }) {
@@ -69,4 +71,58 @@ export function DataGate<T>({ q, children }: { q: { data: T | undefined; error: 
     );
   }
   return <Panel><p className="panel-sub">Loading…</p></Panel>;
+}
+
+/** Picks `httpx` by default when available in the DB, else the first repository. */
+export function useSelectedRepo(): {
+  repos: RepoItem[];
+  repo: string;
+  setRepo: (r: string) => void;
+  isLoading: boolean;
+} {
+  const q = useRepos();
+  const repos = q.data?.repos ?? [];
+  const [picked, setPicked] = useState<string>("");
+
+  const defaultRepo =
+    repos.find((r) => r.name.toLowerCase() === "httpx")?.full_name ??
+    repos[0]?.full_name ??
+    "httpx";
+
+  useEffect(() => {
+    if (!picked && repos.length > 0) {
+      setPicked(defaultRepo);
+    }
+  }, [picked, repos.length, defaultRepo]);
+
+  return { repos, repo: picked || defaultRepo, setRepo: setPicked, isLoading: q.isLoading };
+}
+
+export function RepoSelect({ repos, value, onChange }: { repos: RepoItem[]; value: string; onChange: (v: string) => void }) {
+  const options = repos.length > 0 ? repos : [{ id: 0, owner: "", name: value || "httpx", full_name: value || "httpx", analyses: 0 }];
+  return (
+    <label className="chip repo-select" style={{ display: "inline-flex", alignItems: "center", gap: 6, paddingRight: 8 }}>
+      <FolderGit2 size={13} aria-hidden="true" />
+      <select
+        aria-label="Repository"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          background: "transparent",
+          border: "none",
+          color: "inherit",
+          font: "inherit",
+          fontWeight: 600,
+          cursor: "pointer",
+          outline: "none",
+        }}
+      >
+        {options.map((r) => (
+          <option key={r.full_name} value={r.full_name} style={{ color: "var(--ink)", background: "var(--surface)" }}>
+            {r.full_name}{r.analyses ? ` (${r.analyses})` : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }

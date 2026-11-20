@@ -1,8 +1,9 @@
+import { ExternalLink } from "lucide-react";
 import PrLive from "../pr/PrLive";
 import PrMock from "./PrMock";
-import { useTeam, useTeams } from "../queries";
-import { DataGate, PageHead, Panel } from "../ui";
-import type { Flag, TeamPage } from "../api";
+import { useAnalyses } from "../queries";
+import { DataGate, PageHead, Panel, RepoSelect, useSelectedRepo } from "../ui";
+import type { AnalysisListItem, Flag } from "../api";
 import "../styles/team.css";
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -12,27 +13,26 @@ const FLAG_LABEL: Record<Flag, string> = {
   "async-gap": "Async gap",
 };
 
-function PrListBody({ prs }: { prs: TeamPage["prs"] }) {
-  const realPrs = prs.filter((p) => p.public_id);
-  const rows = realPrs.length > 0 ? realPrs : prs;
+function PrListBody({ rows }: { rows: AnalysisListItem[] }) {
   return (
     <Panel title="Analyzed PRs" sub={`${rows.length} ${rows.length === 1 ? "analysis" : "analyses"}`}>
       <div className="tm-scroll">
         <table className="table tm-table">
           <thead>
-            <tr><th>PR</th><th>Agent</th><th>Decisions</th><th>Overrules</th><th>Attempts</th><th>Flags</th></tr>
+            <tr><th>PR / Commit</th><th>Agent</th><th>Decisions</th><th>Overrules</th><th>Attempts</th><th>Flags</th><th /></tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="tm-none">No analyzed PRs in the database yet. Push a branch with the Unpack hook installed to see it here.</td></tr>
+              <tr><td colSpan={7} className="tm-none">No analyzed PRs in the database for this repository yet. Push a branch with the Unpack hook installed to see it here.</td></tr>
             )}
             {rows.map((p) => {
-              const href = p.public_id ? `#/pr/${p.public_id}` : "#/pr/mock";
+              const href = `#/pr/${p.public_id}`;
+              const ghUrl = p.pr_url ?? p.commit_url;
               return (
-                <tr key={p.public_id ?? p.number} onClick={() => { location.hash = href; }}>
+                <tr key={p.public_id} onClick={() => { location.hash = href; }}>
                   <td>
-                    <span className="num">#{p.number}</span>
-                    {p.source === "measured" && <span className="chip ok" style={{ marginRight: 6 }}>Measured</span>}
+                    <span className="num">{p.pr_number != null ? `#${p.pr_number}` : p.short_sha}</span>
+                    <span className="chip ok" style={{ marginRight: 6 }}>Measured</span>
                     <a href={href} onClick={(e) => e.stopPropagation()}>{p.title}</a>
                     <span className="ar">{p.area}</span>
                   </td>
@@ -55,6 +55,18 @@ function PrListBody({ prs }: { prs: TeamPage["prs"] }) {
                       </div>
                     )}
                   </td>
+                  <td>
+                    <a
+                      className="btn sm"
+                      href={ghUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title={p.pr_url ? `Open PR #${p.pr_number} on GitHub` : `Open commit ${p.short_sha} on GitHub`}
+                    >
+                      View PR <ExternalLink size={12} />
+                    </a>
+                  </td>
                 </tr>
               );
             })}
@@ -66,19 +78,18 @@ function PrListBody({ prs }: { prs: TeamPage["prs"] }) {
 }
 
 function PrIndex() {
-  const index = useTeams();
-  const teamId = index.data?.teams[0]?.id ?? "payments";
-  const q = useTeam(teamId);
+  const { repos, repo, setRepo } = useSelectedRepo();
+  const q = useAnalyses(repo);
   return (
     <main className="wrap page tm">
       <PageHead
-        crumbs={<>Company <b>›</b> <span>PR analyses</span></>}
+        crumbs={<>Org <b>›</b> <span>PR analyses</span>{repo && <> <b>›</b> <span>{repo}</span></>}</>}
         title="PR analyses"
         sub="Real analyzed pushes and pull requests from the database. Select any row to open its code graph, reasons, flow, and diff."
-        meta={<span className="chip ok">Live DB</span>}
+        meta={<><RepoSelect repos={repos} value={repo} onChange={setRepo} /><span className="chip ok">Live DB</span></>}
       />
       <DataGate q={q}>
-        {(t) => <PrListBody prs={t.prs} />}
+        {(d) => <PrListBody rows={d.analyses} />}
       </DataGate>
     </main>
   );

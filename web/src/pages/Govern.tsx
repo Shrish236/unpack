@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Check, Eye, FileText, Share2, ShieldCheck } from "lucide-react";
-import { DataGate, Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
+import { DataGate, Kpi, PageHead, Panel, RepoSelect, Seg, TypeChip, useSelectedRepo } from "../ui";
 import { TYPE_LABEL, type DType, type HumanKind } from "../data";
 import {
   approveCandidate, rejectCandidate, relaxPolicy, renewPolicy, retirePolicy, revisePolicy, watchCandidate,
-  type ApproveBody, type Enforcement, type GovCandidate, type GovEvidence, type GovernanceState, type GovPolicy, type Scope,
+  type ApproveBody, type Enforcement, type GovCandidate, type GovEvidence, type GovernanceState, type GovPolicy, type RepoItem, type Scope,
 } from "../api";
 import GovernBrief, { briefStats, ENF_LABEL } from "./GovernBrief";
 import PolicyHealth, { issuesOf, reachedTarget, STEP_DOWN } from "./GovernHealth";
@@ -58,22 +58,23 @@ function EvidenceCard({ e }: { e: GovEvidence }) {
 }
 
 export default function Govern() {
-  const q = useGovernance();
+  const { repos, repo, setRepo } = useSelectedRepo();
+  const q = useGovernance(repo);
   return (
     <main className="wrap page">
-      <DataGate q={q}>{(g) => <GovernanceView g={g} />}</DataGate>
+      <DataGate q={q}>{(g) => <GovernanceView g={g} repos={repos} repo={repo} onRepoChange={setRepo} />}</DataGate>
     </main>
   );
 }
 
-function GovernanceView({ g }: { g: GovernanceState }) {
-  const approveM = useGovernanceAction((a: { id: string; body: ApproveBody }) => approveCandidate(a.id, a.body));
-  const rejectM = useGovernanceAction((a: { id: string; reason: string }) => rejectCandidate(a.id, a.reason));
-  const retireM = useGovernanceAction((id: string) => retirePolicy(id));
-  const reviseM = useGovernanceAction((id: string) => revisePolicy(id));
-  const watchM = useGovernanceAction((id: string) => watchCandidate(id));
-  const renewM = useGovernanceAction((id: string) => renewPolicy(id));
-  const relaxM = useGovernanceAction((id: string) => relaxPolicy(id));
+function GovernanceView({ g, repos, repo, onRepoChange }: { g: GovernanceState; repos: RepoItem[]; repo: string; onRepoChange: (r: string) => void }) {
+  const approveM = useGovernanceAction((a: { id: string; body: ApproveBody }) => approveCandidate(a.id, a.body, repo), repo);
+  const rejectM = useGovernanceAction((a: { id: string; reason: string }) => rejectCandidate(a.id, a.reason, repo), repo);
+  const retireM = useGovernanceAction((id: string) => retirePolicy(id, repo), repo);
+  const reviseM = useGovernanceAction((id: string) => revisePolicy(id, repo), repo);
+  const watchM = useGovernanceAction((id: string) => watchCandidate(id, repo), repo);
+  const renewM = useGovernanceAction((id: string) => renewPolicy(id, repo), repo);
+  const relaxM = useGovernanceAction((id: string) => relaxPolicy(id, repo), repo);
   const busy = approveM.isPending || rejectM.isPending || retireM.isPending || reviseM.isPending || watchM.isPending || renewM.isPending || relaxM.isPending;
 
   const [tab, setTab] = useState<Tab>("candidates");
@@ -178,13 +179,17 @@ function GovernanceView({ g }: { g: GovernanceState }) {
   const bs = c && d && brief ? briefStats(c, brief, d.scope) : null;
   const evidence = c ? (showAll ? c.evidence : c.evidence.slice(0, 3)) : [];
 
+  const sourceBadge = g.source === "sample"
+    ? <span className="chip sim">Illustrative data</span>
+    : <span className="chip ok">Measured</span>;
+
   return (
     <>
       <PageHead
-        crumbs={<>Company <b>›</b> <span>Governance</span></>}
+        crumbs={<>Org <b>›</b> <span>Governance</span>{repo && <> <b>›</b> <span>{repo}</span></>}</>}
         title="Governance inbox"
         sub="Approved decisions are added back to your agents' skills and context, so every agent improves over time. You decide what counts as a rule."
-        meta={<><span className="chip sim">Illustrative data</span><span className="chip">Candidate = same override, ≥ {minS} sessions, ≥ {minD} developers</span></>}
+        meta={<><RepoSelect repos={repos} value={repo} onChange={onRepoChange} />{sourceBadge}<span className="chip">Candidate = same override, ≥ {minS} sessions, ≥ {minD} developers</span></>}
       />
 
       <section className="kpis" aria-label="Summary">
@@ -328,11 +333,11 @@ function GovernanceView({ g }: { g: GovernanceState }) {
         </div>
       ))}
 
-      {tab === "active" && <PolicyHealth actives={actives} today={today} busy={busy} onRevise={revise} onRetire={retire} onRenew={renew} onRelax={relax} />}
+      {tab === "active" && <PolicyHealth actives={actives} today={today} busy={busy} sourceBadge={sourceBadge} onRevise={revise} onRetire={retire} onRenew={renew} onRelax={relax} />}
 
       {tab === "active" && (
         <Panel title="All active policies" sub="Adherence is measured on agent decisions. Overrides are per 100 sessions."
-          aside={<span className="chip sim">Illustrative data</span>}>
+          aside={sourceBadge}>
           <div className="gv-scroll">
             <table className="table">
               <thead><tr><th>Policy</th><th>Scope</th><th>Enforcement</th><th>Owner</th><th>Expires</th><th>Adherence</th><th>Overrides</th><th /></tr></thead>
@@ -371,7 +376,7 @@ function GovernanceView({ g }: { g: GovernanceState }) {
 
       {tab === "skills" && (
         <Panel title="Agent decisions against skill rules" sub="Per rule, never per person. Last 8 weeks."
-          aside={<span className="chip sim">Illustrative data</span>}>
+          aside={sourceBadge}>
           <div className="gv-scroll">
             <table className="table">
               <thead><tr><th>Rule</th><th>Followed</th><th>Violated</th><th>Adherence</th><th>Violations / week</th><th>Latest violation</th></tr></thead>
@@ -395,7 +400,7 @@ function GovernanceView({ g }: { g: GovernanceState }) {
       )}
 
       {tab === "history" && (
-        <Panel title="History" sub="Roles, not names." aside={<span className="chip sim">Illustrative data</span>}>
+        <Panel title="History" sub="Roles, not names." aside={sourceBadge}>
           <div className="gv-hist">
             {hist.map((h) => (
               <div key={h.id}>

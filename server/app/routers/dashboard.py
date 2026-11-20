@@ -10,8 +10,8 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..dashboard_seed import TYPES
@@ -19,9 +19,10 @@ from ..db import get_db
 from ..deps import viewer
 from ..errors import ApiError
 from ..config import settings
-from ..pipeline.metrics import exec_metrics, monday, team_metrics
-from ..pipeline.rollup import load_sessions, measured_summary
+from ..pipeline.metrics import exec_metrics, monday, team_metrics, week_window
+from ..pipeline.rollup import AGENT_LABEL, OVERRIDE_KINDS, load_sessions, measured_summary
 from ..models import (
+    Analysis,
     ConsistencyItem,
     ConsistencyRow,
     ExecAgent,
@@ -31,6 +32,8 @@ from ..models import (
     ExecWeek,
     GovCandidate,
     GovPolicy,
+    Push,
+    Repo,
     Team,
     TeamArea,
     TeamAreaWeek,
@@ -128,9 +131,18 @@ async def executive_page(period: Literal["30d", "90d"] = "30d", db: AsyncSession
     }
     result["sources"] = {k: "sample" for k in EXEC_SECTIONS}
     data = await load_sessions(db)
+    repo_names = sorted({f"{d['repo'].owner}/{d['repo'].name}" for d in data})
+    if not repo_names:
+        repo_rows = (await db.execute(select(Repo).order_by(Repo.name))).scalars().all()
+        repo_names = [f"{r.owner}/{r.name}" for r in repo_rows]
+    result["repos"] = repo_names
+    result["repo_count"] = len(repo_names)
+    all_policies = list((await db.execute(
+        select(GovPolicy).where(GovPolicy.status == "active", GovPolicy.published_on.is_not(None))
+    )).scalars())
     measured = exec_metrics(data, today, WINDOW_WEEKS[period]) if len(data) >= settings.METRICS_MIN_SESSIONS else None
     if measured:
-        _overlay_exec(result, measured, events, today)
+        _overlay_exec(result, measured, events, all_policies, today)
         _overlay_pending(result, await _open_candidates(db), today)
     return result
 
@@ -147,14 +159,26 @@ def _overlay_pending(result: dict[str, Any], open_candidates: list[GovCandidate]
     result["kpis"]["pending"] = {"v": len(open_candidates), "oldest_days": max(waiting, default=0)}
 
 
-def _overlay_exec(result: dict[str, Any], m: dict[str, Any], events: list[ExecPolicyEvent], today: date) -> None:
+def _overlay_exec(
+    result: dict[str, Any],
+    m: dict[str, Any],
+    events: list[ExecPolicyEvent],
+    policies: list[GovPolicy],
+    today: date,
+) -> None:
     """Replace the sample sections with the ones measured from sessions. A section the sessions cannot fill stays sample."""
     for key in ("weeks", "adherence", "repeat_overrides", "human_per_week", "mix"):
         result[key] = m[key]
     result["sources"]["trend"] = "measured"
     week_of = {date.fromisoformat(w): i for i, w in enumerate(m["weeks"])}
-    result["policy_events"] = [{"id": e.id, "week": week_of[monday(e.week_start)], "text": e.text}
-                               for e in events if monday(e.week_start) in week_of]
+    ev_by_id: dict[str, dict[str, Any]] = {}
+    for e in events:
+        if monday(e.week_start) in week_of:
+            ev_by_id[e.id] = {"id": e.id, "week": week_of[monday(e.week_start)], "text": e.text}
+    for p in policies:
+        if p.published_on and monday(p.published_on) in week_of and p.id not in ev_by_id:
+            ev_by_id[p.id] = {"id": p.id, "week": week_of[monday(p.published_on)], "text": p.statement}
+    result["policy_events"] = sorted(ev_by_id.values(), key=lambda x: x["week"])
     result["headline"] = None
     for e in events:
         i = week_of.get(monday(e.week_start))
@@ -167,12 +191,132 @@ def _overlay_exec(result: dict[str, Any], m: dict[str, Any], events: list[ExecPo
     result["sources"]["kpis"] = "measured"
     result["rework"] = m["rework"]
     result["sources"]["rework"] = "measured"
-    if m["human_kinds"] is not None:
-        result["human_kinds"] = m["human_kinds"]
-        result["sources"]["human_kinds"] = "measured"
+    result["human_kinds"] = m["human_kinds"]
+    result["sources"]["human_kinds"] = "measured"
     if m["agents"]:
         result["agents"] = m["agents"]
         result["sources"]["agents"] = "measured"
+
+
+def _match_repo(repo: Repo, query: str) -> bool:
+    q = query.strip().lower()
+    full = f"{repo.owner}/{repo.name}".lower()
+    return q == full or q == repo.name.lower()
+
+
+@router.get("/repos")
+async def list_repos(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """List repositories present in the database, ordered by number of finished analyses."""
+    counts = dict((await db.execute(
+        select(Push.repo_id, func.count(Analysis.id))
+        .join(Analysis, Analysis.push_id == Push.id)
+        .where(Analysis.status == "done")
+        .group_by(Push.repo_id)
+    )).all())
+    repos = list((await db.execute(select(Repo).order_by(Repo.name))).scalars())
+    items = [
+        {
+            "id": r.id,
+            "owner": r.owner,
+            "name": r.name,
+            "full_name": f"{r.owner}/{r.name}",
+            "analyses": int(counts.get(r.id, 0)),
+        }
+        for r in repos
+    ]
+    items.sort(key=lambda x: (-x["analyses"], x["name"].lower()))
+    return {"repos": items}
+
+
+@router.get("/repo")
+async def repo_dashboard(repo: str = Query(..., min_length=1), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Dynamic DB-backed dashboard for a single repository (used by the Managers / Team page)."""
+    repos = list((await db.execute(select(Repo))).scalars())
+    target = next((r for r in repos if _match_repo(r, repo)), None)
+    if target is None:
+        raise ApiError(404, "not_found", f"no repository matching {repo!r}")
+
+    all_data = await load_sessions(db)
+    data = [d for d in all_data if d["repo"].id == target.id]
+    today = _today()
+    m = team_metrics(data, today)
+    if m is None:
+        weeks = [w.isoformat() for w in week_window(today, 8)]
+        m = {
+            "weeks": weeks,
+            "kpis": {"prs": 0, "prs_delta": "+0", "attempts": 0.0, "attempts_delta": "n/a", "overrules": 0.0, "thin": 0, "unsupported": 0},
+            "areas": [],
+            "funnel": {"total": 0, "first": 0, "second": {"agent": 0, "thin": 0}, "third": {"agent": 0, "thin": 0}},
+            "mix": [{"type": t, "agent": 0, "human": 0} for t in TYPES],
+            "tools": [],
+        }
+
+    week_idx = {date.fromisoformat(w): i for i, w in enumerate(m["weeks"])}
+    prs = []
+    for d in sorted(data, key=lambda x: x["analysis"].id, reverse=True):
+        a, push, sig, decs, pr = d["analysis"], d["push"], d["signals"], d["decisions"], d["pr"]
+        human = [x for x in decs if x.actor == "human"]
+        title = (pr.title if pr and pr.title else (a.summary or f"{push.branch} @ {push.head_sha[:7]}"))[:90]
+        pr_url = (pr.html_url or f"https://github.com/{target.owner}/{target.name}/pull/{pr.number}") if pr else None
+        commit_url = f"https://github.com/{target.owner}/{target.name}/commit/{push.head_sha}"
+        prs.append({
+            "number": pr.number if pr else None,
+            "short_sha": push.head_sha[:7],
+            "branch": push.branch,
+            "title": title,
+            "area": d["area"],
+            "week": week_idx.get(monday(d["when"]), -1),
+            "agent": AGENT_LABEL.get(sig.get("agent", ""), sig.get("agent") or "Agent"),
+            "agent_decisions": sum(1 for x in decs if x.actor == "agent"),
+            "human_decisions": len(human),
+            "overrules": sum(1 for x in human if x.kind in OVERRIDE_KINDS),
+            "attempts": float(sig.get("attempts", 1)),
+            "flags": [f["flag"] for f in sig.get("flags", [])],
+            "source": "measured",
+            "public_id": a.public_id,
+            "pr_url": pr_url,
+            "commit_url": commit_url,
+        })
+
+    # Dynamic suggestions from human requirement additions and repeated overrides in this repo
+    suggestions: list[dict[str, Any]] = []
+    seen_stmt: set[str] = set()
+    for d in sorted(data, key=lambda x: x["analysis"].id, reverse=True):
+        for x in d["decisions"]:
+            if x.actor != "human" or not x.statement:
+                continue
+            key = x.statement.strip().lower()
+            if key in seen_stmt:
+                continue
+            seen_stmt.add(key)
+            cause = "requirement-thin" if x.kind == "requirement" else "agent-missed"
+            suggestions.append({
+                "cause": cause,
+                "text": x.statement,
+                "prs": [d["pr"].number] if d["pr"] else [],
+                "public_ids": [d["analysis"].public_id],
+            })
+            if len(suggestions) >= 5:
+                break
+        if len(suggestions) >= 5:
+            break
+
+    full_name = f"{target.owner}/{target.name}"
+    return {
+        "id": full_name,
+        "name": target.name,
+        "full_name": full_name,
+        "sources": {k: "measured" for k in TEAM_SECTIONS},
+        "weeks": m["weeks"],
+        "kpis": m["kpis"],
+        "areas": m["areas"],
+        "funnel": m["funnel"],
+        "suggestions": suggestions,
+        "mix": m["mix"],
+        "tools": m["tools"],
+        "prs": prs,
+        "consistency": [],
+    }
 
 
 @router.get("/teams")
