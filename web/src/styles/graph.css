@@ -1,0 +1,168 @@
+/* Change graph. Everything uses the app's tokens (tokens.css), so it follows the light and dark themes. */
+
+.gl-toolbar { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; }
+.gl-spacer { flex: 1; }
+.gl-live { display: flex; gap: 6px; align-items: center; }
+.gl-live input { min-width: 240px; }
+.gl-check { display: inline-flex; gap: 6px; align-items: center; font-size: var(--fs-2); color: var(--ink-2); cursor: pointer; }
+.gl-check input { accent-color: var(--human); }
+.gl-muted { color: var(--ink-3); }
+.gl-bad { color: var(--bad); }
+.gl-keys { margin: 0; font-size: var(--fs-1); color: var(--ink-3); }
+.gl-page kbd, .gl-keys kbd { font: 500 11px var(--font-mono); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--sunken); color: var(--ink-2); }
+
+.gl-banner { border-radius: 12px; padding: 10px 14px; font-size: var(--fs-3); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+.gl-banner.no_session { background: var(--agent-soft); border-color: var(--line-2); }
+
+.gl-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: var(--sp-4); align-items: start; }
+@media (max-width: 1000px) { .gl-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* canvas */
+.cg-canvas { position: relative; height: 660px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+.cg-canvas .react-flow {
+  --xy-background-color: var(--surface);
+  --xy-background-pattern-color: var(--line-2);
+  --xy-background-pattern-dots-color-default: var(--line-2);
+  --xy-edge-stroke: var(--ink-3);
+  --xy-edge-stroke-width: 1.5;
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--sunken);
+  --xy-controls-button-color: var(--ink-2);
+  --xy-controls-button-border-color: var(--line);
+  --xy-minimap-background-color: var(--surface);
+  background: var(--surface);
+  font-family: inherit;
+}
+.cg-canvas .react-flow__controls { box-shadow: var(--shadow); border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+.cg-mini { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+.cg-empty { height: 100%; display: grid; place-items: center; color: var(--ink-3); }
+
+.cg-legend.react-flow__panel { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin: 12px; padding: 7px 12px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); border: 1px solid var(--line); font-size: var(--fs-1); color: var(--ink-2); }
+.cg-leg { display: inline-flex; gap: 6px; align-items: center; }
+.cg-leg i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.cg-leg .bad { color: var(--bad); }
+
+/* file cards */
+.cg-file { background: var(--surface); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: var(--shadow); overflow: visible; transition: opacity 0.25s ease, box-shadow 0.25s ease; }
+.cg-file.dim { opacity: 0.45; }
+.cg-file-h { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 14px; border-bottom: 1px solid var(--line); cursor: grab; }
+.cg-file-ico { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--agent-soft); color: var(--agent); flex: none; }
+.cg-path { display: grid; min-width: 0; line-height: 1.25; flex: 1; }
+.cg-path b { font-size: var(--fs-3); font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cg-dir { font: var(--fs-1) var(--font-mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cg-sum { display: flex; gap: 8px; font: 600 var(--fs-2) var(--font-mono); }
+.cg-rows { list-style: none; margin: 0; padding: 4px 0; }
+.cg-row { position: relative; display: flex; align-items: center; gap: 9px; height: 42px; padding: 0 14px; cursor: pointer; transition: background 0.15s ease, opacity 0.2s ease; }
+.cg-row::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--c); }
+.cg-row.context::before { opacity: 0.35; }
+.cg-row:hover { background: var(--sunken); }
+.cg-row.sel { background: color-mix(in srgb, var(--c) 16%, var(--surface)); box-shadow: inset 0 0 0 1.5px var(--c); border-radius: 8px; margin: 0 6px; padding: 0 8px; }
+.cg-row.sel::before { left: -6px; }
+.cg-row.dim { opacity: 0.5; }
+.cg-row.context .cg-name, .cg-row.test .cg-name { color: var(--ink-2); font-weight: 400; }
+.cg-glyph { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); flex: none; }
+.cg-glyph i { width: 6px; height: 6px; border-radius: 50%; background: var(--c); opacity: 0.6; }
+.cg-row.ghost .cg-name { text-decoration: line-through; color: var(--ink-3); }
+.cg-name { font-size: var(--fs-3); font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.cg-tag { font: 500 10px var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--sunken); color: var(--ink-3); white-space: nowrap; }
+.cg-tag.outside { background: var(--agent-soft); color: var(--agent); }
+.cg-tag.blast { background: var(--human-soft); color: var(--human-text); }
+.cg-flask { color: var(--bad); display: inline-grid; }
+.cg-chip { margin: 2px 14px 12px; padding: 4px 10px; font: var(--fs-1) var(--font-mono); color: var(--ink-3); border: 1px dashed var(--line-2); border-radius: 999px; width: fit-content; }
+.cg-h.react-flow__handle { opacity: 0; width: 8px; height: 8px; min-width: 0; min-height: 0; border: 0; }
+
+/* edges: flowing dashes show the direction of the call */
+.cg-canvas .react-flow__edge-path { stroke: var(--ink-3); stroke-width: 1.5; transition: opacity 0.2s ease, stroke 0.2s ease; }
+.cg-e.extracted .react-flow__edge-path { stroke: var(--ink-2); }
+.cg-e.inferred .react-flow__edge-path { stroke-dasharray: 6 5; }
+.cg-e.ambiguous .react-flow__edge-path { stroke-dasharray: 1 6; stroke-linecap: round; opacity: 0.7; }
+.cg-e.reach .react-flow__edge-path { stroke: var(--t-test); }
+.cg-e.hot .react-flow__edge-path { stroke: var(--human-line); stroke-width: 2.4; }
+.cg-e.faded .react-flow__edge-path { opacity: 0.18; }
+.cg-canvas .react-flow__edge.animated .react-flow__edge-path { animation-duration: 1.2s; }
+
+/* reasoning panel */
+.gl-insp { max-height: 660px; overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; font-size: var(--fs-2); padding: var(--sp-4); }
+.gl-insp-title { font-size: 18px; margin: 6px 0 2px; }
+.gl-insp-body { display: grid; gap: 4px; min-width: 0; }
+.gl-sec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.gl-sec-h { font: 600 var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin: 12px 0 6px; }
+.gl-reason { font-size: var(--fs-3); line-height: 1.5; margin: 0 0 8px; color: var(--ink); }
+.gl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gl-chip-badge { display: inline-flex; gap: 4px; align-items: center; font: 500 11px var(--font-mono); letter-spacing: 0.03em; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); }
+.gl-chip-badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.gl-sig { font: var(--fs-1) var(--font-mono); white-space: pre-wrap; word-break: break-word; background: var(--sunken); padding: 9px 10px; border-radius: 10px; margin: 8px 0 0; }
+.gl-history { padding-left: 18px; margin: 6px 0; display: grid; gap: 4px; }
+.gl-history .mono { color: var(--ink-3); margin-right: 6px; }
+.gl-quote { margin: 8px 0; padding: 9px 12px; border-left: 3px solid var(--human-line); background: var(--human-soft); border-radius: 0 10px 10px 0; font-size: var(--fs-2); }
+.gl-quote.agent { border-color: var(--agent); background: var(--agent-soft); }
+.gl-quote small { display: block; color: var(--ink-3); margin-bottom: 2px; }
+.gl-finding { display: flex; gap: 6px; align-items: flex-start; color: var(--bad); margin: 4px 0; }
+.gl-kv { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 5px; }
+.gl-kv.small { font-size: var(--fs-1); }
+.gl-kv li { display: flex; gap: 8px; align-items: center; }
+.gl-sw { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.gl-order, .gl-findings { padding-left: 18px; margin: 4px 0; display: grid; gap: 4px; }
+.gl-findings li { display: grid; gap: 2px; }
+.gl-link { background: none; border: 0; padding: 0; color: var(--human-text); cursor: pointer; font: inherit; font-weight: 500; text-align: left; }
+.gl-link:hover { text-decoration: underline; }
+.gl-diff { font: var(--fs-1) var(--font-mono); background: var(--sunken); border-radius: 10px; padding: 9px 10px; overflow: auto; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
+.gl-diff .add { color: var(--ok); display: block; }
+.gl-diff .del { color: var(--bad); display: block; }
+.gl-diff .hh { color: var(--ink-3); display: block; }
+
+/* levels of detail */
+.cg-crumb { cursor: pointer; border: 1px solid var(--line-2); background: var(--human-soft); color: var(--ink); font: 500 var(--fs-1) var(--font-mono); }
+.cg-level.react-flow__panel { margin: 12px; padding: 6px 12px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); border: 1px solid var(--line); font-size: var(--fs-1); color: var(--ink-3); }
+.cg-level b { color: var(--ink); font-weight: 600; }
+.cg-canvas .react-flow__node:not(.dragging) { transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.cg-file-h { cursor: pointer; }
+.cg-caret { color: var(--ink-3); display: grid; place-items: center; }
+.cg-file.ghost { border-style: dashed; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.cg-compact { padding: 10px 14px 14px; display: grid; gap: 8px; }
+.cg-bar { display: flex; height: 8px; gap: 2px; border-radius: 4px; overflow: hidden; background: var(--sunken); }
+.cg-bar i { display: block; min-width: 4px; }
+.cg-badges { display: flex; flex-wrap: wrap; gap: 6px; min-height: 0; }
+.cg-b { display: inline-flex; gap: 4px; align-items: center; font: 500 10.5px var(--font-mono); padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--ink-3); }
+.cg-b.bad { background: var(--bad-soft); color: var(--bad); }
+.cg-folder { background: var(--surface); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: var(--shadow); padding: 14px; display: grid; gap: 10px; cursor: pointer; transition: border-color 0.2s ease, opacity 0.25s ease, transform 0.2s ease; }
+.cg-folder:hover { border-color: var(--human-line); }
+.cg-folder.dim { opacity: 0.45; }
+.cg-folder-h { display: flex; align-items: center; gap: 10px; }
+.cg-file-ico.folder { background: var(--human-soft); color: var(--human-text); }
+.cg-canvas .react-flow__edge-text { font: 600 11px var(--font-mono); fill: var(--ink-2); }
+.cg-canvas .react-flow__edge-textbg { fill: var(--surface); }
+
+/* ---- theme and performance pass ---- */
+/* the canvas sits one step below the cards, in both themes, so cards read as objects instead of blending in */
+.cg-canvas { background: var(--sunken); box-shadow: none; --cg-shadow: 0 1px 2px rgb(15 23 42 / 0.10), 0 5px 14px -7px rgb(15 23 42 / 0.20); --cg-hover: rgb(15 23 42 / 0.045); }
+:root[data-theme="dark"] .cg-canvas { --cg-shadow: 0 1px 0 rgb(255 255 255 / 0.04), 0 6px 16px -8px rgb(0 0 0 / 0.7); --cg-hover: rgb(255 255 255 / 0.04); }
+.cg-canvas .react-flow { --xy-background-color: var(--sunken); background: var(--sunken); }
+.cg-canvas .react-flow { --xy-background-pattern-color: color-mix(in srgb, var(--ink) 16%, transparent); --xy-background-pattern-dots-color-default: color-mix(in srgb, var(--ink) 16%, transparent); }
+.cg-file, .cg-folder { box-shadow: var(--cg-shadow); border-color: var(--line-2); }
+.cg-row:hover { background: var(--cg-hover); }
+.cg-bar { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.cg-tag, .cg-b { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.cg-b.bad { background: var(--bad-soft); }
+.cg-tag.outside { background: var(--agent-soft); }
+.cg-canvas .react-flow__controls, .cg-mini { box-shadow: var(--cg-shadow); }
+/* floating panels: solid, no blur (a blur behind a moving canvas is expensive) */
+.cg-legend.react-flow__panel, .cg-level.react-flow__panel { background: var(--surface); backdrop-filter: none; box-shadow: var(--cg-shadow); }
+.cg-leg .bad { color: var(--bad); }
+/* dimming is one class on the canvas; only the cards related to the selection opt out */
+.cg-canvas.has-sel .cg-file:not(.rel), .cg-canvas.has-sel .cg-folder:not(.rel) { opacity: 0.5; }
+.cg-canvas.has-sel .cg-row:not(.rel):not(.sel) { opacity: 0.55; }
+.cg-canvas.has-sel .cg-e:not(.hot) .react-flow__edge-path { opacity: 0.14; }
+.cg-canvas .react-flow__node:not(.dragging) { transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.cg-file, .cg-folder, .cg-row { transition: opacity 0.18s ease, background 0.12s ease, border-color 0.15s ease; }
+/* reading-order numbers */
+.cg-n { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--human-soft); color: var(--human-text); font: 700 var(--fs-2) var(--font-mono); flex: none; }
+.cg-rank { font: 600 10.5px var(--font-mono); color: var(--ink-3); min-width: 16px; text-align: right; }
+.cg-row.sel .cg-rank { color: var(--ink); }
+/* inside the PR page */
+.gp-body { display: grid; gap: var(--sp-3); outline: none; }
+.gp-body:focus-visible .cg-canvas { box-shadow: 0 0 0 2px var(--human-line); }
+.gp .gl-insp { box-shadow: none; background: var(--surface); }
+.gp .cg-canvas { height: 640px; }
+.gp .gl-insp { max-height: 640px; }
+.cg-legend.react-flow__panel { max-width: calc(100% - 330px); border-radius: 16px; }
