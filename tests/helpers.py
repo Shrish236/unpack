@@ -1,8 +1,9 @@
-"""Shared test helpers for the extraction tests."""
+"""Shared test helpers: build small fixture repositories and query the resulting graph."""
 
 import os
 
 from unpack_graph.extract import extract_file, module_name_for
+from unpack_graph.graph import build_graph
 from unpack_graph.source import FsSource
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -18,6 +19,7 @@ class Extracted:
 
 
 def extract_tree(root):
+    """Pass 1 only (no call resolution)."""
     src = FsSource(root)
     files = src.list_files()
     known = set(files)
@@ -28,5 +30,14 @@ def extract_tree(root):
     return Extracted(mods)
 
 
-def build(name):
-    return extract_tree(os.path.join(FIX, name))
+def build(name, **kw):
+    """Full call graph (passes 1 and 2) of a fixture package under tests/fixtures/."""
+    return build_graph(FsSource(os.path.join(FIX, name)), **kw)
+
+
+def edge(g, src, dst):
+    return g.calls.get((src, dst))
+
+
+def targets(g, src):
+    return {e.dst: e for e in g.out_adj.get(src, [])}
