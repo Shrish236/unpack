@@ -265,3 +265,26 @@ The incremental head alone takes 2.5 to 4.5 s against 8.7 s for a full build. Th
 - The Docker build. The image builds through pip. The Playwright step needs the network path that is the sandbox's, not the repo's. The web stage runs `npm ci`, which needs a lockfile that `web/` does not have, and falls back to `npm install`. Lock it on the UI side.
 - A real GitHub App, OAuth app and webhook delivery. All GitHub calls are mocked.
 - The CLI hook against a real push.
+
+
+## 8. Container verification
+
+Run against the image built from `server/Dockerfile` and the real `docker-compose.yml` (with an override that points the services at the built image).
+
+**Verified:**
+- The image builds: pip install of the project, the Playwright browser with its system dependencies, and the web stage. The web stage needed the sandbox CA for `npm`, which is environment-only.
+- Chromium launches inside the container, and the server imports and migrations are present.
+- `docker compose up`: Postgres healthy, `migrate` runs and exits 0, the API and worker start, `/healthz` and `/readyz` report the worker heartbeat.
+- End to end: a repository row, a push through `POST /v1/ingest` (202), the worker clones from a git origin inside its container, and the analysis finishes with the expected facts (2 changed functions, 1 added, 1 functional, 1 not reached by tests).
+- Rendering: the worker renders through the API's internal `/render` route and produces a 2400×1400 PNG, which the public `/img` route serves.
+- Migrations are idempotent (re-run exits 0, stays at head).
+
+**Found and fixed:**
+- The worker rendered against `127.0.0.1:8000`, which is itself inside the worker container, so every render failed with connection refused. The compose worker now sets `INTERNAL_API_URL=http://api:8000`.
+
+**Found, not fixed (UI side):**
+- The web bundle does not build: `web/src/App.tsx` fails `tsc` on an unused import. The Dockerfile's fallback then ships an empty `index.html`, so the live page and the comment image cannot render until the UI builds. The fallback hides the failure; it should fail the build once the UI is ready.
+- The API's Content-Security-Policy blocks inline scripts. That is intended (design §11): a Vite build loads only same-origin files.
+- `web/` has no lockfile, so the `npm ci || npm install` fallback is not reproducible.
+
+**Verification-only (not in the repo or the image):** the render check used a test page served from `/assets`, to exercise Chromium, the route and the image checks without the UI.

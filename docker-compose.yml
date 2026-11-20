@@ -68,6 +68,8 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://unpack:unpackpass@postgres:5432/unpack
+      # The worker renders the comment image by calling the API over the compose network.
+      INTERNAL_API_URL: http://api:8000
       ANALYSIS_PROCESSES: "2"  # analyses in parallel, one per process
     volumes:
       - ./data:/data
