@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Ban, CornerUpRight, ListPlus, MessagesSquare, ShieldX, Undo2 } from "lucide-react";
 import Stage from "./Stage";
+import StepViz from "./StepViz";
 import "../styles/home.css";
+import "../styles/viz.css";
 
 const STEPS = [
   { n: "", h: null, p: "Unpack reads agent sessions, types every decision, checks claims against evidence, and feeds approved human corrections back to every agent." },
@@ -23,7 +25,7 @@ const KINDS = [
   { icon: MessagesSquare, name: "Discussion decision", quote: "Option B. Retry in the transport layer, not per call.", records: "The options discussed before any code, the choice, and your rationale.", where: ["PR story", "Decision ledger"] },
 ];
 
-export default function Home() {
+export default function HomeV1() {
   const [step, setStep] = useState(0);
   const story = useRef<HTMLDivElement>(null);
   const refs = useRef<(HTMLElement | null)[]>([]);
@@ -82,6 +84,7 @@ export default function Home() {
                   <span className="num">{s.n}</span>
                   <h2 className="display">{s.h}</h2>
                   <p>{s.p}</p>
+                  <StepViz i={i} />
                 </>
               )}
             </article>
