@@ -1,0 +1,134 @@
+/* #/home-3. Prefix `hb-` (class names are global). Sizes follow tokens.css.
+   The story layout and the sections after it reuse home2.css (hx-). */
+
+/* ---------- hero: text + scene B ---------- */
+.hb-hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(24px, 5vw, 72px); align-items: center; min-height: calc(100vh - 56px); padding-block: var(--sp-6); }
+.hb-hero-text { display: flex; flex-direction: column; gap: var(--sp-4); max-width: 540px; }
+.hb-sub { color: var(--ink-2); font-size: var(--fs-5); max-width: 46ch; }
+.hb-story .hx-step:first-child { min-height: 70vh; }
+.hb-stage { width: min(100%, 470px); }
+
+/* ---------- scene B: Monday to Monday ---------- */
+.hb-scene { width: 100%; max-width: 560px; justify-self: center; display: grid; gap: 8px; padding: var(--sp-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--shadow); }
+.hb-week { display: flex; justify-content: space-between; gap: var(--sp-1); padding-bottom: var(--sp-3); margin-bottom: var(--sp-1); border-bottom: 1px solid var(--line); font: 500 var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.hb-week span { padding: 3px 8px; border-radius: 999px; transition: background-color 0.4s var(--ease), color 0.4s var(--ease); }
+.hb-week span.on { background: var(--ink); color: var(--bg); }
+
+.hb-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 28px; gap: var(--sp-2); align-items: center; height: 70px; opacity: 0; transform: translateY(8px); transition: opacity 0.5s var(--ease), transform 0.5s var(--ease); }
+.hb-row.in { opacity: 1; transform: none; }
+.hb-row.in.dim { opacity: 0.45; }
+.hb-term { min-width: 0; height: 100%; display: grid; align-content: center; gap: 3px; padding: 6px var(--sp-3); background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--r-2); font: var(--fs-2) var(--font-mono); }
+.hb-term header { font-size: var(--fs-1); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.hb-term code { font: inherit; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-term .who { color: var(--ink-3); }
+.hb-term .you { color: var(--human-text); opacity: 0; transition: opacity 0.4s var(--ease); }
+.hb-term .you.in { opacity: 1; }
+.hb-term .you .who { color: var(--human-text); }
+.hb-term.ok { border-color: color-mix(in oklab, var(--ok) 50%, transparent); }
+
+.hb-person { position: relative; display: grid; place-items: center; color: var(--ink-3); }
+.hb-person svg { fill: currentColor; }
+.hb-typing { position: absolute; top: -10px; left: 12px; display: flex; gap: 2px; padding: 3px 4px; border-radius: 6px; background: var(--human); }
+.hb-typing b { width: 3px; height: 3px; border-radius: 50%; background: var(--human-on); animation: hb-blink 1s infinite; }
+.hb-typing b:nth-child(2) { animation-delay: 0.15s; } .hb-typing b:nth-child(3) { animation-delay: 0.3s; }
+.hb-done { position: absolute; top: -6px; left: 12px; width: 13px; height: 13px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: var(--bg); }
+
+.hb-mark, .hb-ok { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; }
+.hb-mark { background: var(--human); color: var(--human-on); opacity: 0; transform: scale(0.4); transition: transform 0.7s var(--ease), opacity 0.5s var(--ease); }
+.hb-mark.in { opacity: 1; transform: scale(1); }
+.hb-mark.in.fly { transform: translateY(var(--dy)) scale(0.5); opacity: 0; }
+.hb-ok { background: var(--ok-soft); color: var(--ok); }
+
+.hb-policy { justify-self: end; display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--sp-2); padding: 8px var(--sp-3); border-radius: var(--r-2); background: var(--human-soft); border: 1px solid var(--human-line); color: var(--ink); font-size: var(--fs-3); font-weight: 500; opacity: 0; transform: scale(0.9); transition: opacity 0.5s var(--ease) 0.35s, transform 0.5s var(--ease) 0.35s; }
+.hb-policy.in { opacity: 1; transform: none; }
+.hb-policy small { flex-basis: 100%; font: var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.hb-chip-p { font: 600 var(--fs-1) var(--font-mono); padding: 2px 7px; border-radius: 999px; background: var(--human); color: var(--human-on); }
+
+.hb-counter { display: flex; justify-content: space-between; align-items: baseline; padding-top: var(--sp-3); margin-top: var(--sp-1); border-top: 1px solid var(--line); font: var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.hb-counter b { font: 600 var(--fs-6) var(--font-body); color: var(--human-text); letter-spacing: 0; }
+.hb-counter b.zero { color: var(--ok); }
+
+@keyframes hb-blink { 50% { opacity: 0.3; } }
+
+/* ---------- 2D story figure (adapted from home.css stage rules) ---------- */
+.hb-stage-svg { width: 100%; height: auto; max-height: calc(100vh - 110px); display: block; filter: drop-shadow(0 30px 40px rgb(0 0 0 / 0.12)); overflow: visible; }
+.hb-st-card { fill: var(--surface); stroke: var(--line-2); }
+.hb-stage-svg text { font-family: var(--font-mono); fill: var(--ink); }
+.hb-st-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--ink-2) !important; animation: hb-rise 0.5s var(--ease) both; }
+.hb-st-count { font-size: 11px; fill: var(--ink-3) !important; }
+.hb-st-small { font-size: 10px; letter-spacing: 0.08em; fill: var(--ink-3) !important; }
+.hb-lane { font-size: 10px; letter-spacing: 0.1em; fill: var(--ink-2) !important; }
+.hb-lane.agent { fill: var(--agent) !important; } .hb-lane.human { fill: var(--human-text) !important; }
+.hb-spine { stroke: var(--line-2); stroke-dasharray: 3 5; }
+.hb-st-legend { font-size: 9.5px; fill: var(--ink-3) !important; }
+.hb-legend-dot { fill: var(--c); }
+.hb-hair { stroke: var(--line); }
+.hb-tx-turn { font-size: 10px; font-weight: 500; letter-spacing: 0.04em; }
+.hb-tx-turn.agent { fill: var(--agent) !important; } .hb-tx-turn.human { fill: var(--human-text) !important; }
+.hb-tx-text { font-size: 10px; fill: var(--ink-2) !important; }
+.hb-tick { stroke: var(--line-2); stroke-dasharray: 3 3; }
+.hb-badge { stroke-width: 2; fill: var(--raised); }
+.hb-badge.ok { stroke: var(--ok); } .hb-badge.bad { stroke: var(--bad); fill: var(--bad-soft); }
+.hb-badge-t { font-size: 10px; font-weight: 600; }
+
+.hb-el { transition: transform 0.95s var(--ease), opacity 0.6s var(--ease); transform-box: fill-box; transform-origin: center; will-change: transform; }
+.hb-pill-bg { fill: var(--raised); stroke: var(--line-2); }
+.hb-pill.human .hb-pill-bg { fill: var(--human-soft); stroke: var(--human-line); }
+.hb-pill-label { font-family: var(--font-body) !important; font-size: 12px; font-weight: 500; }
+.hb-pill-meta { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--ink-3) !important; }
+.hb-strike { stroke: var(--human-line); stroke-width: 2; stroke-dasharray: 130; stroke-dashoffset: 130; transition: stroke-dashoffset 0.7s var(--ease) 0.5s; }
+.hb-pill.struck .hb-strike { stroke-dashoffset: 0; }
+.hb-dot .hb-core { fill: var(--c); }
+.hb-dot .hb-ring { fill: var(--bg); stroke: var(--human-line); stroke-width: 2; }
+.hb-dot.human .hb-core { r: 4; }
+.hb-extra { fill: var(--human-soft); stroke: var(--human-line); stroke-width: 1.5; }
+.hb-arrow { fill: none; stroke: var(--human-line); stroke-width: 1.75; stroke-linecap: round; stroke-dasharray: 80; }
+.hb-layer[data-on="true"] .hb-arrow { animation: hb-draw 0.8s var(--ease) both; animation-delay: calc(0.6s + var(--i, 0) * 120ms); }
+
+.hb-card { fill: var(--raised); stroke: var(--line-2); }
+.hb-card-h { font-family: var(--font-body) !important; font-weight: 500; font-size: 17px; letter-spacing: -0.02em; }
+.hb-meets { fill: var(--ok-soft); }
+.hb-meets-t { font-size: 9px; letter-spacing: 0.06em; fill: var(--ok) !important; }
+.hb-opt { fill: var(--sunken); }
+.hb-opt.on { fill: var(--human); }
+.hb-opt-t { font-family: var(--font-body) !important; font-size: 11px; fill: var(--ink-2) !important; }
+.hb-opt-t.on { fill: var(--human-on) !important; font-weight: 600; }
+.hb-layer[data-on="true"] .hb-opt.on { animation: hb-pick 0.5s var(--ease) both; animation-delay: calc(0.5s + var(--i, 0) * 120ms); }
+.hb-approve { fill: var(--human); }
+.hb-layer[data-on="true"] .hb-approve { animation: hb-pulse 1.6s ease-in-out 1.8s infinite; }
+.hb-btn-t { font-family: var(--font-body) !important; font-size: 12px; fill: var(--ink-2) !important; }
+.hb-btn-t.on { fill: var(--human-on) !important; font-weight: 600; }
+.hb-file { font-size: 10px; fill: var(--ink-3) !important; } .hb-md-h { font-size: 13px; fill: var(--agent) !important; }
+.hb-md { font-size: 11px; } .hb-md.dim { fill: var(--ink-3) !important; }
+.hb-mono-card { fill: var(--sunken); }
+.hb-type { clip-path: inset(0 100% 0 0); }
+.hb-layer[data-on="true"] .hb-type { animation: hb-type 1.8s steps(34) 0.9s forwards; }
+.hb-bar-bg { fill: var(--line); }
+.hb-bar { transform-box: fill-box; transform-origin: left; }
+.hb-bar.before { fill: var(--human); }
+.hb-bar.after { fill: var(--ok); transform: scaleX(0.27); }
+.hb-layer[data-on="true"] .hb-bar.after { animation: hb-shrink 1.4s var(--ease) 1.6s both; }
+.hb-loop { fill: none; stroke: var(--agent); stroke-width: 2; stroke-dasharray: 5 6; }
+.hb-layer[data-on="true"] .hb-loop { animation: hb-dash 2.4s linear infinite; }
+
+.hb-layer { opacity: 0; transition: opacity 0.3s var(--ease); pointer-events: none; }
+.hb-layer[data-on="true"] { opacity: 1; transition: opacity 0.5s var(--ease) 0.25s; }
+.hb-layer[data-on="true"] .hb-st { animation: hb-rise 0.6s var(--ease) both; animation-delay: calc(0.3s + var(--i, 0) * 60ms); }
+.hb-layer .hb-st { transform-box: fill-box; }
+
+@keyframes hb-rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes hb-draw { from { stroke-dashoffset: 80; } to { stroke-dashoffset: 0; } }
+@keyframes hb-pulse { 50% { opacity: 0.7; } }
+@keyframes hb-pick { from { fill: var(--sunken); } }
+@keyframes hb-type { to { clip-path: inset(0 0 0 0); } }
+@keyframes hb-shrink { from { transform: scaleX(1); } to { transform: scaleX(0.27); } }
+@keyframes hb-dash { to { stroke-dashoffset: -22; } }
+
+/* ---------- phones ---------- */
+@media (max-width: 900px) {
+  .hb-hero { grid-template-columns: 1fr; min-height: 0; padding-block: var(--sp-5) var(--sp-6); }
+  .hb-scene { padding: var(--sp-4); max-width: none; }
+  .hb-week span { padding: 2px 4px; }
+  .hb-stage { width: auto; height: 100%; }
+  .hb-stage-svg { height: 100%; width: auto; max-height: none; margin: 0 auto; }
+}

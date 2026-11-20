@@ -1,0 +1,84 @@
+/* Cast 3 · The Apprentice's Road. All classes prefixed c3-. Landscape colours derive from tokens so both themes read. */
+.c3 { --c3-top: 56px; }
+@media (max-width: 760px) { .c3 { --c3-top: 92px; } }
+
+.c3-hero { padding-top: var(--sp-7); padding-bottom: var(--sp-6); display: grid; gap: var(--sp-4); }
+.c3-hero > p { color: var(--ink-2); font-size: var(--fs-5); max-width: 60ch; }
+.c3-h1 { font-size: clamp(40px, 5vw, 64px); max-width: 18ch; }
+.c3-cta { display: flex; gap: var(--sp-2); flex-wrap: wrap; } .c3-cta-c { justify-content: center; margin-top: var(--sp-5); }
+.c3-chips { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.c3-cast { display: flex; gap: var(--sp-4); flex-wrap: wrap; margin-top: var(--sp-3); }
+.c3-who { display: grid; justify-items: center; gap: 2px; width: 112px; text-align: center; }
+.c3-who b { font-size: var(--fs-3); font-weight: 600; margin-top: var(--sp-2); }
+.c3-who span.mono { font-size: var(--fs-1); color: var(--ink-3); line-height: 1.3; }
+.c3-pip { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-size: 28px; background: var(--agent-soft); box-shadow: 0 0 0 2px var(--agent); }
+.c3-hint { color: var(--ink-3); font-size: var(--fs-2); margin-top: var(--sp-3); }
+
+/* the pinned road */
+.c3-road { height: 700vh; position: relative; }
+.c3-road.static { height: auto; }
+.c3-pin { position: sticky; top: var(--c3-top); height: calc(100vh - var(--c3-top)); display: grid; grid-template-rows: minmax(0, 1fr) auto auto; background: var(--bg); overflow: hidden; }
+.c3-road.static .c3-pin { position: static; height: 80vh; }
+.c3-view { position: relative; min-height: 0; overflow: hidden; background: linear-gradient(var(--sunken), color-mix(in oklab, var(--sunken) 40%, var(--bg)) 70%, var(--bg)); }
+.c3-scene { position: relative; overflow: hidden; }
+.c3-scene svg { position: absolute; inset: 0; display: block; }
+.c3-dim { position: absolute; inset: 0; background: var(--sunken); pointer-events: none; z-index: 2; mix-blend-mode: multiply; }
+:root[data-theme="dark"] .c3-dim { mix-blend-mode: normal; background: #000; }
+
+.c3-cloud ellipse { fill: color-mix(in oklab, var(--ink) 7%, var(--bg)); }
+.c3-far { fill: color-mix(in oklab, var(--ink) 11%, var(--bg)); }
+.c3-mid { fill: color-mix(in oklab, var(--ink) 16%, var(--bg)); }
+.c3-trees { fill: color-mix(in oklab, var(--ok) 24%, color-mix(in oklab, var(--ink) 18%, var(--bg))); }
+.c3-ground { fill: color-mix(in oklab, var(--ok) 14%, color-mix(in oklab, var(--ink) 10%, var(--bg))); }
+.c3-bed path { stroke: color-mix(in oklab, var(--ink) 26%, var(--bg)); stroke-width: 34; }
+.c3-road-edge path { stroke: color-mix(in oklab, var(--bg) 70%, var(--ink)); stroke-width: 2; opacity: 0.6; }
+.c3-fg path { stroke: color-mix(in oklab, var(--ok) 40%, var(--ink)); stroke-width: 2.4; fill: none; stroke-linecap: round; }
+
+/* characters: blink, idle, walking bob, wave, stamp */
+.c3-blink { transform-box: fill-box; transform-origin: center; animation: c3-blink 4.6s infinite; }
+.c3-idle, .c3-walk { transform-box: fill-box; transform-origin: 50% 100%; }
+.c3-idle { animation: c3-idle 3.2s ease-in-out infinite; }
+.c3-walk { animation: c3-bob 0.55s ease-in-out infinite; }
+.c3-wave { transform-box: view-box; transform-origin: 14px -64px; animation: c3-wave 0.9s ease-in-out infinite; }
+.c3-stamp { transform-box: view-box; transform-origin: 14px -64px; animation: c3-stamp 1.6s ease-in-out infinite; }
+@keyframes c3-blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+@keyframes c3-idle { 50% { transform: translateY(-1.5px); } }
+@keyframes c3-bob { 50% { transform: translateY(-3px); } }
+@keyframes c3-wave { 50% { transform: rotate(-22deg); } }
+@keyframes c3-stamp { 0%, 60%, 100% { transform: rotate(0); } 75% { transform: rotate(12deg); } }
+
+/* HTML speech bubbles on the product type scale */
+.c3-bubble { position: absolute; z-index: 3; transform: translate(-50%, -100%) scale(0.9); opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease), transform 0.3s var(--ease); max-width: 200px; padding: 6px 10px; border-radius: var(--r-2); background: var(--surface); border: 1px solid var(--line-2); font-size: var(--fs-2); line-height: 1.3; color: var(--ink); box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.35); text-align: center; }
+.c3-bubble.on { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+.c3-bubble.human { background: var(--human); border-color: var(--human); color: var(--human-on); font-weight: 500; }
+.c3-bubble b { display: block; font: 500 var(--fs-1) var(--font-mono); margin-top: 2px; opacity: 0.85; }
+.c3-bubble::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 9px; height: 9px; background: inherit; border-right: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2); transform: translateX(-50%) rotate(45deg); }
+.c3-bubble.human::after { border-color: var(--human); }
+
+.c3-caption { padding: var(--sp-3) var(--gutter) var(--sp-2); display: flex; justify-content: space-between; gap: var(--sp-5); flex-wrap: wrap; background: var(--bg); border-top: 1px solid var(--line); }
+.c3-cap-main { max-width: 640px; display: grid; gap: 2px; }
+.c3-cap-main h2 { font: 600 var(--fs-6)/1.2 var(--font-body); letter-spacing: -0.02em; }
+.c3-cap-main p { color: var(--ink-2); font-size: var(--fs-4); }
+.c3-cap-main small { color: var(--ink-3); font-size: var(--fs-2); }
+.c3-cap-cast { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.c3-cap-cast .chip { text-transform: none; letter-spacing: 0; font-size: var(--fs-2); height: 24px; }
+
+.c3-prog { position: relative; display: grid; grid-template-columns: repeat(7, 1fr); border-top: 1px solid var(--line); background: var(--bg); }
+.c3-prog-fill { position: absolute; left: 0; top: 0; height: 3px; background: var(--human); pointer-events: none; }
+.c3-prog button { border: 0; background: transparent; padding: 8px 2px 10px; font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.c3-prog button.on { color: var(--ink); } .c3-prog button[aria-selected="true"] { color: var(--human-text); }
+
+.c3-list { display: grid; gap: var(--sp-4); padding-top: var(--sp-6); }
+.c3-list h3 { font: 600 var(--fs-6) var(--font-body); } .c3-list p { color: var(--ink-2); } .c3-list small { color: var(--ink-3); }
+
+.c3-close { padding: var(--section-y) 0; text-align: center; border-top: 1px solid var(--line); }
+.c3-close h2 { font-size: var(--fs-8); max-width: 16ch; margin: var(--sp-3) auto 0; }
+.c3-foot { padding: var(--sp-5) 0 var(--sp-7); border-top: 1px solid var(--line); color: var(--ink-3); font-size: var(--fs-3); display: flex; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .c3-who { width: 96px; }
+  .c3-caption { padding-top: var(--sp-2); gap: var(--sp-2); }
+  .c3-cap-main p { font-size: var(--fs-3); } .c3-cap-cast { display: none; }
+  .c3-prog button span { display: none; } .c3-prog button { padding: 12px 0; }
+  .c3-bubble { max-width: 150px; font-size: var(--fs-1); }
+}

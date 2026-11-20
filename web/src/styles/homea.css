@@ -1,0 +1,135 @@
+/* Home A: Scene A, one correction followed through real product surfaces. Prefix `ha-` (CSS is global).
+   Default styles are the finished state; animations only run on the focused surface ([data-f]). */
+
+@property --ha-n { syntax: "<integer>"; inherits: true; initial-value: 0; }
+
+.ha-board { position: relative; width: 100%; aspect-ratio: 1 / 1.12; font-size: var(--fs-3); color: var(--ink-2); }
+.ha-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.ha-links path { fill: none; stroke: var(--line-2); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.ha-links path.done { stroke: var(--ink-3); }
+.ha-links path.on { stroke: var(--human-line); stroke-width: 2; animation: ha-march 0.9s linear infinite; }
+
+/* surfaces: positioned on the board, dimmed unless focused */
+.ha-surface { position: absolute; background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-3); padding: var(--sp-3); box-shadow: var(--shadow); display: grid; gap: var(--sp-2); transition: opacity 0.5s var(--ease), transform 0.5s var(--ease), border-color 0.5s; }
+.ha-board:not([data-f="0"]) .ha-surface { opacity: 0.38; }
+.ha-board[data-f="1"] .ha-s1, .ha-board[data-f="2"] .ha-s2, .ha-board[data-f="3"] .ha-s3,
+.ha-board[data-f="4"] .ha-s4, .ha-board[data-f="5"] .ha-s5, .ha-board[data-f="6"] .ha-s6 { opacity: 1; transform: translateY(-4px); border-color: var(--ink-3); z-index: 2; }
+.ha-s1 { left: 0; top: 0; width: 56%; }
+.ha-s2 { left: 60%; top: 2%; width: 40%; }
+.ha-s3 { left: 0; top: 39%; width: 44%; }
+.ha-s4 { left: 48%; top: 34%; width: 52%; }
+.ha-s5 { left: 0; top: 70%; width: 46%; }
+.ha-s6 { left: 50%; top: 68%; width: 50%; }
+
+.ha-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.ha-head em { font-style: normal; color: var(--ink-2); }
+.ha-bar { display: flex; align-items: center; gap: 4px; margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0; padding: 8px var(--sp-3); border-bottom: 1px solid var(--line); font: var(--fs-1) var(--font-mono); color: var(--ink-3); }
+.ha-bar i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); }
+.ha-bar span { margin-left: var(--sp-2); }
+
+/* 1 · session */
+.ha-chat { display: grid; gap: var(--sp-2); }
+.ha-msg { display: grid; gap: 2px; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2); background: var(--sunken); color: var(--ink); max-width: 92%; }
+.ha-msg b { font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.ha-msg code { font: var(--fs-2) var(--font-mono); color: var(--bad); }
+.ha-msg.you { justify-self: end; background: var(--human-soft); border: 1px solid color-mix(in oklab, var(--human) 55%, transparent); }
+.ha-msg.you b { color: var(--human-text); }
+.ha-who { display: flex; align-items: center; gap: var(--sp-2); justify-self: end; }
+.ha-dots { display: inline-flex; gap: 3px; } .ha-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-3); opacity: 0.4; }
+.ha-typed { display: inline-block; }
+[data-f="1"] .ha-s1 .ha-msg.agent { animation: ha-in 0.5s var(--ease) both; }
+[data-f="1"] .ha-s1 .ha-msg.you { animation: ha-in 0.4s var(--ease) 0.7s both; }
+[data-f="1"] .ha-s1 .ha-typed { animation: ha-type 1s steps(24) 0.9s both; }
+[data-f="1"] .ha-s1 .ha-dots i { animation: ha-blink 0.9s ease-in-out infinite; animation-delay: calc(var(--k, 0) * 0.15s); }
+.ha-dots i:nth-child(2) { --k: 1; } .ha-dots i:nth-child(3) { --k: 2; }
+
+/* 2 · decision record (the typed line lifts out of the chat and lands here) */
+.ha-row { display: grid; grid-template-columns: 18px 1fr; gap: var(--sp-2); align-items: start; padding: var(--sp-2); border-radius: var(--r-2); }
+.ha-row small { display: block; font: var(--fs-1) var(--font-mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.ha-row s { color: var(--ink-2); text-decoration-color: var(--bad); text-decoration-thickness: 2px; }
+.ha-row b { font-weight: 500; color: var(--ink); }
+.ha-row.you { background: var(--human-soft); }
+.ha-x, .ha-v { width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; flex: none; }
+.ha-x { background: var(--bad-soft); color: var(--bad); } .ha-v { background: var(--ok-soft); color: var(--ok); }
+.ha-q { font-size: var(--fs-2); color: var(--ink-2); padding-left: var(--sp-2); border-left: 2px solid var(--human); }
+.ha-ghost { position: absolute; left: 22%; top: 18%; padding: 4px 10px; border-radius: var(--r-2); background: var(--human); color: var(--human-on); font-size: var(--fs-2); white-space: nowrap; pointer-events: none; opacity: 0; z-index: 3; }
+[data-f="2"] .ha-ghost { animation: ha-lift 1.1s var(--ease) both; }
+[data-f="2"] .ha-s2 .ha-row.agent s { animation: ha-strike 0.5s var(--ease) 0.9s both; }
+[data-f="2"] .ha-s2 .ha-row.you, [data-f="2"] .ha-s2 .ha-q { animation: ha-in 0.4s var(--ease) 1s both; }
+
+/* 3 · skill check */
+.ha-rule { display: flex; align-items: center; gap: var(--sp-2); }
+.ha-claim { padding-top: var(--sp-2); border-top: 1px solid var(--line); color: var(--ink); }
+.ha-claim b { font: 500 var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--bad); padding: 2px 6px; border: 1px solid var(--bad); border-radius: 4px; margin-left: 4px; }
+[data-f="3"] .ha-s3 .ha-rule, [data-f="3"] .ha-s3 .ha-claim { animation: ha-in 0.4s var(--ease) both; animation-delay: calc(0.2s + var(--i) * 0.35s); }
+[data-f="3"] .ha-s3 .ha-rule > span { animation: ha-pop 0.35s var(--ease) both; animation-delay: calc(0.45s + var(--i) * 0.35s); }
+
+/* 4 · the same correction arrives from other sessions */
+.ha-copies { display: grid; gap: 4px; }
+.ha-copy { display: grid; grid-template-columns: 14px auto 1fr; gap: var(--sp-2); align-items: center; padding: 4px var(--sp-2); border: 1px solid var(--line); border-left: 3px solid var(--human); border-radius: var(--r-2); background: var(--raised); color: var(--ink); }
+.ha-copy small { justify-self: end; font: var(--fs-1) var(--font-mono); color: var(--ink-3); }
+.ha-count { font: var(--fs-2) var(--font-mono); color: var(--ink-3); }
+.ha-n { font: 600 var(--fs-5) var(--font-body); color: var(--ink); }
+.ha-n::after { counter-reset: n var(--ha-n); content: counter(n); }
+.ha-cand { padding: 2px 8px; border-radius: 999px; background: var(--human); color: var(--human-on) !important; }
+[data-f="4"] .ha-s4 .ha-copy { animation: ha-slide 0.5s var(--ease) both; animation-delay: calc(0.2s + var(--i) * 0.4s); }
+[data-f="4"] .ha-s4 .ha-n { animation: ha-count 1.6s ease-out 0.2s both; }
+[data-f="4"] .ha-s4 .ha-cand { animation: ha-pop 0.4s var(--ease) 1.7s both; }
+
+/* 5 · governance inbox: the reviewer approves */
+.ha-stmt { color: var(--ink); font-weight: 500; }
+.ha-form { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--sp-3); margin: 0; font-size: var(--fs-2); }
+.ha-form dt { font: var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); align-self: center; }
+.ha-form dd { margin: 0; color: var(--ink); }
+.ha-act { position: relative; display: flex; align-items: center; gap: var(--sp-2); }
+.ha-btn { position: relative; display: inline-grid; padding: 5px 14px; border-radius: 999px; background: var(--human); color: var(--human-on); font-weight: 500; font-size: var(--fs-2); }
+.ha-btn span { grid-area: 1 / 1; } .ha-btn .a { opacity: 0; }
+.ha-board[data-f="1"] .ha-btn .a, .ha-board[data-f="2"] .ha-btn .a, .ha-board[data-f="3"] .ha-btn .a, .ha-board[data-f="4"] .ha-btn .a { opacity: 1; }
+.ha-board[data-f="1"] .ha-btn .b, .ha-board[data-f="2"] .ha-btn .b, .ha-board[data-f="3"] .ha-btn .b, .ha-board[data-f="4"] .ha-btn .b { opacity: 0; }
+.ha-cursor { position: absolute; left: 112px; top: 14px; fill: var(--ink); stroke: var(--bg); stroke-width: 1; opacity: 0; }
+[data-f="5"] .ha-s5 .ha-cursor { animation: ha-cursor 1.6s var(--ease) 0.2s both; }
+[data-f="5"] .ha-s5 .ha-btn .a { animation: ha-hold 1.5s steps(1, end) both; }
+[data-f="5"] .ha-s5 .ha-btn .b { animation: ha-in 0.3s var(--ease) 1.5s both; }
+[data-f="5"] .ha-s5 .ha-btn { animation: ha-press 0.3s var(--ease) 1.3s both; }
+
+/* 6 · published, and the next session follows it */
+.ha-file { color: var(--ink); }
+.ha-md { display: grid; gap: 2px; padding: var(--sp-2); border-radius: var(--r-2); background: var(--sunken); font: var(--fs-2)/1.5 var(--font-mono); color: var(--ink-3); }
+.ha-add { color: var(--ok); }
+.ha-next { max-width: none; }
+.ha-drop { font: var(--fs-2) var(--font-mono); color: var(--ink-3); } .ha-drop b { font: 600 var(--fs-4) var(--font-body); color: var(--ink); } .ha-drop b.ok { color: var(--ok); }
+[data-f="6"] .ha-s6 .ha-add { animation: ha-type 1.2s steps(30) 0.2s both; }
+[data-f="6"] .ha-s6 .ha-next { animation: ha-in 0.4s var(--ease) 1.4s both; }
+[data-f="6"] .ha-s6 .ha-drop { animation: ha-in 0.4s var(--ease) 1.8s both; }
+
+/* tiny people */
+.ha-person { flex: none; }
+.ha-person.other { fill: var(--ink-3); } .ha-person.you { fill: var(--human); } .ha-person.lead { fill: var(--ink-2); }
+
+@keyframes ha-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes ha-pop { from { opacity: 0; transform: scale(0.4); } }
+@keyframes ha-slide { from { opacity: 0; transform: translateX(-24px); } }
+@keyframes ha-type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes ha-blink { 50% { opacity: 1; } }
+@keyframes ha-march { to { stroke-dashoffset: -14; } }
+@keyframes ha-strike { from { text-decoration-color: transparent; } }
+@keyframes ha-count { from { --ha-n: 0; } }
+@keyframes ha-hold { from { opacity: 1; } to { opacity: 0; } }
+@keyframes ha-press { 50% { transform: scale(0.94); } }
+@keyframes ha-cursor { 0% { opacity: 0; transform: translate(60px, 30px); } 30% { opacity: 1; } 80% { opacity: 1; transform: translate(0, 0); } 100% { opacity: 0; transform: translate(0, 0); } }
+@keyframes ha-lift { 0% { opacity: 1; left: 22%; top: 18%; transform: scale(1); } 20% { transform: scale(1.06); } 85% { opacity: 1; left: 64%; top: 26%; transform: scale(0.9); } 100% { opacity: 0; left: 64%; top: 26%; } }
+
+/* left column: one key fact per step (the scene shows the surface; this shows what gets stored) */
+.ha-facts { width: 100%; max-width: 460px; display: grid; grid-template-columns: auto 1fr; gap: 6px var(--sp-4); margin: 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3); font-size: var(--fs-3); }
+.ha-facts dt { font: var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); align-self: center; }
+.ha-facts dd { margin: 0; color: var(--ink); }
+.hx-step[data-active="true"] .ha-facts dd, .hx-step[data-active="true"] .ha-facts dt { animation: ha-in 0.4s var(--ease) both; animation-delay: calc(0.2s + var(--i, 0) * 0.12s); }
+
+/* phones: only the focused surface, in flow, inside the pinned stage */
+@media (max-width: 900px) {
+  .ha-board { aspect-ratio: auto; height: 100%; display: grid; align-content: center; }
+  .ha-links, .ha-ghost { display: none; }
+  .ha-surface { position: static; width: 100% !important; display: none; transform: none !important; }
+  .ha-board[data-f="0"] .ha-s1, .ha-board[data-f="1"] .ha-s1, .ha-board[data-f="2"] .ha-s2, .ha-board[data-f="3"] .ha-s3,
+  .ha-board[data-f="4"] .ha-s4, .ha-board[data-f="5"] .ha-s5, .ha-board[data-f="6"] .ha-s6 { display: grid; opacity: 1; }
+}
