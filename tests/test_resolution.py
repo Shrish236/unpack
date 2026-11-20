@@ -116,9 +116,12 @@ def test_unknown_receiver_unique_name_and_unresolved():
     assert e.tier == TIER_AMBIGUOUS and len(e.candidates) == 3
     u = site(g2, "m.py", "x.only_here")[0]
     assert u.status == "resolved" and u.targets[0].via == "unique_name" and u.targets[0].tier == TIER_INFERRED
+    # no class in the repository defines the name: the callee is outside the repository
     n = site(g2, "m.py", "x.nothing_like_this")[0]
-    assert n.status == "unresolved"                                          # never dropped
-    assert any("nothing_like_this" in raw for _l, raw, _r in g2.unresolved["m.py::f"])
+    assert n.status == "external" and n.reason == "no_repo_method_named"     # never dropped
+    # a bare call of an unannotated parameter stays unresolved, with its reason
+    p = site(g2, "m.py", "x.only_here")  # sanity: the typed/unique path is unchanged
+    assert p and p[0].status == "resolved"
     # a typed receiver is NOT ambiguous even though `get` is defined on three classes
     assert targets(g2, "m.py::g")["m.py::Client.get"].tier == TIER_INFERRED
 

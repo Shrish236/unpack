@@ -140,6 +140,7 @@ class FuncInfo:
     text_hash: str = ""
     # per-scope data for pass 2
     calls: list = field(default_factory=list)
+    value_refs: list = field(default_factory=list)   # (line, col, Shape): names used as values, not called
     accesses: list = field(default_factory=list)
     implicits: list = field(default_factory=list)
     bindings: list = field(default_factory=list)
@@ -192,6 +193,7 @@ class ModuleInfo:
     funcs: list = field(default_factory=list)          # FuncInfo
     classes: list = field(default_factory=list)        # ClassInfo
     calls: list = field(default_factory=list)          # module-level calls
+    value_refs: list = field(default_factory=list)     # (line, col, Shape): names used as values, not called
     accesses: list = field(default_factory=list)
     implicits: list = field(default_factory=list)
     bindings: list = field(default_factory=list)       # module-level bindings

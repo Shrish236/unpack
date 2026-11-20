@@ -26,12 +26,17 @@ import argparse
 import ast
 import json
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
-from .extract import extract_file, module_name_for
+from .extract import extract_file, module_name_for, package_predicates
 from .graph import build_graph
 from .source import FsSource, GitSource
+
+
+def _policy(args) -> bool:
+    return not getattr(args, "strict_none", False)
 
 
 def _source(repo: str, rev: str | None):
@@ -40,10 +45,10 @@ def _source(repo: str, rev: str | None):
 
 def extract_all(src) -> dict:
     files = src.list_files()
-    known = set(files)
+    predicates = package_predicates(files)
     mods = {}
     for path in files:
-        name, package = module_name_for(path, lambda x: x in known)
+        name, package = module_name_for(path, *predicates)
         mods[path] = extract_file(path, src.read(path), name, package)
     return mods
 
@@ -135,7 +140,7 @@ def graph_summary(g) -> dict:
 
 
 def cmd_build(args) -> int:
-    g = build_graph(_source(args.repo, args.rev))
+    g = build_graph(_source(args.repo, args.rev), implicit_uncertain=_policy(args))
     summary = graph_summary(g)
     if args.neo4j:
         from . import neo4j_io
@@ -209,10 +214,56 @@ def cmd_eval(args) -> int:
     return 0 if not result["coverage_vs_ast"]["files_with_mismatch"] else 1
 
 
+def cmd_query(args) -> int:
+    """Answer one question from an indexed in-memory graph (see docs/graph-api.md)."""
+    from .query import GraphIndex
+
+    t0 = time.perf_counter()
+    g = build_graph(_source(args.repo, args.rev), implicit_uncertain=_policy(args))
+    t1 = time.perf_counter()
+    ix = GraphIndex(g)
+    t2 = time.perf_counter()
+    op, target = args.op, args.target
+    if op == "find":
+        result = [ix.node(i) for i in ix.find(target, args.limit)]
+    else:
+        ids = ix.find(target, 5) if target else []
+        if not ids and op != "untested":
+            print(f"no function or class matches {target!r}", file=sys.stderr)
+            return 1
+        if op == "untested":
+            result = ix.untested_in(target or "", args.limit)
+        else:
+            fid = ids[0]
+            if len(ids) > 1:
+                print(f"note: {target!r} matches {len(ids)} ids, using {fid}", file=sys.stderr)
+            if op == "node":
+                result = ix.node(fid)
+            elif op == "callers":
+                result = ix.callers(fid, production_only=not args.include_tests)
+            elif op == "callees":
+                result = ix.callees(fid, production_only=not args.include_tests)
+            elif op == "tests":
+                result = ix.tests_for(fid, include_uncertain=args.include_uncertain, limit=args.limit)
+            elif op == "overrides":
+                result = ix.overrides(fid)
+            elif op == "class":
+                result = ix.class_info(fid)
+            elif op == "unresolved":
+                result = ix.unresolved(fid)
+            else:
+                raise SystemExit(f"unknown query {op!r}")
+    t3 = time.perf_counter()
+    print(json.dumps(result, indent=1, default=str))
+    if args.timing:
+        print(f"build {t1 - t0:.3f}s, index {t2 - t1:.4f}s, query {(t3 - t2) * 1000:.3f} ms", file=sys.stderr)
+    return 0
+
+
 def cmd_coverage_check(args) -> int:
     from .evaluate import compare_with_coverage
 
-    g = build_graph(FsSource(args.repo))
+    g = build_graph(FsSource(args.repo), implicit_uncertain=_policy(args))
     coverage = json.loads(Path(args.coverage).read_text(encoding="utf-8"))
     result = compare_with_coverage(g, coverage)
     text = json.dumps(result, indent=2)
@@ -254,6 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--cap", type=int, default=15, help="max callers and max callees kept per function")
     rg.add_argument("--tests-per-node", type=int, default=5, help="max tests listed per changed function")
     rg.add_argument("--out", default=None, help="write to a file instead of stdout")
+    rg.add_argument("--strict-none", action="store_true", help="label every function without a static path none, including dunders, closures and methods of externally based classes")
     rg.add_argument("--neo4j", action="store_true",
                     help="answer with the single Cypher region query instead of the in-memory builder")
     rg.set_defaults(func=cmd_region)
@@ -269,7 +321,23 @@ def build_parser() -> argparse.ArgumentParser:
     cc.add_argument("repo", help="repository root; coverage must have been recorded from here")
     cc.add_argument("coverage", help="coverage.py JSON report (`coverage json -o FILE`)")
     cc.add_argument("--json", default=None, help="also write the comparison to this file")
+    cc.add_argument("--strict-none", action="store_true", help="see `build --help`")
     cc.set_defaults(func=cmd_coverage_check)
+
+    qy = sub.add_parser("query", help="answer one question from the graph: find, node, callers, callees, tests, "
+                                      "overrides, class, unresolved, untested")
+    qy.add_argument("repo", help="repository root (working tree)")
+    qy.add_argument("op", choices=["find", "node", "callers", "callees", "tests", "overrides", "class",
+                                   "unresolved", "untested"])
+    qy.add_argument("target", nargs="?", default="", help="function or class id, name, or qualified name; "
+                                                          "for untested, a path prefix")
+    qy.add_argument("--rev", default=None, help="read a git revision instead of the working tree")
+    qy.add_argument("--limit", type=int, default=None, help="maximum number of results")
+    qy.add_argument("--include-uncertain", action="store_true", help="tests: also list uncertain (ambiguous) paths")
+    qy.add_argument("--include-tests", action="store_true", help="callers/callees: include test code")
+    qy.add_argument("--strict-none", action="store_true", help="see `build --help`")
+    qy.add_argument("--timing", action="store_true", help="print build, index and query time to stderr")
+    qy.set_defaults(func=cmd_query)
     return parser
 
 

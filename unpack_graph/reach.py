@@ -144,7 +144,26 @@ def path_of(seen: dict, node: str) -> list:
     return list(seen[node][2])
 
 
-def compute_reach(g, include_refs: bool = True):
+def implicitly_invoked(g, f) -> bool:
+    """A function that code outside the static graph can call, so `none` would overstate what we know.
+
+    * a dunder method: the interpreter calls it (repr, comparison, hashing, iteration, ...);
+    * a closure (defined inside a function): created at run time, and whoever receives it calls it;
+    * a method of a class with a base outside the repository: that base can call it.
+    """
+    if f.name.startswith("__") and f.name.endswith("__"):
+        return True
+    if f.is_nested and f.parent_func is not None:
+        return True
+    if f.class_id is not None:
+        cls = g.classes[f.class_id]
+        if any(not (g.resolver.class_expr(b, g.mods[cls.path]) or ("",))[0] == "cls"
+               for b in cls.bases_raw):
+            return True
+    return False
+
+
+def compute_reach(g, include_refs: bool = True, implicit_uncertain: bool = True):
     ok = (TIER_EXTRACTED, TIER_INFERRED)
     certain, gp_c = build_gated_adjacency(g, ok)
     loose, gp_l = build_gated_adjacency(g, ok + (TIER_AMBIGUOUS,))
@@ -228,6 +247,10 @@ def compute_reach(g, include_refs: bool = True):
         elif ri.count:
             ri.label = "direct" if ri.min_depth == 1 else "reached"
         elif ri.uncertain_count:
+            ri.label = "reached_uncertain"
+        elif implicit_uncertain and implicitly_invoked(g, f):
+            # no static path, but runtime machinery calls this kind of function: not a proof of
+            # "untested", so it is uncertain rather than none
             ri.label = "reached_uncertain"
         else:
             ri.label = "none"

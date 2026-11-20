@@ -40,6 +40,8 @@ def use():
     return core.helper(1) + core.Impl().run(2)
 ''',
     "pkg/leaf.py": "def leaf():\n    return 1\n",
+    # an unchanged caller whose name-based sites find nothing until a repository method appears
+    "pkg/reader.py": "def read(x):\n    return x.get('k') + x.size\n",
     "pkg/unused.py": "def unused():\n    return 9\n",
     "pkg/base.py": "class Base:\n    pass\n",
     # a chain of re-exports: child.py is three import hops from base.py, beyond the two-hop closure
@@ -146,7 +148,20 @@ def _delete_callee_keep_caller(root):
     _write(root, {"pkg/core.py": BASE_FILES["pkg/core.py"].replace("def helper(x):\n    return x * 2\n", "")})
 
 
+def _new_methods_named_like_untyped_calls(root):
+    # `x.get(...)` and `x.size` in pkg/reader.py were external (no repository method or property
+    # by that name); this file adds both, so those sites now resolve by name
+    _write(root, {"pkg/store.py": (
+        "class Store:\n"
+        "    def get(self, k):\n"
+        "        return k\n\n"
+        "    @property\n"
+        "    def size(self):\n"
+        "        return 0\n")})
+
+
 SCENARIOS = {
+    "new_methods_named_like_untyped_calls": _new_methods_named_like_untyped_calls,
     "body_change": _body_change,
     "add_module": _add_module,
     "delete_module": _delete_module,

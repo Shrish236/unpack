@@ -15,6 +15,7 @@ These documents describe the designs and the state of `main`. Start with the sta
 | 5 | [cli-hook.md](cli-hook.md) | The CLI and the pre-push hook: what is found, trimmed, redacted and sent |
 | 6 | [ui-design.md](ui-design.md) | The graph UI: the two views, the node shapes, the reasoning panel, the static image, the build plan |
 | 7 | [graph-design.md](graph-design.md) | The code knowledge graph library: parsing, resolution, test reachability, change detection, validation, limits |
+| 8 | [graph-api.md](graph-api.md) | What the graph holds, every query and its response shape, the Cypher examples, and measured speed |
 
 ## Which document wins
 

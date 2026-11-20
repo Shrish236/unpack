@@ -1,6 +1,6 @@
 # Code knowledge graph: design
 
-This document describes the code knowledge graph in `unpack_graph/`: what it computes, how it works, the decisions behind it, and how it is validated. It applies to any Python repository, and the validation numbers quoted here come from httpx 0.28.1, flask and requests.
+This document describes the code knowledge graph in `unpack_graph/`: what it computes, how it works, the decisions behind it, and how it is validated. It applies to any Python repository. The validation numbers quoted here come from six repositories: httpx 0.28.1, flask, requests, click, attrs and this repository. The contents of the graph, the response shapes and the query interface are in `graph-api.md`.
 
 ## 1. Purpose
 
@@ -80,7 +80,7 @@ The library itself needs `tree-sitter`, `tree-sitter-python` and `neo4j`. `jsons
 * A **module id** is the repository-relative path: `httpx/_client.py`.
 * A **function or class id** is `relative/path.py::Qual.Name`. Nested definitions use `<locals>`: `outer.<locals>.inner`.
 * Duplicate names within a file get a suffix: a property setter `Class.prop#setter`, a deleter `#deleter`, any other redefinition `#2`, `#3`.
-* Module names come from `__init__.py` ancestry, so `src/flask/app.py` is `flask.app`. No configuration is needed for flat, package or `src/` layouts.
+* Module names follow PEP 420: a directory is a package when it has `__init__.py` or holds `.py` files, so `src/flask/app.py` is `flask.app` and `src/flask/sansio/app.py` is `flask.sansio.app`. No configuration is needed for flat, package, `src/` or namespace layouts.
 
 ### Hashes
 
@@ -107,6 +107,7 @@ What is recorded for each scope:
 * **Implicit protocol sites**: `with`, `for`, subscripts, operators, comparisons, truthiness, f-strings, builtin conversions.
 * **Bindings** for type inference: constructor results, annotated parameters and assignments, `with ... as`, `for` targets, tuple unpacking, `except ... as`, `typing.cast`, `yield` values, dictionary, list and tuple displays.
 * **Guards**: parameters whose positive test encloses a call (`if p:`, `if p is not None:`).
+* **Module names**: a directory counts as a package when it has `__init__.py` or holds `.py` files (namespace packages, PEP 420), so `src/flask/sansio/app.py` is `flask.sansio.app`, not `app`. Names come from the whole file list, which is why an incremental update refreshes them for every file.
 * **Parse health**: `partial` when the tree has errors (with the error lines), `decode_errors` for non-UTF-8 bytes.
 
 Tree-sitter details that mattered: annotations arrive as text and are re-parsed with `ast`; `with` and `except` items wrap their alias in `as_pattern`; a block's end includes trailing indented comments, while `ast` stops at the last statement, so the end line is taken from the last non-comment token.
@@ -181,6 +182,13 @@ These exist because a call-only graph reports functions as untested when tests d
 | escape | an instance handed to external code: `AMBIGUOUS` edges to its dunders, or to all its methods for private or inline adapter classes |
 | instance protocol | `AMBIGUOUS` edges from a class's constructor to its own dunders |
 | enum metaclass | the module to `__new__` of an enum, because the enum machinery calls it at class creation |
+| decorator application | `@d` and `@d(args)` apply the decorated function at definition time: the enclosing scope calls `d` (or the closure `d(args)` returns) with the function as argument. A closure returned by a factory is a function value, even when the factory is annotated with a `typing.Callable` type |
+| property read through a base | a property read on a base-class receiver also reaches the overrides in its subclasses, as method calls do |
+| property read, unknown receiver | `x.name` where `x` has no known type falls back to the repository's property `name`: `INFERRED` when unique, `AMBIGUOUS` otherwise. A receiver with any known type never falls back |
+| method reference | a method read without a call (`report = err.show`) is a `ref`-style edge: it can be called later |
+| module `__getattr__` | a missing attribute on a module links to the module's `__getattr__` (PEP 562), via `module_getattr` |
+| value reference | a function name in a value position (returned, stored, passed as an argument) gives a `ref` edge from the function that holds it. A `returned` edge links a factory to each function it returns, so calling the factory reaches the closure |
+| tuple unpacking from a return | `a, b = f()` binds each name to the matching element of the tuple that `f` returns, so calls through `a` and `b` resolve |
 
 ## 8. Test reachability
 
@@ -203,6 +211,8 @@ Each test starts from:
 | `reached_uncertain` | reachable only through an `AMBIGUOUS` edge |
 | `none` | no path, even through ambiguous edges |
 | `test` | the function is itself a test |
+
+**Implicit invocation.** A function with no static or ambiguous path can still be run by machinery the graph cannot see: a dunder (the interpreter calls it), a closure (created at run time and handed on), or a method of a class whose base lies outside the repository (that base calls it). By default these are labelled `reached_uncertain`, not `none`. `--strict-none` on `build` and `coverage-check` restores the plain labels. The default is a decision recorded in section 16.
 
 ### 8.3 Depth
 
@@ -249,7 +259,7 @@ The output is validated against `schemas/graphview.schema.json`. `meta.module_ch
 
 ### 10.1 Schema
 
-`Module`, `Class` and `Function` nodes (with `:Test` on test functions and `:Ghost` on deleted functions). Relationships: `CONTAINS`, `HAS_METHOD`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `CALLS` (with the same properties as the in-memory edge) and `REACHES` (with depth, path and whether it is uncertain). Indexes on `id`, `path` and `name`. All writes are `UNWIND` batches of 500.
+`Module`, `Class` and `Function` nodes (with `:Test` on test functions and `:Ghost` on deleted functions). Relationships: `CONTAINS`, `HAS_METHOD`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `CALLS` (with the same properties as the in-memory edge) and `REACHES` (with depth, path and whether it is uncertain). Fifteen indexes are created by `ensure_schema`: `id`, `path`, `name` and `qualname` on each node label, the composite `Function(path, name)`, `Function(test_label)` for untested-function queries, `CALLS(tier)` and `REACHES(depth)` on relationships. The full list, and the queries they serve, are in `graph-api.md` section 7. All writes are `UNWIND` batches of 500. The indexes were verified online on a live Neo4j 5 server (see section 13).
 
 ### 10.2 Region query
 
@@ -266,7 +276,7 @@ The output is validated against `schemas/graphview.schema.json`. `meta.module_ch
 * the changed and deleted files;
 * their importers, two hops out, using the import edges of both the old and the new graph;
 * the files that define ancestors of changed classes (override dispatch reaches the changed subclasses);
-* files whose name-fallback sites mention a method name whose definitions appeared, disappeared or changed in number.
+* every call, property-read, method-reference and implicit-protocol site whose name was touched: a method or property name whose definitions appeared, disappeared or changed in number. Such a site is re-resolved whatever its status, because an `external` site (no repository method of that name) changes as soon as one appears. The first version re-resolved only `ambiguous`, `unresolved` and unique-name sites, and the six-repository check caught the gap on this repository's own history (commit `4342383`, which added a `get` method that stale `.get()` calls in other files should have found).
 
 Every other file keeps its resolved sites. Reachability is recomputed. `graph_fingerprint()` and `diff_fingerprints()` compare a result with a full rebuild. The incremental result matched a full rebuild on 12 consecutive httpx commits and on every scenario in `tests/test_incremental.py`.
 
@@ -276,11 +286,13 @@ On a repository where one module is imported by most others, most files are affe
 
 ```bash
 unpack-graph extract  <repo> [--rev REV] [--check-ast] [--list]   # pass 1 only
-unpack-graph build    <repo> [--rev REV] [--neo4j]                # passes 1, 2 and reachability
+unpack-graph build    <repo> [--rev REV] [--neo4j] [--strict-none]  # passes 1, 2 and reachability
 unpack-graph changed  <repo> <base> <head> [--json]               # classified changes
 unpack-graph region   <repo> <base> <head> [--cap N] [--tests-per-node N] [--out FILE] [--neo4j]
 unpack-graph eval     <repo> [--json FILE]                        # measurements (exit 1 on mismatch)
-unpack-graph coverage-check <repo> <coverage.json> [--json FILE]  # exit 1 on any false none
+unpack-graph coverage-check <repo> <coverage.json> [--json FILE] [--strict-none]  # exit 1 on any false none
+unpack-graph query    <repo> <op> [target] [--rev REV] [--limit N] [--include-uncertain] [--include-tests] [--timing]  # one question, JSON
+                                                                # ops: find node callers callees tests overrides class unresolved untested
 ```
 
 Neo4j connection (only for `--neo4j` and the Neo4j tests): `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The Neo4j service is **not** in the repository's `docker-compose.yml` any more; the server does not use Neo4j either (see [section 18](#18-use-in-the-server-and-status)). Run a Neo4j 5 instance yourself to use these options. Without one, the Neo4j tests are skipped.
@@ -306,19 +318,28 @@ view = build_region(cs)                              # the GraphView dict
 | Call resolution is sound | 60 hand-labelled call sites from httpx, and an independent audit of 30 more | 27 of 28 correct on the labelled set before tuning, 28 of 28 after; 30 of 30 on the audit |
 | No false `none` | a coverage.py run of httpx's own test suite (`coverage-check`) | 0 false `none` over 436 functions |
 | No false `none` on subsets | 8 subsets of httpx's tests, each run under coverage, compared with labels built from that subset | 1 false `none` in 875 labels; the cause is a format-string attribute read, which static analysis cannot see |
-| Each increment matches the validated implementation | graphs, reachability labels and region outputs compared edge by edge | identical on httpx, flask and requests |
+| Gap fixes change labels only where they should | labels before and after the decorator, property and method-reference fixes | httpx: no label changes. flask: no function moved to `none`; `none` count fell (production 190 to 166). requests: production `none` 54 to 31 |
+| Coverage check on `pallets/click` (2,628 tests passing under coverage, 86% of `src/`) | `coverage-check` before and after the gap fixes | false `none` 55 to 29; `none` precision 0.43 to 0.55. The 29 that remain are stdlib and framework callbacks (limit 3a) |
+| Coverage check on this repository | `coverage-check` against its own test run | 4 false `none`, all in the mock ingest server's stdlib hook callbacks (limit 3a); precision 0.90 |
+| Six repositories, recent commits | `ast` agreement, incremental against full rebuild, schema validation, Neo4j against memory (3 commits per repository). Up to 15 non-merge commits per repository; the root commit has no parent and is skipped | 100% on every check, all six, after the name-invalidation fix: AST coverage 100%; incremental equal on 15/15 for httpx, requests, flask, click, attrs and 11/11 for this repository; schema valid on every commit; Neo4j equal on 3/3 in each |
+| Handled rate of call sites (`metrics.py`) | share of call sites the graph classifies with a definite answer (resolved, ambiguous with candidates kept, external, builtin, no_init) | httpx 98.96%, flask 98.19%, requests 99.36%, click 99.57%, attrs 95.89%, this repository 99.60% |
+| Coverage check, all six repositories (`coverage-check`, default policy) | labels against each repository's coverage.py run | false `none` / true `none` / precision: flask 8 / 6 / 0.43; requests 9 / 21 / 0.70; click 14 / 13 / 0.48; attrs 6 / 1 / 0.14; this repository 1 / 36 / 0.97. httpx: 0 false `none` over 436 functions in the earlier run (see the note in section 15) |
 | Neo4j matches memory | Cypher region and in-memory region on real changes | identical |
-| Incremental matches a full rebuild | 12 consecutive httpx commits and 8 scenarios | identical fingerprints |
+| Incremental matches a full rebuild | recent commits in each of six repositories, and 9 scenarios in `tests/test_incremental.py` | identical fingerprints |
 
 The unit tests (`pytest`) cover every corner in the fixtures under `tests/fixtures/`: nested and decorated definitions, every import form, re-exports, inheritance and `super()`, type inference forms, dispatch, ambiguity, containers, enums, yield and except bindings, argument gating, import-time code, change classification, region schema validation, Neo4j parity and delta, and incremental equivalence.
 
-Performance on httpx (60 files, one process): a full build takes about 1.3 s; loading into Neo4j about 8 s, of which about 6 s writes the 107,691 `REACHES` relationships; a region query 40 ms to 70 ms.
+Query speed, measured on this container with the in-memory index (`graph-api.md` section 8): a query over a loaded index takes 1 to 2 microseconds at the median and at most 0.14 ms at p99 on the six repositories. The cold build is the cost: 0.5 s to 2.6 s per repository, and the index build adds 4 to 82 ms. A pickled snapshot does not help: it reloads in 0.18 to 0.45 s. From a cold start the CLI answers in under a second, not in milliseconds.
+
+Neo4j was run against a local Neo4j 5 Community server on this container. All three Neo4j tests pass, all fifteen schema indexes are online, and seven example queries from `graph-api.md` return the same answers as the in-memory index on flask. Typical Cypher latency over the Bolt driver on localhost is 1 to 2 ms, and the 391-row `REACHES` query for one function takes about 10 ms. Load time for flask is about 9 s, dominated by writing the `REACHES` relationships. The earlier httpx figures (about 8 s load, 40 to 70 ms region queries) came from a run before the indexes existed and are not current.
 
 ## 14. Limits
 
 1. `reached` is a static claim: it does not mean a test runs the code. Only `none` is a strong statement, and even it is static.
 2. Calls made by third-party code (a framework calling back into the repository, a test client driving an application) are invisible. This is the main risk on framework-heavy repositories, where many production functions may be labelled `none` for that reason.
-3. Dynamic dispatch is resolved only where the name is a literal or a literal prefix, for `getattr` on a name or attribute receiver. Other dynamic dispatch (registries keyed by computed strings outside dictionary literals, `functools.partial`, `__getattr__`) stays unresolved. The coverage check (section 11) reports the resulting false `none` labels.
+3. Dynamic dispatch is resolved only where the name is a literal or a literal prefix, for `getattr` on a name or attribute receiver. Other dynamic dispatch (registries keyed by computed strings outside dictionary literals, `functools.partial`) stays unresolved.
+3a. Callbacks that a framework or the standard library calls on an object the repository handed over are invisible. Examples measured on `pallets/click`: `http.server` handlers (`do_POST`) of a class that subclasses a standard-library class, `textwrap.TextWrapper._wrap_chunks`, `pickle` and `repr` hooks on objects the stdlib receives, and callbacks stored in attributes and invoked later (`version_option`'s `callback`). The coverage check reports these as false `none` labels; the design cannot close them statically in general.
+3b. An attribute on a value whose annotation names an external supertype (for example `BaseException`) is treated as external, even when the actual value is a repository subclass.
 4. Type inference uses annotations, constructors, returns and a fixed set of idioms. There is no general flow-sensitive inference and no generics beyond the common containers.
 5. Argument gating recognises only positive guards on parameters with falsy defaults. Other guard shapes stay reachable.
 6. Re-export chains stop at three hops.
@@ -326,6 +347,7 @@ Performance on httpx (60 files, one process): a full build takes about 1.3 s; lo
 8. Duplicate module names in different directories can collide, since the first one wins.
 9. Test detection follows pytest naming. `unittest.TestCase` methods outside a `Test*` class are not detected as tests.
 10. Pass 1 handles `.py` files only.
+11. Metaprogramming that builds classes or methods at run time is invisible: `attr.s`-style builders, `make_class` and `type(...)` calls, and methods installed with `setattr`. This is the main gap on attrs.
 
 ## 15. Adapting to another repository
 
@@ -344,7 +366,7 @@ A workflow for a new repository:
 4. `unpack-graph coverage-check <repo> cov.json`. The acceptance bar is zero false `none`.
 5. Record the result separately for the in-sample and out-of-sample checks.
 
-Before this procedure, the repositories checked were: httpx (all checks above), flask and requests (pass 1 and the call-graph statistics only). The flask result is the main open question: 190 production functions are labelled `none`, most likely because the test client calls into Flask from outside the repository. That is unverified until step 3 has been run for flask.
+Results so far: httpx (all checks above), flask, requests, click and attrs (pass 1, call statistics, coverage check with the numbers in section 13), and this repository. Only httpx reaches zero false `none`: on flask, requests, click, attrs and this repository, the coverage check still finds false `none` labels, mostly framework callbacks, the standard library and run-time class construction (limits 2, 3a and 11). The coverage file used for httpx in the most recent run was empty, so its zero is from the earlier run; repeating it needs httpx's test suite under coverage in its own environment (step 3 above).
 
 ## 16. Decisions
 
@@ -361,12 +383,20 @@ Before this procedure, the repositories checked were: httpx (all checks above), 
 | Instance-protocol and escape edges are `AMBIGUOUS` | They may run, but this cannot be proven statically |
 | Reachability depth 12 | Measured against coverage: 8 gave false `none` |
 | Name-keyed dispatch is resolved | Running the repository's own tests under coverage found 51 false `none` in a visitor that dispatches with `getattr` |
+| Decorators run in the enclosing scope | Measured on `pallets/click`: applying decorators inside the decorated function's scope left every decorator closure unreached |
+| Property reads and method references count | Measured on `pallets/click`: property reads on untyped receivers, base-class properties, and methods passed around by name were all missing edges |
 | Argument gating | Needed for a new option threaded through an existing method |
 | Region in memory and in Cypher, tested for parity | The Cypher query is the one served; the Python version is the reference |
 | Delta update by diffing keyed rows | Exact, and independent of the change that caused it |
 | Jedi not kept | It resolved none of the sites the resolver left open |
 | `none` is the only red flag; `reached` is never presented as executed | Static reachability over-approximates by about a third |
 | Region output follows the existing schema | The schema is the repository's contract; the internal roles are kept as `relation` |
+| Indexes are built once per graph; each query reads dictionaries | Measured: 1 to 2 microseconds per query on the six repositories. The build dominates a cold start, so indexing the graph is the cheapest way to make queries fast |
+| No pickled snapshot for cold starts | Reloading a pickled graph took 0.18 to 0.45 s, and rebuilding the index added 0.15 to 0.4 s. Not milliseconds, so not used |
+| Every query returns one JSON document | One output format, scriptable, with no per-command text formatting to maintain |
+| Module names follow the directory chain (PEP 420) | `src/flask/sansio/app.py` was named `app` with no `__init__.py` in `sansio/`. Fixing it cut flask's false `none` count from 130 to 23 |
+| Implicit invocations are `reached_uncertain` by default; `--strict-none` restores `none` | Dunders, closures and methods of externally based classes are run by machinery the graph cannot see. Under the default, flask's false `none` count fell from 23 to 8 and click's true `none` count from 23 to 13: the policy trades some untested-function reports for fewer false alarms. It is a flag so the choice stays with the user |
+| Name-dependent sites are re-resolved whatever their status | An `external` call (no repository method of that name) resolves once such a method is added. Re-resolving only `ambiguous`, `unresolved` and unique-name sites gave an incremental result that differed from a full rebuild on a real commit |
 
 ## 17. Build history
 
