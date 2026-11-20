@@ -80,6 +80,8 @@ class Analysis(Base):
     reading_order = Column(JSONB, nullable=False, default=list)
     impact = Column(JSONB, nullable=False, default=dict)
     diff_hunks = Column(JSONB, nullable=False, default=dict)
+    diff_files = Column(JSONB, nullable=False, default=list, server_default="[]")  # every hunk, file by file, with owners
+    flow = Column(JSONB, nullable=True)  # {deterministic, llm, model, prompt_version, warnings}
     timeline = Column(JSONB, nullable=False, default=list)
     llm_model = Column(Text, nullable=True)
     prompt_version = Column(Integer, nullable=False, default=1)
@@ -300,6 +302,8 @@ class Decision(Base):
     rule_id = Column(Text, nullable=True)  # steering rule id within this analysis's snapshot (S1, S2 ...)
     rule_followed = Column(Boolean, nullable=True)
     source = Column(Text, nullable=False, default="llm")  # parsed | llm
+    node_ids = Column(JSONB, nullable=False, default=list, server_default="[]")  # graph nodes the decision is about
+    outcome = Column(Text, nullable=False, default="ok", server_default="ok")  # ok | overruled | reverted | rule_violated | unverified
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("ix_decisions_analysis", "analysis_id"),)
@@ -481,6 +485,7 @@ class TeamPR(Base):
     attempts = Column(Float, nullable=False)
     flags = Column(ARRAY(Text), nullable=False)  # unsupported | new-dependency | skipped-test | async-gap
     source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+    public_id = Column(String(32), nullable=True)  # the analysis this row was measured from (measured rows only)
 
 
 class ConsistencyItem(Base):
@@ -569,6 +574,7 @@ class GovEvidence(Base):
     choice = Column(Text, nullable=False)
     quote = Column(Text, nullable=False)
     source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+    public_id = Column(String(32), nullable=True)  # the analysis the quote came from (measured rows only)
 
 
 class GovSkillRule(Base):
@@ -585,6 +591,7 @@ class GovSkillRule(Base):
     latest_pr = Column(Text, nullable=False)
     latest_turn = Column(Integer, nullable=False)
     source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+    latest_public_id = Column(String(32), nullable=True)  # the analysis of the latest violation (measured rows only)
 
 
 class GovHistory(Base):

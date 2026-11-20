@@ -18,7 +18,9 @@ from ..dashboard_seed import TYPES
 from ..db import get_db
 from ..deps import viewer
 from ..errors import ApiError
-from ..pipeline.rollup import measured_summary
+from ..config import settings
+from ..pipeline.metrics import exec_metrics, monday, team_metrics
+from ..pipeline.rollup import load_sessions, measured_summary
 from ..models import (
     ConsistencyItem,
     ConsistencyRow,
@@ -52,7 +54,12 @@ def _today() -> date:
 async def executive_page(period: Literal["30d", "90d"] = "30d", db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     stats = await db.get(ExecPeriod, period)
     if stats is None:
-        raise ApiError(404, "not_found", "no such period")
+        # Clean (unseeded) DB: start with zeroed defaults so measured sessions can still populate the page.
+        stats = ExecPeriod(
+            period=period, adherence=0, adherence_delta=0, override=0.0, override_before=0.0,
+            verified=0, verified_delta=0, unrequested=0, unrequested_delta=0,
+            pending=0, pending_oldest_days=0, sessions=0, rework_first=0, rework_missed=0, rework_thin=0,
+        )
 
     weeks = list((await db.execute(select(ExecWeek).order_by(ExecWeek.week_start))).scalars())
     window = weeks[-WINDOW_WEEKS[period]:]
@@ -81,7 +88,7 @@ async def executive_page(period: Literal["30d", "90d"] = "30d", db: AsyncSession
         .order_by(GovPolicy.expires)
     )).scalars()
 
-    return {
+    result = {
         "period": period,
         "weeks": [w.week_start.isoformat() for w in window],
         "adherence": [w.adherence for w in window],
@@ -119,6 +126,53 @@ async def executive_page(period: Literal["30d", "90d"] = "30d", db: AsyncSession
             for p in active
         ],
     }
+    result["sources"] = {k: "sample" for k in EXEC_SECTIONS}
+    data = await load_sessions(db)
+    measured = exec_metrics(data, today, WINDOW_WEEKS[period]) if len(data) >= settings.METRICS_MIN_SESSIONS else None
+    if measured:
+        _overlay_exec(result, measured, events, today)
+        _overlay_pending(result, await _open_candidates(db), today)
+    return result
+
+
+EXEC_SECTIONS = ("trend", "kpis", "rework", "human_kinds", "agents")
+
+
+async def _open_candidates(db: AsyncSession) -> list[GovCandidate]:
+    return list((await db.execute(select(GovCandidate).where(GovCandidate.status == "open"))).scalars())
+
+
+def _overlay_pending(result: dict[str, Any], open_candidates: list[GovCandidate], today: date) -> None:
+    waiting = [(today - c.first_seen).days for c in open_candidates]
+    result["kpis"]["pending"] = {"v": len(open_candidates), "oldest_days": max(waiting, default=0)}
+
+
+def _overlay_exec(result: dict[str, Any], m: dict[str, Any], events: list[ExecPolicyEvent], today: date) -> None:
+    """Replace the sample sections with the ones measured from sessions. A section the sessions cannot fill stays sample."""
+    for key in ("weeks", "adherence", "repeat_overrides", "human_per_week", "mix"):
+        result[key] = m[key]
+    result["sources"]["trend"] = "measured"
+    week_of = {date.fromisoformat(w): i for i, w in enumerate(m["weeks"])}
+    result["policy_events"] = [{"id": e.id, "week": week_of[monday(e.week_start)], "text": e.text}
+                               for e in events if monday(e.week_start) in week_of]
+    result["headline"] = None
+    for e in events:
+        i = week_of.get(monday(e.week_start))
+        if e.headline and i:
+            before, after = m["repeat_overrides"][i - 1], next((v for v in reversed(m["repeat_overrides"]) if v is not None), None)
+            if before is not None and after is not None:
+                result["headline"] = {"id": e.id, "before": before, "after": after}
+    pending = result["kpis"]["pending"]
+    result["kpis"] = {**m["kpis"], "pending": pending}
+    result["sources"]["kpis"] = "measured"
+    result["rework"] = m["rework"]
+    result["sources"]["rework"] = "measured"
+    if m["human_kinds"] is not None:
+        result["human_kinds"] = m["human_kinds"]
+        result["sources"]["human_kinds"] = "measured"
+    if m["agents"]:
+        result["agents"] = m["agents"]
+        result["sources"]["agents"] = "measured"
 
 
 @router.get("/teams")
@@ -165,11 +219,12 @@ async def team_page(team_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     tools = (await db.execute(
         select(TeamTool).where(TeamTool.team_id == team_id).order_by(TeamTool.calls.desc())
     )).scalars()
-    prs = (await db.execute(
+    pr_rows = list((await db.execute(
         select(TeamPR).where(TeamPR.team_id == team_id).order_by(TeamPR.week_start.desc(), TeamPR.number.desc())
-    )).scalars()
+    )).scalars())
+    prs = pr_rows
 
-    return {
+    result = {
         "id": team.id,
         "name": team.name,
         "weeks": [w.isoformat() for w in weeks],
@@ -200,7 +255,24 @@ async def team_page(team_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
                 "number": p.number, "title": p.title, "area": p.area, "week": week_index.get(p.week_start, -1),
                 "agent": p.agent, "agent_decisions": p.agent_decisions, "human_decisions": p.human_decisions,
                 "overrules": p.overrules, "attempts": p.attempts, "flags": list(p.flags), "source": p.source,
+                "public_id": p.public_id,
             }
             for p in prs
         ],
     }
+    result["sources"] = {k: "sample" for k in TEAM_SECTIONS}
+    if team_id == settings.DASHBOARD_TEAM_ID:  # measured sessions are all attributed to this team until teams are mapped
+        data = await load_sessions(db)
+        m = team_metrics(data, _today()) if len(data) >= settings.METRICS_MIN_SESSIONS else None
+        if m:
+            for key in ("weeks", "kpis", "areas", "funnel", "mix", "tools"):
+                result[key] = m[key]
+            for section in ("kpis", "areas", "funnel", "mix", "tools"):
+                result["sources"][section] = "measured"
+            index = {date.fromisoformat(w): i for i, w in enumerate(m["weeks"])}
+            for out, row in zip(result["prs"], pr_rows):
+                out["week"] = index.get(row.week_start, -1)
+    return result
+
+
+TEAM_SECTIONS = ("kpis", "areas", "funnel", "suggestions", "mix", "tools", "consistency")

@@ -184,7 +184,8 @@
             "partial_coverage",
             "out_of_date",
             "reasons_unavailable",
-            "no_session"
+            "no_session",
+            "flow_unavailable"
           ],
           "title": "Kind",
           "type": "string"
@@ -246,7 +247,76 @@
       "title": "CollapsedGroup",
       "type": "object"
     },
+    "DiffFile": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "old_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Old Path"
+        },
+        "status": {
+          "default": "M",
+          "enum": [
+            "A",
+            "M",
+            "D",
+            "R"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "is_binary": {
+          "default": false,
+          "title": "Is Binary",
+          "type": "boolean"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "no_patch": {
+          "default": false,
+          "title": "No Patch",
+          "type": "boolean"
+        },
+        "added": {
+          "default": 0,
+          "title": "Added",
+          "type": "integer"
+        },
+        "removed": {
+          "default": 0,
+          "title": "Removed",
+          "type": "integer"
+        },
+        "hunks": {
+          "items": {
+            "$ref": "#/$defs/FileHunk"
+          },
+          "title": "Hunks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "DiffFile",
+      "type": "object"
+    },
     "DiffHunk": {
+      "description": "A hunk as seen from one function. `id` points at the same hunk in `diff_files`.",
       "properties": {
         "start_line": {
           "title": "Start Line",
@@ -259,6 +329,18 @@
         "patch": {
           "title": "Patch",
           "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
         }
       },
       "required": [
@@ -285,6 +367,229 @@
         "quote"
       ],
       "title": "EvidenceQuote",
+      "type": "object"
+    },
+    "FileHunk": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "old_start": {
+          "default": 0,
+          "title": "Old Start",
+          "type": "integer"
+        },
+        "old_end": {
+          "default": 0,
+          "title": "Old End",
+          "type": "integer"
+        },
+        "new_start": {
+          "default": 0,
+          "title": "New Start",
+          "type": "integer"
+        },
+        "new_end": {
+          "default": 0,
+          "title": "New End",
+          "type": "integer"
+        },
+        "added": {
+          "default": 0,
+          "title": "Added",
+          "type": "integer"
+        },
+        "removed": {
+          "default": 0,
+          "title": "Removed",
+          "type": "integer"
+        },
+        "patch": {
+          "default": "",
+          "title": "Patch",
+          "type": "string"
+        },
+        "owners": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Owners",
+          "type": "array"
+        },
+        "owner_kind": {
+          "default": "file",
+          "enum": [
+            "function",
+            "class",
+            "module",
+            "file",
+            "none"
+          ],
+          "title": "Owner Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "FileHunk",
+      "type": "object"
+    },
+    "Flow": {
+      "description": "Two reading orders for the same change. `llm` is null when the model could not run.",
+      "properties": {
+        "deterministic": {
+          "$ref": "#/$defs/FlowVariant"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlowVariant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "deterministic"
+      ],
+      "title": "Flow",
+      "type": "object"
+    },
+    "FlowStage": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "node_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Node Ids",
+          "type": "array"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/FlowStep"
+          },
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "FlowStage",
+      "type": "object"
+    },
+    "FlowStep": {
+      "properties": {
+        "node": {
+          "title": "Node",
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "enum": [
+                "entry",
+                "logic",
+                "persistence",
+                "io",
+                "test",
+                "glue"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "FlowStep",
+      "type": "object"
+    },
+    "FlowVariant": {
+      "properties": {
+        "mode": {
+          "enum": [
+            "deterministic",
+            "llm"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/FlowStage"
+          },
+          "title": "Stages",
+          "type": "array"
+        },
+        "order": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Order",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "FlowVariant",
       "type": "object"
     },
     "FunctionReason": {
@@ -413,6 +718,25 @@
           ],
           "title": "Source",
           "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "outcome": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "overruled",
+            "reverted",
+            "rule_violated",
+            "unverified"
+          ],
+          "title": "Outcome",
+          "type": "string"
         }
       },
       "required": [
@@ -439,6 +763,13 @@
           "default": "",
           "title": "Detail",
           "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nodes",
+          "type": "array"
         }
       },
       "required": [
@@ -469,6 +800,13 @@
           "default": "",
           "title": "Quote",
           "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nodes",
+          "type": "array"
         }
       },
       "required": [
@@ -1142,7 +1480,8 @@
             "edit",
             "test_run",
             "claim",
-            "out_of_band"
+            "out_of_band",
+            "denied"
           ],
           "title": "Kind",
           "type": "string"
@@ -1299,6 +1638,24 @@
       },
       "title": "Diff Hunks",
       "type": "object"
+    },
+    "diff_files": {
+      "items": {
+        "$ref": "#/$defs/DiffFile"
+      },
+      "title": "Diff Files",
+      "type": "array"
+    },
+    "flow": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Flow"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "governance": {
       "$ref": "#/$defs/Governance"

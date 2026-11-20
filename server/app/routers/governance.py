@@ -49,7 +49,7 @@ def _today() -> date:
 
 def _evidence_out(e: GovEvidence) -> dict[str, Any]:
     return {
-        "id": e.id, "session": e.session, "pr": e.pr, "team": e.team, "dev": e.dev, "turn": e.turn,
+        "id": e.id, "public_id": e.public_id, "session": e.session, "pr": e.pr, "team": e.team, "dev": e.dev, "turn": e.turn,
         "kind": e.kind, "proposal": e.proposal, "choice": e.choice, "quote": e.quote, "when": e.occurred_on.isoformat(),
         "source": e.source,
     }
@@ -101,7 +101,7 @@ async def _state(db: AsyncSession) -> dict[str, Any]:
         "rules": [
             {
                 "id": r.id, "text": r.text, "skill": r.skill, "followed": r.followed, "violated": r.violated,
-                "trend": list(r.trend), "latest_pr": r.latest_pr, "latest_turn": r.latest_turn, "source": r.source,
+                "trend": list(r.trend), "latest_pr": r.latest_pr, "latest_turn": r.latest_turn, "latest_public_id": r.latest_public_id, "source": r.source,
             }
             for r in rules
         ],

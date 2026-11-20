@@ -46,3 +46,9 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	rm -rf build dist *.egg-info web/dist
+
+fake-sessions:
+	python -m server.app.dev_fixtures
+
+fake-sessions-clear:
+	python -m server.app.dev_fixtures --clear

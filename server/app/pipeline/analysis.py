@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import settings
-from ..llm.client import LLMCallRecord, run_reasoning_llm
+from ..llm.budget import LLMBudget
+from ..llm.client import LLMCallRecord, LLMInvocationResult, is_quota_error, run_reasoning_llm
 from ..llm.prompt_builder import build_reasoning_prompt
 from .decisions import extract_decisions
 from .signals import compute_signals
@@ -20,8 +21,11 @@ from .edit_linker import LinkOutcome
 from .graph_view import GraphBuild
 from .payload import build_overlay, changed_python_files, needs_head_fetch
 from ..llm.graph_context import GraphTools, build_code_context
+from ..llm.flow import FLOW_PROMPT_VERSION, run_flow
 from ..llm.graph_notes import graph_notes
 from .repos import CommitUnavailable, ensure_commit, ensure_mirror, has_commit, load_cached_graph, read_file_at
+from .decision_links import attach_nodes_and_outcomes
+from .flow import build_flow
 from .verify import TEXT_ONLY_REASON, verify_reasoning_output
 
 log = logging.getLogger("unpack.analysis")
@@ -46,6 +50,8 @@ class AnalysisOutcome:
     reading_order: list[str]
     impact: dict[str, Any]
     diff_hunks: dict[str, list[dict[str, Any]]]
+    diff_files: list[dict[str, Any]]
+    flow: dict[str, Any]
     timeline: list[dict[str, Any]]
     reasons: dict[str, dict[str, Any]]
     findings: list[dict[str, Any]]
@@ -96,6 +102,19 @@ def _text_only_reasons(
     return out
 
 
+NOT_ANALYSED_REASON = "Not analysed: AI reasoning was unavailable for this function"
+
+
+def _not_analysed_reasons(node_ids: list[str], link_outcome: LinkOutcome) -> dict[str, dict[str, Any]]:
+    """Every changed function still gets a row when the model could not run, so the UI never has a hole.
+    The provenance (session or outside the session) is still known without a model."""
+    out = _text_only_reasons(node_ids, link_outcome)
+    for row in out.values():
+        row["reason"] = NOT_ANALYSED_REASON
+        row["confidence"] = "low"
+    return out
+
+
 @dataclass
 class GovernanceOutcome:
     signals: dict[str, Any] = field(default_factory=dict)
@@ -108,6 +127,7 @@ class GovernanceOutcome:
 async def governance_pass(
     session: UnpackSession, *, diff_text: str, mirror: Any | None, base_sha: str, head_sha: str,
     findings: list[dict[str, Any]], daily_tokens_used: int = 0, code_context: str | None = None,
+    budget: LLMBudget | None = None, known_nodes: set[str] | None = None,
 ) -> GovernanceOutcome:
     """Signals, steering and decisions for one session. Never raises: a failure is recorded in the signals."""
     out = GovernanceOutcome()
@@ -123,7 +143,7 @@ async def governance_pass(
             except Exception as exc:  # no steering is fine
                 log.warning("steering unavailable: %s", exc)
         out.steering = steering.as_json()
-        dec = await extract_decisions(session, steering, out.signals, daily_tokens_used=daily_tokens_used, code_context=code_context)
+        dec = await extract_decisions(session, steering, out.signals, daily_tokens_used=daily_tokens_used, code_context=code_context, budget=budget, known_nodes=known_nodes)
         out.decisions, out.highlights, out.llm_calls = dec.decisions, dec.highlights, dec.llm_calls
         out.signals["decision_error"] = dec.error
         out.signals["decisions_rejected"] = dec.rejected_count
@@ -152,6 +172,7 @@ async def analyze_push(**kwargs: Any) -> AnalysisOutcome:
                     session, diff_text=payload.get("diff", ""), mirror=None, base_sha=payload["base_sha"],
                     head_sha=payload["head_sha"], findings=[], daily_tokens_used=kwargs.get("daily_tokens_used", 0),
                 )
+                attach_nodes_and_outcomes(exc.governance.decisions, exc.governance.highlights, [], [], [])
                 exc.session_turns = session.to_turn_details()
             except Exception:
                 log.exception("governance after a failed analysis also failed")
@@ -238,6 +259,7 @@ async def _analyze_push(
     rejected_count = 0
     summary = _summary(build, file_count)
     banner: dict[str, str] | None = None
+    budget = LLMBudget(used=daily_tokens_used)
 
     if changed_count == 0:
         banner = None
@@ -266,27 +288,34 @@ async def _analyze_push(
             banner = None
         else:
             user_prompt = built.user_prompt
-            if head_graph is not None:
+            if head_graph is not None and not budget.exhausted():
                 tools = GraphTools(head_graph, read_source)
                 first_task = next((t.text for t in unpack_session.turns if t.kind == "user"), "")
                 notes, note_calls = await graph_notes(tools, changed=built.target_node_ids, task=first_task)
                 llm_calls = llm_calls + note_calls
+                budget.record_tokens(sum(c.input_tokens + c.output_tokens for c in note_calls))
                 if notes:
                     user_prompt += "\n\n## CODE NOTES (from graph lookups. Context only, never evidence)\n" + notes
-            llm_res = await run_reasoning_llm(
-                system_prompt=built.system_prompt,
-                user_prompt=user_prompt,
-                prompt_version=settings.PROMPT_VERSION,
-                daily_tokens_used=daily_tokens_used,
-            )
+            if budget.exhausted():
+                llm_res = LLMInvocationResult(output=None, model=None, error=budget.reason(), quota=budget.quota_hit)
+            else:
+                llm_res = await run_reasoning_llm(
+                    system_prompt=built.system_prompt,
+                    user_prompt=user_prompt,
+                    prompt_version=settings.PROMPT_VERSION,
+                    daily_tokens_used=budget.used,
+                )
+                budget.record(llm_res)
             llm_calls = llm_calls + llm_res.calls
             if llm_res.output is None:
                 # Degrade gracefully: keep graph, parsed turns, provenance, facts, timeline
                 log.warning("reasoning degraded for %s/%s@%s: %s", owner, name, head_sha[:7], llm_res.error)
                 reasons = _text_only_reasons(built.text_only_node_ids, link_outcome)
+                reasons.update(_not_analysed_reasons(built.target_node_ids, link_outcome))
+                why = "the Gemini quota is used up" if llm_res.quota else (llm_res.error or "the model call failed")
                 banner = {
                     "kind": "reasons_unavailable",
-                    "message": "AI reasoning was unavailable for this push; code graph and session facts are shown.",
+                    "message": f"AI reasoning was unavailable for this push ({why[:140]}); code graph and session facts are shown.",
                 }
             else:
                 verified = verify_reasoning_output(
@@ -299,6 +328,8 @@ async def _analyze_push(
                     graph_nodes=build.graph["nodes"],
                 )
                 reasons = verified.reasons
+                if built.overflow_node_ids:
+                    reasons.update(_not_analysed_reasons(built.overflow_node_ids, link_outcome))
                 findings = verified.findings
                 claim_turns = verified.claim_turns
                 rejected_count = verified.rejected_count
@@ -307,6 +338,18 @@ async def _analyze_push(
                     summary = verified.summary
                 banner = None
 
+    # Reading flow: the deterministic one always, the model's when a session exists and the call works.
+    flow = build_flow(build.graph, build.reading_order)
+    if unpack_session is not None and settings.REASONING_ENABLED and changed_count >= 2:
+        first_task = next((t.text for t in unpack_session.turns if t.kind == "user"), "")
+        fr = await run_flow(build.graph, flow["deterministic"]["order"], reasons, first_task, budget)
+        llm_calls = llm_calls + fr.calls
+        flow = build_flow(build.graph, build.reading_order, llm=fr.variant, model=fr.model,
+                          prompt_version=FLOW_PROMPT_VERSION, warnings=fr.warnings)
+        if fr.variant is None and fr.calls and banner is None:
+            banner = {"kind": "flow_unavailable",
+                      "message": "The AI reading order was unavailable for this push; the call-order reading flow is shown."}
+
     # Governance pass: signals (no LLM), steering rules, and decisions. It must never fail the analysis.
     gov = GovernanceOutcome()
     if unpack_session is not None:
@@ -314,7 +357,8 @@ async def _analyze_push(
         code_context = build_code_context(head_graph, changed_ids) if head_graph is not None and changed_ids else None
         gov = await governance_pass(
             unpack_session, diff_text=payload.get("diff", ""), mirror=mirror, base_sha=base_sha, head_sha=head_sha,
-            findings=findings, daily_tokens_used=daily_tokens_used, code_context=code_context,
+            findings=findings, daily_tokens_used=daily_tokens_used, code_context=code_context, budget=budget,
+            known_nodes={n["id"] for n in build.graph["nodes"]},
         )
         # A tool call the human refused is a point on the timeline, on the human side.
         for d in gov.signals.get("denied", []):
@@ -324,12 +368,13 @@ async def _analyze_push(
                 "nodes": [], "reverted": False, "exit_code": None, "finding_id": None,
             })
         timeline.sort(key=lambda e: int(str(e["turn"]).lstrip("T") or 0))
+        attach_nodes_and_outcomes(gov.decisions, gov.highlights, timeline, findings, build.graph["nodes"])
         llm_calls = llm_calls + gov.llm_calls
     signals, decisions, highlights, steering_json = gov.signals, gov.decisions, gov.highlights, gov.steering
 
     # Mark has_reason on changed graph nodes
     for node in build.graph["nodes"]:
-        if node["id"] in reasons:
+        if node["id"] in reasons and reasons[node["id"]]["reason"] != NOT_ANALYSED_REASON:
             node["has_reason"] = True
 
     return AnalysisOutcome(
@@ -341,6 +386,8 @@ async def _analyze_push(
         reading_order=build.reading_order,
         impact=build.impact,
         diff_hunks=build.diff_hunks,
+        diff_files=build.diff_files,
+        flow=flow,
         timeline=timeline,
         reasons=reasons,
         findings=findings,

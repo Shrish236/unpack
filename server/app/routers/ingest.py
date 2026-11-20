@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -20,7 +20,9 @@ from ..db import get_db
 from ..deps import ingest_repo
 from ..errors import ApiError
 from ..jobs.queue import enqueue
-from ..models import Analysis, PullRequest, Push, Repo, TrackedBranch
+from ..models import (
+    Analysis, Decision, FunctionReason, PullRequest, Push, Repo, ReviewFinding, Session, SessionSignals, TrackedBranch,
+)
 from ..schemas.api import IngestPayload
 from ..security import new_public_id
 from ..pipeline.repos import data_dir
@@ -91,6 +93,30 @@ def _push_response(push: Push, analysis: Analysis, tracking_status: str, branch:
     }
 
 
+async def _reanalyse_with_session(
+    db: AsyncSession, repo: Repo, push: Push, analysis: Analysis, data: IngestPayload, payload_bytes: bytes,
+) -> None:
+    """Replace a session-less analysis with one that has the session. The public id and URL stay the same."""
+    push_dir = data_dir() / "payloads" / str(repo.id)
+    push_dir.mkdir(parents=True, exist_ok=True)
+    path = push_dir / f"{data.head_sha}-{new_public_id()}.json.gz"
+    path.write_bytes(gzip.compress(payload_bytes))
+    push.payload_path = str(path)
+    push.has_session = True
+    push.session_agent = data.session.agent
+    push.redaction_counts = data.redactions
+    for model, col in ((FunctionReason, FunctionReason.analysis_id), (ReviewFinding, ReviewFinding.analysis_id),
+                       (Decision, Decision.analysis_id), (SessionSignals, SessionSignals.analysis_id)):
+        await db.execute(delete(model).where(col == analysis.id))
+    await db.execute(delete(Session).where(Session.push_id == push.id))
+    analysis.status = "queued"
+    analysis.error_code = None
+    analysis.error_message = None
+    analysis.finished_at = None
+    await db.flush()
+    await enqueue(db, "analyze_push", {"analysis_id": analysis.id}, dedupe_key=f"analyze:{analysis.id}")
+
+
 @router.post("/ingest")
 async def ingest(request: Request, repo: Repo = Depends(ingest_repo), db: AsyncSession = Depends(get_db)):
     content_type = request.headers.get("content-type", "")
@@ -130,6 +156,11 @@ async def ingest(request: Request, repo: Repo = Depends(ingest_repo), db: AsyncS
         tracked = (await db.execute(select(TrackedBranch).where(
             TrackedBranch.repo_id == repo.id, TrackedBranch.branch == existing.branch))).scalar_one_or_none()
         status = tracked.status if tracked else "untracked"
+        if data.session is not None and not existing.has_session and analysis.status in ("done", "failed"):
+            # The first push of this head had no agent session (it was found late, or the hook ran before the agent
+            # finished). Analysing again with the session is worth more than keeping the session-less result.
+            await _reanalyse_with_session(db, repo, existing, analysis, data, payload_bytes)
+            return JSONResponse(_push_response(existing, analysis, status, existing.branch, False), status_code=202)
         return JSONResponse(_push_response(existing, analysis, status, existing.branch, True), status_code=200)
 
     push_dir = data_dir() / "payloads" / str(repo.id)

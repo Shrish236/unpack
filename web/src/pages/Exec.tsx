@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Layers, TrendingDown, TrendingUp } from "lucide-react";
 import { TYPE_LABEL, type DType } from "../data";
-import { type Autonomy, type ExecData, type Period } from "../api";
+import { type Autonomy, type ExecData, type Period, type Source } from "../api";
 import { useExec } from "../queries";
 import { shortDay } from "../format";
 import { DataGate, Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
@@ -27,7 +27,8 @@ const Link = ({ href, children }: { href: string; children: React.ReactNode }) =
   <a className="btn sm" href={href}>{children} <ArrowRight size={14} /></a>
 );
 
-function Delta({ d, goodWhenUp = true, unit = "pts" }: { d: number; goodWhenUp?: boolean; unit?: string }) {
+function Delta({ d, goodWhenUp = true, unit = "pts" }: { d: number | null; goodWhenUp?: boolean; unit?: string }) {
+  if (d === null) return <span className="delta">no earlier period</span>;
   const good = d > 0 === goodWhenUp;
   const Icon = d > 0 ? TrendingUp : TrendingDown;
   return <span className={`delta ${good ? "up" : "down"}`}><Icon size={12} /> {d > 0 ? "+" : "−"}{Math.abs(d)} {unit}</span>;
@@ -41,7 +42,13 @@ function Trend({ d }: { d: ExecData }) {
   const x = (i: number) => L + (i * (w - L - R)) / Math.max(1, n - 1);
   const ya = (v: number) => T + ((100 - v) / 40) * (H - T - B);
   const yo = (v: number) => T + ((14 - v) / 14) * (H - T - B);
-  const path = (vs: number[], y: (v: number) => number) => vs.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  // a week with no value (null) leaves a gap in the line instead of a zero
+  const path = (vs: (number | null)[], y: (v: number) => number) => {
+    let pen = false;
+    return vs.map((v, i) => { if (v === null) { pen = false; return ""; } const s = `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`; pen = true; return s; }).filter(Boolean).join(" ");
+  };
+  const lastOf = (vs: (number | null)[]) => { for (let i = vs.length - 1; i >= 0; i--) if (vs[i] !== null) return i; return -1; };
+  const la = lastOf(a), lo = lastOf(o);
   const step = w < 520 ? 3 : 1;
   return (
     <div ref={ref} className="chart">
@@ -61,10 +68,11 @@ function Trend({ d }: { d: ExecData }) {
         ))}
         <path d={path(a, ya)} className="line agent" />
         <path d={path(o, yo)} className="line human" />
-        {a.map((v, i) => <circle key={i} cx={x(i)} cy={ya(v)} r={i === n - 1 ? 4.5 : 2.5} className="pt agent"><title>{labels[i]}: {v}% adherence</title></circle>)}
-        {o.map((v, i) => <circle key={i} cx={x(i)} cy={yo(v)} r={i === n - 1 ? 4.5 : 2.5} className="pt human"><title>{labels[i]}: {v} repeat overrides per 100 sessions</title></circle>)}
-        <text x={x(n - 1) + 10} y={ya(a[n - 1]) - 8} className="end agent">{a[n - 1]}%</text>
-        <text x={x(n - 1) + 10} y={yo(o[n - 1]) + 16} className="end human">{o[n - 1]}</text>
+        {a.map((v, i) => v !== null && <circle key={i} cx={x(i)} cy={ya(v)} r={i === la ? 4.5 : 2.5} className="pt agent"><title>{labels[i]}: {v}% adherence</title></circle>)}
+        {o.map((v, i) => v !== null && <circle key={i} cx={x(i)} cy={yo(v)} r={i === lo ? 4.5 : 2.5} className="pt human"><title>{labels[i]}: {v} repeat overrides per 100 sessions</title></circle>)}
+        {la >= 0 && <text x={Math.min(x(la) + 10, w - 36)} y={ya(a[la]!) - 8} className="end agent">{a[la]}%</text>}
+        {lo >= 0 && <text x={Math.min(x(lo) + 10, w - 36)} y={yo(o[lo]!) + 16} className="end human">{o[lo]}</text>}
+        {n === 0 && <text x={w / 2} y={H / 2} textAnchor="middle" className="ax">No weeks to show</text>}
         {labels.map((l, i) => (i % step === 0 || i === n - 1) && (
           <text key={i} x={x(i)} y={H - 6} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} className="ax">{l}</text>
         ))}
@@ -83,7 +91,7 @@ function Mix({ d }: { d: ExecData }) {
   const H = w > 560 ? 290 : 200, L = 30, T = 8, B = 22;
   const weeks = d.weeks.length;
   const totals = Array.from({ length: weeks }, (_, i) => TYPE_ORDER.reduce((s, t) => s + d.mix[t][i], 0));
-  const max = Math.ceil(Math.max(...totals) / 40) * 40;
+  const max = Math.max(40, Math.ceil(Math.max(...totals, 0) / 40) * 40);
   const slot = (w - L) / weeks, bw = Math.min(28, slot * 0.64);
   const y = (v: number) => T + (1 - v / max) * (H - T - B);
   return (
@@ -128,29 +136,33 @@ const Meter = ({ v, bad }: { v: number; bad?: boolean }) => (
 
 function ExecBody({ d }: { d: ExecData }) {
   const k = d.kpis;
-  const humanShare = Math.round(
-    (d.human_per_week.reduce((s, v) => s + v, 0) /
-      TYPE_ORDER.reduce((s, t) => s + d.mix[t].reduce((a, v) => a + v, 0), 0)) * 100,
-  );
+  const decided = TYPE_ORDER.reduce((s, t) => s + d.mix[t].reduce((a, v) => a + v, 0), 0);
+  const humanShare = decided ? Math.round((d.human_per_week.reduce((s, v) => s + v, 0) / decided) * 100) : 0;
 
   const r = d.rework;
   const total = r.first + r.missed + r.thin;
-  const pct = (v: number) => Math.round((v / total) * 100);
-  const thinOfRework = Math.round((r.thin / (r.missed + r.thin)) * 100);
+  const pct = (v: number) => (total ? Math.round((v / total) * 100) : 0);
+  const thinOfRework = r.missed + r.thin ? Math.round((r.thin / (r.missed + r.thin)) * 100) : 0;
+  const unit = d.sources.rework === "measured" ? "sessions" : "acceptance criteria";
+  const mixed = Object.values(d.sources).includes("measured");
+  // when the page mixes measured and sample sections, each sample one says so
+  const src = (s: Source) => (mixed && s === "sample" ? <span className="chip sim">Sample data</span> : undefined);
+  const n = (v: number | null, f: (x: number) => string = String) => (v === null ? "n/a" : f(v));
   const headline = d.headline;
 
   return (
     <>
       <section className="kpis five" aria-label="Summary">
-        <Kpi tone="ok" value={`${k.adherence.v}%`} label="Skill adherence" sub={<><Delta d={k.adherence.d} /> vs prior</>} />
-        <Kpi tone="hot" value={k.override.v.toFixed(1)} label="Repeat overrides per 100 sessions" sub={<>was {k.override.before} before {headline?.id ?? "the policy"}</>} />
-        <Kpi value={`${k.verified.v}%`} label="Claims verified by code" sub={<><Delta d={k.verified.d} /> vs prior</>} />
-        <Kpi value={`${k.unrequested.v}%`} label="Changes nobody asked for" sub={<><Delta d={k.unrequested.d} goodWhenUp={false} /> vs prior</>} />
+        <Kpi tone="ok" value={n(k.adherence.v, (x) => `${x}%`)} label="Skill adherence" sub={<><Delta d={k.adherence.d} /> vs prior</>} />
+        <Kpi tone="hot" value={n(k.override.v, (x) => x.toFixed(1))} label="Repeat overrides per 100 sessions"
+          sub={d.sources.kpis === "measured" ? <>{k.override.before === null ? "no earlier period" : `was ${k.override.before} in the period before`}</> : <>was {k.override.before} before {headline?.id ?? "the policy"}</>} />
+        <Kpi value={n(k.verified.v, (x) => `${x}%`)} label="Claims verified by code" sub={<><Delta d={k.verified.d} /> vs prior</>} />
+        <Kpi value={n(k.unrequested.v, (x) => `${x}%`)} label="Changes nobody asked for" sub={<><Delta d={k.unrequested.d} goodWhenUp={false} /> vs prior</>} />
         <Kpi value={k.pending.v} label="Policies waiting for approval" sub={<>oldest {k.pending.oldest_days} days</>} />
       </section>
 
       {d.measured && d.measured.sessions > 0 && (
-        <Panel title="Live from your sessions" sub="Measured by Unpack from real agent sessions. The charts below are the sample baseline."
+        <Panel title="Live from your sessions" sub={d.sources.trend === "measured" ? "Measured by Unpack from real agent sessions, over all time. The charts below use the sessions in this period." : "Measured by Unpack from real agent sessions. The charts below are the sample baseline."}
           aside={<span className="chip ok">Measured</span>}>
           <section className="kpis" aria-label="Measured">
             <Kpi value={d.measured.sessions} label="sessions analysed" sub={`${d.measured.decisions} decisions found`} />
@@ -167,13 +179,13 @@ function ExecBody({ d }: { d: ExecData }) {
         sub={headline
           ? `Repeat overrides ${headline.before} → ${headline.after} per 100 sessions since ${headline.id} was published. Associated with the policy, not proven caused by it.`
           : "Associated with the policy, not proven caused by it."}
-        aside={<Link href="#/govern">Policies</Link>}
+        aside={<>{src(d.sources.trend)} <Link href="#/govern">Policies</Link></>}
       >
         <Trend d={d} />
       </Panel>
 
       <div className="grid-7-5">
-        <Panel title="What agents and people decide" sub="decisions per week, by type" aside={<Link href="#/pr">Example PR</Link>}>
+        <Panel title="What agents and people decide" sub="decisions per week, by type" aside={<>{src(d.sources.trend)} <Link href="#/pr">Example PR</Link></>}>
           <Mix d={d} />
           <div className="share">
             <div className="share-bar" role="img" aria-label={`Agent decided ${100 - humanShare}%, human decided ${humanShare}%`}>
@@ -184,7 +196,7 @@ function ExecBody({ d }: { d: ExecData }) {
         </Panel>
 
         <div className="stackcol">
-        <Panel title="Why criteria needed rework" sub={`${total} acceptance criteria`} aside={<Link href="#/team">Teams</Link>}>
+        <Panel title="Why criteria needed rework" sub={`${total} ${unit}`} aside={<>{src(d.sources.rework)} <Link href="#/team">Teams</Link></>}>
           <div className="stack" role="img" aria-label="Criteria met first try, missed by the agent, or requirement too thin">
             <i className="ok" style={{ width: `${pct(r.first)}%` }} />
             <i className="agent" style={{ width: `${pct(r.missed)}%` }} />
@@ -199,7 +211,7 @@ function ExecBody({ d }: { d: ExecData }) {
             <b>Requirement was thin in {thinOfRework}% of reworked criteria.</b> Fix the brief, not the agent. Cause is proposed by the model and confirmed by a reviewer.
           </p>
         </Panel>
-        <Panel title="Where human decisions come from" sub="share of human decisions, by how they entered the record">
+        <Panel title="Where human decisions come from" sub="share of human decisions, by how they entered the record" aside={src(d.sources.human_kinds)}>
           <ul className="kinds">
             {d.human_kinds.map((h) => (
               <li key={h.kind}><span>{h.label}</span><span className="track"><i style={{ width: `${h.pct * 2.2}%` }} /></span><b className="mono">{h.pct}%</b></li>
@@ -213,19 +225,19 @@ function ExecBody({ d }: { d: ExecData }) {
         <Panel
           title="Where agents are trusted"
           sub="earned autonomy · roadmap"
-          aside={<Link href="#/team">Teams</Link>}
+          aside={<>{src(d.sources.agents)} <Link href="#/team">Teams</Link></>}
         >
           <div className="scroll-x">
             <table className="table">
               <thead><tr><th>Agent</th><th>Verified</th><th>Unrequested</th><th>Attempts</th><th>Autonomy</th></tr></thead>
               <tbody>
                 {d.agents.map((a) => (
-                  <tr key={a.name} className={a.autonomy ? "" : "muted"}>
+                  <tr key={a.name} className={a.autonomy || d.sources.agents === "measured" ? "" : "muted"}>
                     <td><b className="mono nm">{a.name}</b><div className="panel-sub">{a.tool}{a.decisions ? ` · ${a.decisions.toLocaleString("en-US")} decisions` : ""}</div></td>
                     <td>{a.verified != null ? <Meter v={a.verified} /> : "–"}</td>
                     <td>{a.unrequested != null ? <Meter v={a.unrequested} bad={a.unrequested > 12} /> : "–"}</td>
                     <td className="mono">{a.attempts ?? "–"}</td>
-                    <td>{a.autonomy ? <span className={`chip ${AUTONOMY[a.autonomy].cls}`}>{AUTONOMY[a.autonomy].text}</span> : <span className="chip">Not connected</span>}</td>
+                    <td>{a.autonomy ? <span className={`chip ${AUTONOMY[a.autonomy].cls}`}>{AUTONOMY[a.autonomy].text}</span> : <span className="chip">{d.sources.agents === "measured" ? "Not set" : "Not connected"}</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -273,7 +285,11 @@ export default function Exec() {
             <Seg<Period> value={period} onChange={setPeriod} options={[{ id: "30d", label: "30 days" }, { id: "90d", label: "90 days" }]} />
             <span className="chip"><Layers size={12} /> All teams</span>
             {sessions !== undefined && <span className="chip mono">{sessions.toLocaleString("en-US")} sessions</span>}
-            <span className="chip sim">Illustrative data</span>
+            {q.data && (Object.values(q.data.sources).every((s) => s === "measured")
+              ? <span className="chip ok">Measured</span>
+              : Object.values(q.data.sources).includes("measured")
+                ? <span className="chip warn" title="Sections marked Sample data have no measured source yet">Partly measured</span>
+                : <span className="chip sim">Illustrative data</span>)}
           </>
         }
       />

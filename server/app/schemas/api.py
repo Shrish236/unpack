@@ -104,7 +104,7 @@ class PullRequestInfo(BaseModel):
 
 
 class Banner(BaseModel):
-    kind: Literal["partial_coverage", "out_of_date", "reasons_unavailable", "no_session"]
+    kind: Literal["partial_coverage", "out_of_date", "reasons_unavailable", "no_session", "flow_unavailable"]
     message: str
 
 
@@ -139,6 +139,8 @@ class GovDecision(BaseModel):
     rule: str | None = None  # the steering rule text, when one applied
     rule_followed: bool | None = None
     source: Literal["parsed", "llm"] = "llm"
+    nodes: list[str] = Field(default_factory=list)  # graph nodes the decision is about
+    outcome: Literal["ok", "overruled", "reverted", "rule_violated", "unverified"] = "ok"
 
 
 class GovHighlight(BaseModel):
@@ -146,12 +148,14 @@ class GovHighlight(BaseModel):
     text: str
     turn: str
     quote: str = ""
+    nodes: list[str] = Field(default_factory=list)
 
 
 class GovFlag(BaseModel):
     flag: str
     path: str = ""
     detail: str = ""
+    nodes: list[str] = Field(default_factory=list)  # changed functions in the flagged file
 
 
 class Governance(BaseModel):
@@ -298,9 +302,64 @@ class ReviewFinding(BaseModel):
 
 
 class DiffHunk(BaseModel):
+    """A hunk as seen from one function. `id` points at the same hunk in `diff_files`."""
     start_line: int
     end_line: int
     patch: str
+    id: str | None = None
+
+
+class FileHunk(BaseModel):
+    id: str  # path#index
+    old_start: int = 0
+    old_end: int = 0
+    new_start: int = 0
+    new_end: int = 0
+    added: int = 0
+    removed: int = 0
+    patch: str = ""
+    owners: list[str] = Field(default_factory=list)  # graph node ids that own the hunk (empty for file-level changes)
+    owner_kind: Literal["function", "class", "module", "file", "none"] = "file"
+
+
+class DiffFile(BaseModel):
+    path: str
+    old_path: str | None = None
+    status: Literal["A", "M", "D", "R"] = "M"
+    is_binary: bool = False
+    truncated: bool = False
+    no_patch: bool = False  # binary or too large: there is no patch to show
+    added: int = 0
+    removed: int = 0
+    hunks: list[FileHunk] = Field(default_factory=list)
+
+
+class FlowStep(BaseModel):
+    node: str
+    role: Literal["entry", "logic", "persistence", "io", "test", "glue"] | None = None
+    note: str = ""
+
+
+class FlowStage(BaseModel):
+    title: str
+    summary: str = ""
+    node_ids: list[str] = Field(default_factory=list)
+    steps: list[FlowStep] = Field(default_factory=list)  # llm flow only: a note and a role per node
+
+
+class FlowVariant(BaseModel):
+    mode: Literal["deterministic", "llm"]
+    stages: list[FlowStage] = Field(default_factory=list)
+    order: list[str] = Field(default_factory=list)  # every changed node once, in reading order
+
+
+class Flow(BaseModel):
+    """Two reading orders for the same change. `llm` is null when the model could not run."""
+    deterministic: FlowVariant
+    llm: FlowVariant | None = None
+    model: str | None = None
+    prompt_version: int | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AnalysisMetadata(BaseModel):
@@ -336,6 +395,8 @@ class AnalysisResponse(BaseModel):
     reasons: dict[str, FunctionReason] = Field(default_factory=dict)
     findings: list[ReviewFinding] = Field(default_factory=list)
     diff_hunks: dict[str, list[DiffHunk]] = Field(default_factory=dict)
+    diff_files: list[DiffFile] = Field(default_factory=list)
+    flow: Flow | None = None
     governance: Governance = Field(default_factory=Governance)
 
 

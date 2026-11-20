@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { Kpi, PageHead, Panel, Seg, TypeChip, DataGate } from "../ui";
-import { type ConsistencyItem, type Flag, type TeamPage } from "../api";
+import { type ConsistencyItem, type Flag, type Source, type TeamPage } from "../api";
 import { useTeam, useTeams } from "../queries";
 import { shortDay } from "../format";
 import "../styles/team.css";
@@ -23,12 +23,17 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
   const k = t.kpis;
   const labels = t.weeks.map(shortDay);
   const prs = t.prs.filter((p) => !sel || (p.area === sel.area && (sel.week === null || p.week === sel.week)));
-  const maxTool = Math.max(...t.tools.map((x) => x[tool]));
-  const maxMix = Math.max(...t.mix.map((m) => m.agent + m.human));
+  const maxTool = Math.max(1, ...t.tools.map((x) => x[tool]));
+  const maxMix = Math.max(1, ...t.mix.map((m) => m.agent + m.human));
   const f = t.funnel;
-  const bar = (n: number) => `${(n / f.total) * 100}%`;
+  const bar = (n: number) => `${f.total ? (n / f.total) * 100 : 0}%`;
   const second = f.second.agent + f.second.thin;
   const third = f.third.agent + f.third.thin;
+
+  const mixed = Object.values(t.sources).includes("measured");
+  // when the page mixes measured and sample sections, each sample one says so
+  const src = (s: Source) => (mixed && s === "sample" ? <span className="chip sim">Sample data</span> : undefined);
+  const prHref = (p: { public_id?: string | null }) => (p.public_id ? `#/pr/${p.public_id}` : "#/pr");
 
   const heat = (v: number) => (metric === "attempts" ? Math.min(1, Math.max(0, (v - 1) / 1.6)) : Math.min(1, v / 6));
 
@@ -45,7 +50,7 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
       <Panel
         title="Rework hotspots"
         sub="Click a row or a cell to filter the PR list below"
-        aside={<Seg value={metric} onChange={setMetric} options={[{ id: "attempts", label: "Attempts" }, { id: "overrules", label: "Overrules" }]} />}
+        aside={<>{src(t.sources.areas)} <Seg value={metric} onChange={setMetric} options={[{ id: "attempts", label: "Attempts" }, { id: "overrules", label: "Overrules" }]} /></>}
       >
         <div className="tm-heat" role="grid" aria-label="Rework by area and week">
           <span />
@@ -78,7 +83,7 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
       </Panel>
 
       <div className="grid-7-5">
-        <Panel title="Criteria quality" sub="Was it the agent, or the brief?">
+        <Panel title="Criteria quality" sub={t.sources.funnel === "measured" ? "Was it the agent, or the brief? One row per session." : "Was it the agent, or the brief?"} aside={src(t.sources.funnel)}>
           <div className="tm-fun">
             <div className="tm-fr"><span className="lbl">All criteria</span><div className="tm-bar"><span className="all" style={{ width: "100%" }} /></div><b>{f.total}</b></div>
             <div className="tm-fr"><span className="lbl">Met first try</span><div className="tm-bar"><span className="ok" style={{ width: bar(f.first) }} /></div><b>{f.first}</b></div>
@@ -124,7 +129,7 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
       </div>
 
       <div className="grid-2">
-        <Panel title="Decision mix" sub={`${t.mix.reduce((s, m) => s + m.agent + m.human, 0)} decisions · agent vs human`}>
+        <Panel title="Decision mix" sub={`${t.mix.reduce((s, m) => s + m.agent + m.human, 0)} decisions · agent vs human`} aside={src(t.sources.mix)}>
           <div className="tm-mix">
             {t.mix.map((m) => (
               <div className="tm-mr" key={m.type}>
@@ -142,7 +147,7 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
           </div>
         </Panel>
 
-        <Panel title="Where the agent spends effort" sub="Tool use across the team's agents" aside={<Seg value={tool} onChange={setTool} options={[{ id: "calls", label: "Calls" }, { id: "tokens", label: "Tokens" }]} />}>
+        <Panel title="Where the agent spends effort" sub="Tool use across the team's agents" aside={<>{src(t.sources.tools)} <Seg value={tool} onChange={setTool} options={[{ id: "calls", label: "Calls" }, { id: "tokens", label: "Tokens" }]} /></>}>
           {t.tools.map((x) => (
             <div className="tm-tool" key={x.name}>
               <span>{x.name}</span>
@@ -150,7 +155,7 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
               <b>{tool === "tokens" ? fmtTok(x.tokens) : x.calls.toLocaleString()}</b>
             </div>
           ))}
-          <p className="tm-note">Token counts are illustrative until the hook keeps them.</p>
+          {t.sources.tools === "sample" && <p className="tm-note">Token counts are illustrative until the hook keeps them.</p>}
         </Panel>
       </div>
 
@@ -170,8 +175,8 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
             <tbody>
               {prs.length === 0 && <tr><td colSpan={6} className="tm-none">No PRs for that selection.</td></tr>}
               {prs.map((p) => (
-                <tr key={p.number} onClick={() => { location.hash = "#/pr"; }}>
-                  <td><span className="num">#{p.number}</span>{p.source === "measured" && <span className="chip ok" style={{ marginRight: 6 }}>Measured</span>}<a href="#/pr" onClick={(e) => e.stopPropagation()}>{p.title}</a><span className="ar">{p.area}</span></td>
+                <tr key={p.number} onClick={() => { location.hash = prHref(p); }}>
+                  <td><span className="num">#{p.number}</span>{p.source === "measured" && <span className="chip ok" style={{ marginRight: 6 }}>Measured</span>}<a href={prHref(p)} onClick={(e) => e.stopPropagation()}>{p.title}</a><span className="ar">{p.area}</span></td>
                   <td>{p.agent}</td>
                   <td>
                     <div className="tm-dm">
@@ -207,7 +212,11 @@ export default function Team() {
         crumbs={<>Company <b>›</b> Engineering <b>›</b> <span>{q.data?.name ?? "Team"}</span></>}
         title={`${q.data?.name ?? "Team"} team`}
         sub="Where rework piles up, whether the agent or the brief caused it, and where teams decide the same thing differently."
-        meta={<><span className="chip">Last 8 weeks</span><span className="chip sim">Illustrative data</span></>}
+        meta={<><span className="chip">Last 8 weeks</span>{q.data && (Object.values(q.data.sources).every((s) => s === "measured")
+          ? <span className="chip ok">Measured</span>
+          : Object.values(q.data.sources).includes("measured")
+            ? <span className="chip warn" title="Sections marked Sample data have no measured source yet">Partly measured</span>
+            : <span className="chip sim">Illustrative data</span>)}</>}
       />
       <div className="tm-controls">
         {index.data && <Seg value={id} onChange={setId} options={index.data.teams.map((t) => ({ id: t.id, label: t.name }))} />}

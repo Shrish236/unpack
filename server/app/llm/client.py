@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -76,6 +78,7 @@ class LLMDecision(BaseModel):
     quote: str = ""  # verbatim from the turn
     rule_id: str | None = None  # a steering rule from ## STEERING that applies to this decision
     rule_followed: bool | None = None  # whether the agent's action followed that rule
+    nodes: list[str] = Field(default_factory=list)  # changed-function ids this decision is about
 
 
 class LLMHighlight(BaseModel):
@@ -83,11 +86,32 @@ class LLMHighlight(BaseModel):
     text: str
     turn: str
     quote: str = ""
+    nodes: list[str] = Field(default_factory=list)
 
 
 class LLMDecisionOutput(BaseModel):
     decisions: list[LLMDecision] = Field(default_factory=list)
     highlights: list[LLMHighlight] = Field(default_factory=list)
+
+
+FlowRole = Literal["entry", "logic", "persistence", "io", "test", "glue"]
+
+
+class LLMFlowStep(BaseModel):
+    fn: str  # a label from the prompt (F1, F2 ...)
+    role: FlowRole = "logic"
+    note: str = ""
+
+
+class LLMFlowStage(BaseModel):
+    title: str
+    summary: str = ""
+    steps: list[LLMFlowStep] = Field(default_factory=list)
+
+
+class LLMFlowOutput(BaseModel):
+    stages: list[LLMFlowStage] = Field(default_factory=list)
+    uncovered: list[str] = Field(default_factory=list)
 
 
 # -------------------------------------------------------------
@@ -128,10 +152,119 @@ class LLMInvocationResult:
     model: str | None
     calls: list[LLMCallRecord] = field(default_factory=list)
     error: str | None = None
+    quota: bool = False  # the failure was a quota / rate limit, so the caller should not try again today
+
+    @property
+    def tokens_used(self) -> int:
+        return sum(c.input_tokens + c.output_tokens for c in self.calls)
 
 
 class LLMBackendError(RuntimeError):
     """Raised by an LLM backend when a request fails."""
+
+
+class LLMQuotaError(LLMBackendError):
+    """The API refused because a quota or rate limit is used up. Retrying or switching model will not help."""
+
+
+_QUOTA_MARKERS = ("429", "resource_exhausted", "quota", "rate limit", "rate_limit", "too many requests")
+
+
+def is_quota_error(exc: BaseException | str) -> bool:
+    if isinstance(exc, LLMQuotaError):
+        return True
+    text = str(exc).lower()
+    return any(m in text for m in _QUOTA_MARKERS)
+
+
+def _wrap_backend_error(exc: Exception) -> LLMBackendError:
+    msg = f"Gemini API error ({type(exc).__name__}): {exc}"
+    return LLMQuotaError(msg) if is_quota_error(exc) else LLMBackendError(msg)
+
+
+# Quotas are per model (the free tier allows 20 requests a day for each one), so a model whose quota is gone is skipped
+# for as long as the API said, and the next model is tried. model -> time.monotonic() until which it is skipped.
+_cooldown: dict[str, float] = {}
+_RETRY_IN = re.compile(r"retry in\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?", re.I)
+
+
+def quota_cooldown_s(message: str) -> float:
+    """How long to leave a model alone after a quota error: what the API says ("Please retry in 15h5m8s"), else a guess."""
+    m = _RETRY_IN.search(message)
+    if m and any(m.groups()):
+        h, mi, s = (float(g) if g else 0.0 for g in m.groups())
+        return max(5.0, min(h * 3600 + mi * 60 + s, 24 * 3600))
+    return 3600.0 if re.search(r"per day|daily", message, re.I) else 60.0
+
+
+def short_failure(message: str) -> str:
+    """One plain phrase for why a model call failed, for banners and logs."""
+    m = message or ""
+    if is_quota_error(m):
+        return "quota used up"
+    if "503" in m or "UNAVAILABLE" in m:
+        return "overloaded (503)"
+    if "504" in m or "DEADLINE_EXCEEDED" in m or "timed out" in m.lower():
+        return "timed out"
+    if "404" in m or "NOT_FOUND" in m:
+        return "model not found"
+    if "parse failed" in m:
+        return "returned invalid JSON"
+    return m.replace("\n", " ")[:80]
+
+
+def model_cooling(model: str) -> bool:
+    until = _cooldown.get(model)
+    return until is not None and until > time.monotonic()
+
+
+def reset_cooldowns() -> None:
+    _cooldown.clear()
+
+
+def mark_quota_used(model: str, message: str) -> None:
+    """Skip `model` until its quota resets (the API's own wait when it gives one)."""
+    _cooldown[model] = time.monotonic() + quota_cooldown_s(message)
+
+
+def model_order() -> list[str]:
+    """Primary first, then each comma separated fallback, without repeats."""
+    order = [settings.GEMINI_MODEL_PRIMARY]
+    for extra in settings.GEMINI_MODEL_FALLBACK.split(","):
+        if extra.strip() and extra.strip() not in order:
+            order.append(extra.strip())
+    return order
+
+
+def first_available_model() -> str | None:
+    """The first model in `model_order()` whose quota is not known to be used up."""
+    return next((m for m in model_order() if not model_cooling(m)), None)
+
+
+_semaphore: asyncio.Semaphore | None = None
+_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _llm_slot() -> asyncio.Semaphore:
+    """One semaphore per event loop, sized by GEMINI_CONCURRENCY, shared by every Gemini call."""
+    global _semaphore, _semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _semaphore is None or _semaphore_loop is not loop:
+        _semaphore = asyncio.Semaphore(max(1, settings.GEMINI_CONCURRENCY))
+        _semaphore_loop = loop
+    return _semaphore
+
+
+def fit_prompt(user_prompt: str, max_input_tokens: int) -> tuple[str, bool]:
+    """Keep a prompt under the input-token limit (about 4 characters a token). It cuts from the middle of the
+    prompt: the task and the facts at the top and the latest turns at the bottom are the parts that matter."""
+    limit = max(1000, int(max_input_tokens * 3.5))
+    if len(user_prompt) <= limit:
+        return user_prompt, False
+    keep_head = int(limit * 0.35)
+    keep_tail = limit - keep_head - 80
+    cut = len(user_prompt) - keep_head - keep_tail
+    return user_prompt[:keep_head] + f"\n\n[... {cut} characters of the middle left out to fit the model's input limit ...]\n\n" + user_prompt[-keep_tail:], True
 
 
 class LLMClient(Protocol):
@@ -215,8 +348,7 @@ class GoogleGenAIClient:
         except LLMBackendError:
             raise
         except Exception as exc:
-            raise LLMBackendError(f"Gemini API error ({type(exc).__name__}): {exc}") from exc
-
+            raise _wrap_backend_error(exc) from exc
 
     async def generate_text_with_tools(
         self,
@@ -280,7 +412,7 @@ class GoogleGenAIClient:
         except asyncio.TimeoutError as exc:
             raise LLMBackendError(f"Gemini tool call timed out after {timeout_s}s") from exc
         except Exception as exc:
-            raise LLMBackendError(f"Gemini API error ({type(exc).__name__}): {exc}") from exc
+            raise _wrap_backend_error(exc) from exc
 
 
 _override_client: LLMClient | None = None
@@ -292,9 +424,18 @@ def set_llm_client(client: LLMClient | None) -> None:
     _override_client = client
 
 
+_mock_client: LLMClient | None = None
+
+
 def get_llm_client() -> LLMClient:
+    global _mock_client
     if _override_client is not None:
         return _override_client
+    if settings.GEMINI_BACKEND == "mock":  # no key, no quota: see llm/mock.py
+        if _mock_client is None:
+            from .mock import MockLLMClient
+            _mock_client = MockLLMClient()
+        return _mock_client
     return GoogleGenAIClient(settings.GEMINI_API_KEY)
 
 
@@ -358,33 +499,46 @@ async def run_structured_llm(
         )
 
     llm = client or get_llm_client()
+    user_prompt, trimmed = fit_prompt(user_prompt, settings.GEMINI_MAX_INPUT_TOKENS)
+    if trimmed:
+        log.warning("%s prompt trimmed to fit %s input tokens", purpose, settings.GEMINI_MAX_INPUT_TOKENS)
     req_hash = hashlib.sha256((system_prompt + "\n" + user_prompt).encode("utf-8")).hexdigest()[:16]
     calls: list[LLMCallRecord] = []
 
-    models_to_try = [settings.GEMINI_MODEL_PRIMARY]
-    if settings.GEMINI_MODEL_FALLBACK and settings.GEMINI_MODEL_FALLBACK not in models_to_try:
-        models_to_try.append(settings.GEMINI_MODEL_FALLBACK)
+    models_to_try = model_order()  # primary, then one or several fallbacks
 
     last_error: str | None = None
     attempt = 0
+    quota_models: list[str] = []  # models whose quota is gone, now or from an earlier call
+    why: dict[str, str] = {}  # model -> what last went wrong with it, so the final error names every cause
 
     for model in models_to_try:
+        if model_cooling(model):
+            quota_models.append(model)
+            last_error = last_error or f"{model}: quota used up, skipped until it resets"
+            why[model] = "quota used up"
+            continue
         for _retry in range(2):
             attempt += 1
+            if attempt > 1 and settings.GEMINI_RETRY_BACKOFF_S > 0:
+                # Exponential backoff with jitter between tries (a quota error never gets here).
+                await asyncio.sleep(settings.GEMINI_RETRY_BACKOFF_S * (2 ** (attempt - 2)) * (0.75 + random.random() / 2))
             started = time.monotonic()
             try:
-                raw = await llm.generate_json(
-                    model=model,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    response_schema=schema,
-                    temperature=_temperature_for_model(model),
-                    max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
-                    timeout_s=settings.GEMINI_TIMEOUT_S,
-                )
+                async with _llm_slot():
+                    raw = await llm.generate_json(
+                        model=model,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        response_schema=schema,
+                        temperature=_temperature_for_model(model),
+                        max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
+                        timeout_s=settings.GEMINI_TIMEOUT_S,
+                    )
             except Exception as exc:
                 latency_ms = int((time.monotonic() - started) * 1000)
                 last_error = str(exc)
+                why[model] = short_failure(last_error)
                 calls.append(
                     LLMCallRecord(
                         purpose=purpose,
@@ -400,6 +554,14 @@ async def run_structured_llm(
                 # Only retry once on primary/fallback; break immediately if API key is missing
                 if "GEMINI_API_KEY is not set" in last_error:
                     return LLMInvocationResult(output=None, model=None, calls=calls, error=last_error)
+                if is_quota_error(exc):
+                    # This model's quota is gone, and retrying it cannot help. Leave it alone for as long as the API
+                    # says, and move on to the next model (each model has its own quota).
+                    calls[-1].status = "quota"
+                    mark_quota_used(model, last_error)
+                    quota_models.append(model)
+                    log.warning("quota used up for %s; trying the next model", model)
+                    break
                 continue
 
             latency_ms = int((time.monotonic() - started) * 1000)
@@ -427,7 +589,7 @@ async def run_structured_llm(
                 # Attempt one JSON repair call using GEMINI_MODEL_REPAIR
                 repair_started = time.monotonic()
                 repair_model = settings.GEMINI_MODEL_REPAIR or model
-                repair_sys = load_repair_prompt(prompt_version)
+                repair_sys = load_repair_prompt(prompt_version, schema)
                 repair_user = (
                     f"Validation error:\n{parse_exc}\n\n"
                     f"Broken JSON:\n{raw.text}"
@@ -464,6 +626,7 @@ async def run_structured_llm(
                 except Exception as repair_exc:
                     repair_ms = int((time.monotonic() - repair_started) * 1000)
                     last_error = f"parse failed ({parse_exc}); repair failed ({repair_exc})"
+                    why[model] = "returned invalid JSON"
                     calls.append(
                         LLMCallRecord(
                             purpose="json_repair",
@@ -478,9 +641,12 @@ async def run_structured_llm(
                     )
                     break  # move on to fallback model
 
+    if quota_models and len(quota_models) == len(models_to_try):  # every model is out of quota: nothing more to try today
+        return LLMInvocationResult(output=None, model=None, calls=calls, error=f"quota: {last_error}"[:500], quota=True)
     return LLMInvocationResult(
         output=None,
         model=None,
         calls=calls,
-        error=last_error or "reasoning LLM call failed",
+        # e.g. "gemini-3.1-flash-lite: overloaded (503); gemini-3.6-flash: quota used up" rather than only the last error
+        error=("; ".join(f"{m}: {w}" for m, w in why.items()) or last_error or "reasoning LLM call failed")[:500],
     )

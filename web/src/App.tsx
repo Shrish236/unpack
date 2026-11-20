@@ -105,7 +105,7 @@ export default function App() {
             <a href="#/exec" aria-current={route === "/exec" ? "page" : undefined}>Executive</a>
             <a href="#/team" aria-current={route === "/team" ? "page" : undefined}>Managers</a>
             <a href="#/govern" aria-current={route === "/govern" ? "page" : undefined}>Governance</a>
-            <a href="#/pr" aria-current={route.startsWith("/pr") ? "page" : undefined}>PR example</a>
+            <a href="#/pr" aria-current={route.startsWith("/pr") ? "page" : undefined}>PR analyses</a>
           </nav>
           <div className="nav-end">
             <button className="btn icon-btn" onClick={toggle} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
