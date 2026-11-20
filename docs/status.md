@@ -13,6 +13,8 @@ Each design document says what should exist. This document says what does exist,
 | `pytest tests/` with no Postgres | 72 passed, 3 skipped, **33 errors**: every server test needs Postgres on `localhost:5432` |
 | Local Postgres 16, database `unpack_test`, user `unpack` | Started in the sandbox |
 | `pytest tests/` with Postgres | **105 passed, 3 skipped.** The 3 skipped are the Neo4j tests (no Neo4j running) |
+| `pytest tests/ -n auto` on the server branch, after the poller work and the boot-time sync fix (§9) | **147 passed, 4 skipped.** The 4 skips need a launchable Chromium |
+| `alembic upgrade head` on a fresh database, then `alembic check` | Passes. `downgrade base` also exits 0 |
 | Neo4j tests | Not run. Neo4j is not running in this environment |
 | Web build (`npm ci`, `npm run build`) | **Not verified.** The install step was blocked by the session's permission policy. The earlier claim that `App.tsx` fails `tsc` on an unused `React` import is unchecked |
 | Docker build (`server/Dockerfile`) | **Not verified.** Docker is present but no build was run |
@@ -52,7 +54,7 @@ Each design document says what should exist. This document says what does exist,
 | Render and image | [server §9](server-design.md#9-rendering-the-image-must-never-be-wrong) | `jobs/render.py`, `routers/images.py` (1200 × 700, 2× scale, 2 MB limit, blank check, `/render` token) | **Built** (see §1) |
 | Live API | [server §5.5](server-design.md#55-live-graph), [§5.6](server-design.md#56-images-and-rendering) | `routers/live.py`: analysis, turns, node detail, commit picker, map with ETag, node edges | **Built** |
 | Viewer login and access check | [server §5.4](server-design.md#54-viewer-login) | `routers/auth.py`, `deps.py`: OAuth, Fernet-encrypted tokens, 10-minute access cache | **Built** (not tested against GitHub) |
-| Webhook and setup | [server §5.3](server-design.md#53-github) | `routers/github_webhook.py`: HMAC, delivery dedupe, installation events | **Built** (not tested against GitHub) |
+| GitHub setup and poller | [server §5.3](server-design.md#53-github) | `routers/github_setup.py`, `jobs/reconciler.py`: no webhook; the poller and installation sync replace it (§9) | **Built** (mocked tests; not tested against GitHub) |
 | Admin | [server §5.7](server-design.md#57-operations-and-admin) | `routers/admin.py` | **Built** |
 | Health | [server §5.7](server-design.md#57-operations-and-admin) | `/healthz`, `/readyz` (Postgres and worker heartbeat); no CORS middleware | **Built** |
 | Code graph library | [graph-design.md](graph-design.md) | `unpack_graph/`: pass 1, pass 2, reachability, change detection, region, incremental, Neo4j loader | **Built** (Python only) |
@@ -200,9 +202,11 @@ The decisions below were made after the container checks in §8. They are built 
 
 **Schema:** `tracked_branches.next_check_at` and its index are removed, and `needs_publish` now means "a post is outstanding". New columns: `repos.pulls_etag`, `pull_requests.compare_cache`, `pull_requests.description_hash`. New index: `ix_tracked_sweep`.
 
-**Tests:** 137 passed, 4 skipped, with `pytest tests/ -n auto`. New module `test_poller.py` covers the defaults, the webhook route being gone, the 3-day hold and its setting, the 304 path, the compare cache, and the description section (placed at the top, author text kept, unchanged content not rewritten). The webhook and per-branch timing tests were replaced.
+**Tests:** 147 passed, 4 skipped, with `pytest tests/ -n auto`. New module `test_poller.py` covers the defaults, the webhook route being gone, the 3-day hold and its setting, the 304 path, the compare cache, and the description section (placed at the top, author text kept, unchanged content not rewritten). The webhook and per-branch timing tests were replaced.
 
 **Found and fixed while checking the poller in the container:**
+- The first installation sync after boot was skipped on a host that had been up for less than the sync interval. The sentinel was `0.0`, but `time.monotonic()` counts from boot, so the check looked like "synced recently". The sentinel is now `None` (never synced), with a test for a young host.
+- The merge migration `b398e9b017ae` had unused imports (ruff F401). They are removed; the migration logic is unchanged.
 - The installation sync retried on every 10-second sweep after a failure. It now retries after about a minute, and the test for that is in place.
 - The setup page returned 500 when GitHub could not be reached. It now returns 503 with a clear message.
 - The first sweep marks a repository `app_missing` when the App does not list it. That matches GitHub and is correct; the test fake now lists the test repository as installed.

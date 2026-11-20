@@ -7,6 +7,8 @@ The server receives pushes from the CLI hook, analyses them (graph, session, LLM
 Builds on [session-pipeline.md](session-pipeline.md) (what the hook sends and how a push becomes reasons), [cli-hook.md](cli-hook.md) and [ui-design.md](ui-design.md). The code graph library is described in [graph-design.md](graph-design.md).
 
 
+> **Endpoint reference:** every endpoint, its request body, format and sample is in [`api-contract.md`](api-contract.md). Where that document and this one differ, `api-contract.md` describes the current build.
+>
 > **Revised decisions (poller replaces webhooks), supersede the sections they name.**
 > - **No webhooks.** `/github/webhook`, `GITHUB_WEBHOOK_SECRET` and `webhook_deliveries` are removed. Sections 3.2, 3.4, 5.3 and the webhook items in §11, §12 and §14 describe what was replaced.
 > - **Poller.** One sweep every `RECONCILE_INTERVAL_SECONDS` (default 10) covers every active tracked branch. Per repository it makes one conditional call `GET /repos/{o}/{r}/pulls` (ETag). A 304 costs no rate-limit budget, and the stored list is used. Compare results are cached on the pull request (`compare_cache`).
