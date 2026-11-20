@@ -88,7 +88,7 @@ class Analysis(Base):
 
 
 class Session(Base):
-    """Agent session for a push. Parsing is a placeholder in this build; turns stay empty."""
+    """Parsed agent session turns for a push."""
 
     __tablename__ = "sessions"
 
@@ -106,10 +106,11 @@ class FunctionReason(Base):
     node_id = Column(Text, primary_key=True)
     reason = Column(Text, nullable=False)
     driver = Column(Text, nullable=False)  # user_asked | agent_decided | not_stated
-    history = Column(Text, nullable=True)
+    history = Column(JSONB, nullable=False, default=list)  # [{turn, text}]
     confidence = Column(Text, nullable=False, default="high")
     evidence = Column(JSONB, nullable=False, default=list)
     source = Column(Text, nullable=False, default="session")
+    rejected = Column(JSONB, nullable=True)  # hidden original LLM output when quotes fail verification
 
 
 class ReviewFinding(Base):

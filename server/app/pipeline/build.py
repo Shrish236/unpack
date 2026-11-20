@@ -11,6 +11,7 @@ import asyncio
 import functools
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import Any
 
 from unpack_graph.graph import build_graph
@@ -18,9 +19,11 @@ from unpack_graph.incremental import update_graph
 from unpack_graph.source import GitSource
 
 from ..config import settings
-from .changes import compute_changes
+from .changes import FuncChange, compute_changes
+from .edit_linker import LinkOutcome, link_session_to_changes
 from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
 from .payload import PayloadSource, parse_diff_hunks
+from .session import UnpackSession, parse_gemini_session
 from .repos import load_cached_graph, save_cached_graph
 
 
@@ -42,6 +45,17 @@ def base_graph(repo_id: int, mirror: str, base_sha: str, base_source: GitSource 
     return graph
 
 
+@dataclass
+class AnalysisBuild:
+    """Everything one analysis needs from the CPU-bound stage. Picklable, so it can come back from a worker process."""
+
+    build: GraphBuild
+    timings: dict[str, float]
+    changes: list[FuncChange]
+    unpack_session: UnpackSession | None
+    link_outcome: LinkOutcome | None
+
+
 def analyze_blocking(
     *,
     repo_id: int,
@@ -52,8 +66,13 @@ def analyze_blocking(
     removed: list[str],
     diff_text: str,
     full_head: bool,
-) -> tuple[GraphBuild, dict[str, Any]]:
-    """Returns the analysis build and timings. Pure function of its arguments, so it can run anywhere."""
+    changed_files: list[dict[str, Any]] | None = None,
+    session_payload: dict[str, Any] | None = None,
+) -> AnalysisBuild:
+    """Graph facts for one push, plus the session parse and edit links when a session was sent.
+
+    A pure function of its arguments, so it can run in a worker process.
+    """
     import time
 
     timings: dict[str, float] = {}
@@ -73,13 +92,25 @@ def analyze_blocking(
 
     t2 = time.perf_counter()
     changes = compute_changes(base, head)
-    build = build_graph_view(changes, base, head, parse_diff_hunks(diff_text))
+    unpack_session: UnpackSession | None = None
+    link_outcome: LinkOutcome | None = None
+    sources: dict[str, str] | None = None
+    if session_payload is not None:
+        files = changed_files or []
+        known_paths = set(head.mods.keys()) | set(base.mods.keys()) | {
+            f["path"] for f in files if isinstance(f.get("path"), str)
+        }
+        unpack_session = parse_gemini_session(session_payload, known_paths=known_paths)
+        link_outcome = link_session_to_changes(unpack_session, changes, base, head, files)
+        sources = link_outcome.sources
+    build = build_graph_view(changes, base, head, parse_diff_hunks(diff_text), sources=sources)
     try:
         validate_graph_view(build, settings.MAX_GRAPH_NODES, settings.MAX_GRAPH_EDGES)
     except InvalidGraphView as exc:
         raise BuildFailed("invalid_graph_view", str(exc)) from exc
     timings["view_s"] = time.perf_counter() - t2
-    return build, timings
+    return AnalysisBuild(build=build, timings=timings, changes=changes,
+                         unpack_session=unpack_session, link_outcome=link_outcome)
 
 
 def full_graph_for(repo_id: int, mirror: str, sha: str) -> Any:
@@ -101,7 +132,7 @@ def _executor() -> ProcessPoolExecutor | None:
     return _pool
 
 
-async def run_analysis(**kwargs: Any) -> tuple[GraphBuild, dict[str, Any]]:
+async def run_analysis(**kwargs: Any) -> AnalysisBuild:
     pool = _executor()
     call = functools.partial(analyze_blocking, **kwargs)
     if pool is None:

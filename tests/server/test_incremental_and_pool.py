@@ -74,8 +74,8 @@ def test_incremental_head_equals_full_rebuild(repo):
 
 
 def test_incremental_output_matches_full_path_output(repo):
-    fast, _ = build_module.analyze_blocking(**kwargs(repo))
-    slow, _ = build_module.analyze_blocking(**kwargs(repo, repo_id=2, full_head=True))
+    fast = build_module.analyze_blocking(**kwargs(repo)).build
+    slow = build_module.analyze_blocking(**kwargs(repo, repo_id=2, full_head=True)).build
     assert fast.stats == slow.stats
     assert fast.reading_order == slow.reading_order
     assert fast.impact == slow.impact
@@ -100,10 +100,11 @@ def test_base_graph_is_built_once_per_base_commit(repo, monkeypatch):
 def test_process_pool_gives_the_same_result(repo, monkeypatch):
     import asyncio
 
-    inline, _ = build_module.analyze_blocking(**kwargs(repo))
+    inline = build_module.analyze_blocking(**kwargs(repo)).build
     monkeypatch.setattr(settings, "ANALYSIS_PROCESSES", 1)
     try:
-        pooled, timings = asyncio.run(build_module.run_analysis(**kwargs(repo, repo_id=3)))
+        result = asyncio.run(build_module.run_analysis(**kwargs(repo, repo_id=3)))
+        pooled, timings = result.build, result.timings
     finally:
         build_module.shutdown_pool()
     assert pooled.stats == inline.stats
@@ -135,3 +136,33 @@ def repo_path(r):
     from pathlib import Path
 
     return Path(r["mirror"])
+
+
+def test_session_analysis_crosses_the_process_pool(tmp_path, monkeypatch):
+    """The parsed session and its edit links are picklable, so a worker process can return them."""
+    import asyncio
+
+    from server.app.pipeline import build as build_module
+    from server.app.pipeline.build import run_analysis
+    from server.app.config import settings as cfg
+
+    from .conftest import Origin
+    from .helpers import standard_files
+    from .test_reasoning_e2e import _demo_session_for_standard_files
+
+    base, head = standard_files()
+    origin = Origin(tmp_path, base, head)
+    overlay = {"pkg/core.py": origin.file_at(origin.head_sha, "pkg/core.py").encode()}
+    session = _demo_session_for_standard_files(base, head)
+    kw = dict(repo_id=7, mirror=origin.remote_url, base_sha=origin.base_sha, head_sha=origin.head_sha,
+              overlay=overlay, removed=[], diff_text=origin.diff(), full_head=False,
+              changed_files=[{"path": "pkg/core.py", "status": "M"}], session_payload=session)
+    inline = build_module.analyze_blocking(**kw)
+    monkeypatch.setattr(cfg, "ANALYSIS_PROCESSES", 1)
+    try:
+        pooled = asyncio.run(run_analysis(**{**kw, "repo_id": 8}))
+    finally:
+        build_module.shutdown_pool()
+    assert pooled.unpack_session is not None and pooled.link_outcome is not None
+    assert pooled.build.stats == inline.build.stats
+    assert pooled.link_outcome.facts_dict() == inline.link_outcome.facts_dict()

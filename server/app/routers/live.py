@@ -95,7 +95,7 @@ async def _build_analysis(db: AsyncSession, analysis: Analysis, push: Push, repo
     reasons_rows = (await db.execute(select(FunctionReason).where(FunctionReason.analysis_id == analysis.id))).scalars().all()
     findings_rows = (await db.execute(select(ReviewFinding).where(ReviewFinding.analysis_id == analysis.id))).scalars().all()
     reasons = {
-        r.node_id: FunctionReasonModel(reason=r.reason, driver=r.driver, history=r.history,
+        r.node_id: FunctionReasonModel(reason=r.reason, driver=r.driver, history=r.history or [],
                                        confidence=r.confidence, source=r.source, evidence=r.evidence or [])
         for r in reasons_rows
     }
