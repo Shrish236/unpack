@@ -1,0 +1,129 @@
+# Status: what is built, verified and open
+
+Verified against `main` at `7ad132c` (merge of PR #12, `integrate/graph-stack`), on 2026-11-20. This replaces the earlier gap analysis (`server-changes.md`), which described the repository at `fef368c`.
+
+Each design document says what should exist. This document says what does exist, what was checked, and what is still open.
+
+## 1. How this was verified
+
+| Check | Result |
+|---|---|
+| `main` fetched from `origin`; local `main` fast-forwarded from `fef368c` to `7ad132c` | Done. The working branch `claude/optimistic-bell-k7d1gf` is at the same commit |
+| `pip install -e ".[dev]"` | Installed |
+| `pytest tests/` with no Postgres | 72 passed, 3 skipped, **33 errors**: every server test needs Postgres on `localhost:5432` |
+| Local Postgres 16, database `unpack_test`, user `unpack` | Started in the sandbox |
+| `pytest tests/` with Postgres | **105 passed, 3 skipped.** The 3 skipped are the Neo4j tests (no Neo4j running) |
+| Neo4j tests | Not run. Neo4j is not running in this environment |
+| Web build (`npm ci`, `npm run build`) | **Not verified.** The install step was blocked by the session's permission policy. The earlier claim that `App.tsx` fails `tsc` on an unused `React` import is unchecked |
+| Docker build (`server/Dockerfile`) | **Not verified.** Docker is present but no build was run |
+| Real GitHub App, OAuth app and webhook delivery | **Not verified.** All GitHub calls are mocked in tests |
+| Gemini API calls | **Not verified.** The reasoning step is a placeholder |
+| Chromium render | Carried over from the earlier draft: a 2400 × 1400 PNG (1200 × 700 at 2×), 56 KB, passed the blank check. Not re-run in this check |
+| Design documents against code | Read and compared in this check; see §3 |
+
+## 2. What is built, placeholder and missing
+
+| Area | Design | On main | State |
+|---|---|---|---|
+| CLI: install, uninstall, status | [cli-hook.md §2](cli-hook.md#2-commands) | `cli/main.py`, `cli/hook.py`, `cli/config.py` | **Built** |
+| CLI: push and dry run | [cli-hook.md §2](cli-hook.md#2-commands) | `unpack push` with `--dry-run` | **Built** |
+| CLI: commits, diff, changed files | [cli-hook.md §4, §7](cli-hook.md#4-choosing-the-commits) | `cli/git_info.py` | **Built** |
+| CLI: session finding and trimming | [cli-hook.md §5](cli-hook.md#5-finding-and-trimming-the-session) | `cli/session_finder.py` | **Built** (Gemini CLI only) |
+| CLI: secret scanning | [cli-hook.md §6](cli-hook.md#6-removing-secrets) | `cli/secrets.py` (exact values, patterns, entropy) | **Built** |
+| CLI: ingest transport | [cli-hook.md §7](cli-hook.md#7-the-payload) | `cli/transport.py`, gzip, bearer token | **Built** |
+| CLI: mock server | [cli-hook.md §2](cli-hook.md#2-commands) | `cli/mock_server.py` (`unpack mock-server`) | **Built** |
+| Ingest and push status | [server §5.1, §5.2](server-design.md#51-post-v1ingest-cli-hook) | `routers/ingest.py` | **Built** |
+| Config, fail-fast secrets | [server §12](server-design.md#12-configuration-env) | `config.py`: required values, minimum lengths, Fernet check | **Built** |
+| Data model and migrations | [server §4](server-design.md#4-data-model-postgres) | `models.py`, `server/migrations/versions/19c3f5677b8a_baseline_schema.py` | **Built** (Alembic baseline) |
+| Queue, worker, heartbeat | [server §6](server-design.md#6-jobs-and-the-worker) | `jobs/queue.py` (`SKIP LOCKED`), `jobs/worker.py`, `jobs/handlers.py` | **Built** |
+| Reconciler | [server §3](server-design.md#3-linking-pushes-to-prs-track-the-branch-reconcile-on-a-timer) | `jobs/reconciler.py` | **Built** |
+| Publishing the comment | [server §3.5, §8.3](server-design.md#8-github-app-and-the-pr-comment) | `jobs/publish.py`, `github/comments.py` | **Built** |
+| GitHub App auth and PR calls | [server §8.2](server-design.md#82-authentication) | `github/service.py`, `github/prs.py` | **Built** (mocked tests) |
+| Change classification | [session §4.3](session-pipeline.md#43-find-the-changed-functions-facts) | `pipeline/changes.py` (reuses `unpack_graph.diff._flags`) | **Built** |
+| Analysis facts: graph, impact, reading order, timeline | [server §6](server-design.md#6-jobs-and-the-worker) | `pipeline/analysis.py`, `pipeline/graph_view.py` | **Built.** The timeline comes from the reasoning step, so it is empty until that step exists |
+| §5.5 validation before storing | [server §5.5](server-design.md#55-live-graph) | `graph_view.validate_graph_view` | **Built** |
+| Session parsing into turns | [session §4.2](session-pipeline.md#42-parse-the-session-into-turns) | none. The session row is stored with `turns = []` | **Missing** |
+| Edit-to-function mapping and linking | [session §4.4, §4.5](session-pipeline.md#44-map-each-session-edit-to-functions-facts) | none | **Missing** |
+| LLM input building and trimming | [session §4.6](session-pipeline.md#46-build-the-llm-input) | none | **Missing** |
+| Gemini client, retries, fallback, repair | [server §7](server-design.md#7-gemini-api-llm-calls) | none (`llm/placeholder.py` only) | **Missing** |
+| Prompt files | [server §7.8](server-design.md#78-prompts-and-versions) | `llm/prompts/reasons_v1.md`, `json_repair_v1.md` present; content not reviewed in this check | **Present, unreviewed** |
+| Verification of quotes and facts | [session §4.8](session-pipeline.md#48-verify-code) | none | **Missing** |
+| Reasons and findings in the API | [server §5.5](server-design.md#55-live-graph) | empty `reasons` and `findings`; banner `reasons_unavailable` (or `no_session`) | **Placeholder** |
+| Render and image | [server §9](server-design.md#9-rendering-the-image-must-never-be-wrong) | `jobs/render.py`, `routers/images.py` (1200 × 700, 2× scale, 2 MB limit, blank check, `/render` token) | **Built** (see §1) |
+| Live API | [server §5.5](server-design.md#55-live-graph), [§5.6](server-design.md#56-images-and-rendering) | `routers/live.py`: analysis, turns, node detail, commit picker, map with ETag, node edges | **Built** |
+| Viewer login and access check | [server §5.4](server-design.md#54-viewer-login) | `routers/auth.py`, `deps.py`: OAuth, Fernet-encrypted tokens, 10-minute access cache | **Built** (not tested against GitHub) |
+| Webhook and setup | [server §5.3](server-design.md#53-github) | `routers/github_webhook.py`: HMAC, delivery dedupe, installation events | **Built** (not tested against GitHub) |
+| Admin | [server §5.7](server-design.md#57-operations-and-admin) | `routers/admin.py` | **Built** |
+| Health | [server §5.7](server-design.md#57-operations-and-admin) | `/healthz`, `/readyz` (Postgres and worker heartbeat); no CORS middleware | **Built** |
+| Code graph library | [graph-design.md](graph-design.md) | `unpack_graph/`: pass 1, pass 2, reachability, change detection, region, incremental, Neo4j loader | **Built** (Python only) |
+| Neo4j in production | [server §1](server-design.md#1-architecture) | Removed from `docker-compose.yml`; not used by the server | **Deviation** (D1) |
+| Contract schemas | [server §2.1](server-design.md#21-building-the-ui-in-parallel-the-contract) | 7 JSON schemas in `contract/schema/` | **Built** |
+| Contract fixtures | [ui-design §8.1](ui-design.md#81-hour-1-contract-shared-with-the-server) | `contract/fixtures/analysis_done.json` only | **Partial** (running, failed, no-session, nodes, turns, PR analyses and map are missing) |
+| Web UI | [ui-design.md](ui-design.md) | `web/src/App.tsx`, `main.tsx`: one placeholder page. UI packages declared in `package.json` | **Stub** |
+| Dockerfile | [server §14](server-design.md#14-running-it) | Multi-stage. Sources are copied before the editable install | **Not verified.** Note: the UI build step uses `npm run build \|\| mkdir -p dist && touch dist/index.html`, so a failed UI build still produces an image with an empty page |
+| `docker-compose.yml` | [server §14](server-design.md#14-running-it) | `postgres`, `api`, `worker`, `cloudflared` (profile `tunnel`) | **Built** (no Neo4j) |
+
+## 3. Design documents against code
+
+Each design document was read against `main`. Differences that matter:
+
+| Document | Says | Main | Where it is recorded |
+|---|---|---|---|
+| Server design §1, §4, §13 | Neo4j stores the code graph | Not used. Pickled graphs under `DATA_DIR/graphs` | [server §17 D1](server-design.md#17-decisions-and-deviations) |
+| Server design §5.5 | Graph view from `region` | Server builds its own API graph from `build_graph`. `region.py` is for the CLI | [server §17 D5](server-design.md#17-decisions-and-deviations) |
+| Server design §13 | `llm/client.py`, `llm/schemas.py`, `pipeline/session_gemini.py`, `pipeline/llm_input.py`, `pipeline/verify.py` | Not present | §2 above |
+| Server design §5.7 | `/readyz` checks Neo4j | Checks Postgres and the worker only | [server §5.7](server-design.md#57-operations-and-admin) |
+| Session pipeline §3.5 | Posts to `{server}/ingest` | `POST /v1/ingest` | [session §8](session-pipeline.md#8-conflicts-resolved-against-the-server-design) |
+| Session pipeline §4.7 | `temperature 0`; `history` as a string | Not implemented yet. Model default; `history` is a string in the API | [session §8](session-pipeline.md#8-conflicts-resolved-against-the-server-design), §4 below |
+| UI §3.2 | Node kind `module` | Server uses `file`, `class`, `function`, `method`, `test` | [ui-design §3.2](ui-design.md#32-node-types-and-shapes) |
+| UI §3.4 | `history` as a vertical timeline | `FunctionReason.history: str \| None` | §4 below |
+| Buildathon plan | Gemini on AI Studio; Neo4j; Sigma for everything | As in [product-plan §7](product-plan.md#7-changes-since-the-first-plan) | product-plan §7 |
+
+## 4. Open decisions
+
+These need a decision before the reasoning step or the UI is built. None blocks the server's current behaviour.
+
+| # | Question | Options | Recommendation |
+|---|---|---|---|
+| O1 | Shape of `history` (per function) | (a) keep one string; (b) a list of `{turn, text}` steps, which the UI timeline needs | (b). It is a contract change: edit `api.py` first, then `make contract`, then the fixtures and the UI types |
+| O2 | Where rejected quotes go | (a) `analyses.llm_raw`; (b) a new column | (a) for the demo. Add a column later if the debugging need grows |
+| O3 | Content-Security-Policy for React Flow and ELK | (a) keep `default-src 'self'` and add `style-src 'self' 'unsafe-inline'`, `worker-src 'self' blob:` as needed; (b) relax further | (a), confirmed in a browser before the demo |
+| O4 | Gemini model names | Check each name with a real call the day before the demo. Keep the stored analysis as the fallback | Do this before any recording or demo |
+| O5 | Viewer login for the demo | (a) keep GitHub OAuth (built); (b) one allowed account | (a) is already built; keep it unless it blocks the demo |
+| O6 | Whether `reasons_part` splitting is built | (a) build it; (b) skip it for the demo, since the demo session is small | (b) for the demo; keep the design |
+| O7 | Whether the commit trailer is built | Deferred in the plan | Deferred |
+
+## 5. Gaps against the demo path
+
+In the order they block the demo (push to PR comment to live graph):
+
+1. **Session parser** (`session §4.2`). Without it there are no turns, no edit links, and no timeline. Test it on three real Gemini CLI sessions first.
+2. **Edit mapping and linking** (`session §4.4`, `§4.5`). These give each function its source label.
+3. **Gemini client and reasons step** (`server §7`), with the verification in `session §4.8`. This is where the reasons and evidence come from. Use the fake-client fixtures for tests.
+4. **Fixtures** for the UI: running, failed, no-session, node detail, turns, PR analyses and a real map (`ui-design §8.1`).
+5. **The UI** (`ui-design.md`): PR view, detail panel, change list, static mode. The core tier is about 5 hours of work in the estimate.
+6. **A real end-to-end run.** Build the Docker image, run it, push the demo session, and check the comment and the live page. None of this has been run in this check.
+7. **Real GitHub App and OAuth.** Not tested against GitHub.
+
+## 6. Smaller items to fix
+
+- **Root `README.md` is out of date.** It shows Neo4j in `docker-compose.yml` and `docker compose up -d neo4j`, lists the reasoning engine and PR view as built, and says the project includes `docs/graph-design.md` only. Update it to match this status (outside `docs/`; not changed in this pass).
+- **`server/Dockerfile`** hides a failed UI build with `|| mkdir -p dist && touch dist/index.html`. Remove the fallback once the UI builds.
+- **`unpack_graph/neo4j_io.py`** and its tests stay, but nothing in the server uses them. Keep them as an optional loader, or remove them later.
+- **`pyproject.toml`** still lists `neo4j`, which the server does not need. It is needed by the library's optional loader.
+- **Contract fixtures** are one file short of what the UI needs (§2).
+- **Session format** has not been checked against real Gemini CLI sessions in this check. The source commit `808199f` could not be read from here.
+
+## 7. Documentation changes in this pass
+
+| Document | Change |
+|---|---|
+| `docs/README.md` | New: index and reading order |
+| `docs/product-plan.md` | New: the buildathon plan, updated with current status and decisions (§7 lists the changes) |
+| `docs/cli-hook.md` | New: CLI and hook, built |
+| `docs/session-pipeline.md` | New: from the session pipeline design, with conflicts resolved |
+| `docs/server-design.md` | New: from the latest server design, with the code layout and decisions (§17) |
+| `docs/ui-design.md` | New: from the UI design, with status and open items |
+| `docs/graph-design.md` | Updated: Neo4j references corrected, validation counts clarified, and new sections on build history, server use and glossary |
+| `docs/status.md` | New: replaces `docs/server-changes.md` |
+| `docs/server-changes.md` | Removed. Its gap table and build order are now in this document and the server design |
