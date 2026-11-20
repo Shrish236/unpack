@@ -1,87 +1,119 @@
-"""CLI for unpack_graph."""
+"""Command line interface: `unpack-graph <command>`.
+
+Commands are added one increment at a time.  This increment provides:
+
+  extract <repo> [--rev REV] [--check-ast] [--list]
+      Pass 1 only: parse every .py file and report the functions and classes found.
+      --check-ast compares every definition's (start, end, name) with Python's `ast` module.
+      --list prints one line per definition.
+"""
 
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
-from pathlib import Path
 
-from .diff import detect_changes
-from .graph import build_graph
-from .region import build_region
+from .extract import extract_file, module_name_for
 from .source import FsSource, GitSource
 
 
-def main() -> None:
+def _source(repo: str, rev: str | None):
+    return GitSource(repo, rev) if rev else FsSource(repo)
+
+
+def extract_all(src) -> dict:
+    files = src.list_files()
+    known = set(files)
+    mods = {}
+    for path in files:
+        name, package = module_name_for(path, lambda x: x in known)
+        mods[path] = extract_file(path, src.read(path), name, package)
+    return mods
+
+
+def ast_check(src, mods: dict) -> dict:
+    """Compare pass-1 definitions with the `ast` module, file by file."""
+    checked = 0
+    mismatches = []
+    for path, mod in mods.items():
+        try:
+            tree = ast.parse(src.read(path))
+        except (SyntaxError, ValueError):
+            continue  # files Python itself cannot parse are reported as partial elsewhere
+        expected = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                expected.add(("function", node.lineno, node.end_lineno, node.name))
+            elif isinstance(node, ast.ClassDef):
+                expected.add(("class", node.lineno, node.end_lineno, node.name))
+        found = {("function", f.start, f.end, f.name) for f in mod.funcs}
+        found |= {("class", c.start, c.end, c.name) for c in mod.classes}
+        checked += len(expected)
+        if expected != found:
+            mismatches.append({
+                "path": path,
+                "missing": sorted(map(str, expected - found))[:10],
+                "extra": sorted(map(str, found - expected))[:10],
+            })
+    return {"definitions_checked": checked, "files_with_mismatch": mismatches}
+
+
+def summary(mods: dict) -> dict:
+    funcs = [f for m in mods.values() for f in m.funcs]
+    classes = [c for m in mods.values() for c in m.classes]
+    return {
+        "files": len(mods),
+        "functions": len(funcs),
+        "methods": sum(1 for f in funcs if f.is_method),
+        "nested_functions": sum(1 for f in funcs if f.is_nested),
+        "async_functions": sum(1 for f in funcs if f.is_async),
+        "classes": len(classes),
+        "test_functions": sum(1 for f in funcs if f.is_test),
+        "imports": sum(len(m.imports) for m in mods.values()),
+        "partial_files": sorted(m.path for m in mods.values() if m.partial),
+        "non_utf8_files": sorted(m.path for m in mods.values() if m.decode_errors),
+    }
+
+
+def cmd_extract(args) -> int:
+    src = _source(args.repo, args.rev)
+    mods = extract_all(src)
+    if args.list:
+        for path in sorted(mods):
+            m = mods[path]
+            for f in sorted(m.funcs, key=lambda x: x.start):
+                kind = "async def" if f.is_async else "def"
+                print(f"{path}:{f.start}-{f.end}  {kind} {f.qualname}")
+            for c in sorted(m.classes, key=lambda x: x.start):
+                print(f"{path}:{c.start}-{c.end}  class {c.qualname}")
+    out = {"source": src.label, "summary": summary(mods)}
+    if args.check_ast:
+        out["ast_check"] = ast_check(src, mods)
+    print(json.dumps(out, indent=2))
+    if args.check_ast and out["ast_check"]["files_with_mismatch"]:
+        return 1
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="unpack-graph", description="Unpack code knowledge graph CLI")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    # build
-    build_p = subparsers.add_parser("build", help="Build code graph for repository")
-    build_p.add_argument("repo", help="Path to repository")
-    build_p.add_argument("--rev", help="Git revision (optional)")
-    build_p.add_argument("--neo4j", action="store_true", help="Load into Neo4j")
+    ex = sub.add_parser("extract", help="parse every Python file and summarise definitions (pass 1)")
+    ex.add_argument("repo", help="repository root (working tree)")
+    ex.add_argument("--rev", default=None, help="read a git revision instead of the working tree")
+    ex.add_argument("--check-ast", action="store_true", help="verify definitions against Python's ast")
+    ex.add_argument("--list", action="store_true", help="print every definition")
+    ex.set_defaults(func=cmd_extract)
+    return parser
 
-    # changed
-    changed_p = subparsers.add_parser("changed", help="Detect changed functions between revisions")
-    changed_p.add_argument("repo", help="Path to repository")
-    changed_p.add_argument("base", help="Base git revision")
-    changed_p.add_argument("head", help="Head git revision")
-    changed_p.add_argument("--json", action="store_true", help="Output as JSON")
 
-    # region
-    region_p = subparsers.add_parser("region", help="Build GraphView region for a diff")
-    region_p.add_argument("repo", help="Path to repository")
-    region_p.add_argument("base", help="Base git revision")
-    region_p.add_argument("head", help="Head git revision")
-    region_p.add_argument("--cap", type=int, default=15, help="Neighbor cap")
-    region_p.add_argument("--tests-per-node", type=int, default=5, help="Tests per node")
-    region_p.add_argument("--out", help="Write JSON to output file")
-
-    args = parser.parse_args()
-
-    if args.command == "build":
-        repo_path = Path(args.repo).resolve()
-        src = GitSource(repo_path, args.rev) if args.rev else FsSource(repo_path)
-        g = build_graph(src)
-        summary = {
-            "modules": len(g.modules),
-            "classes": len(g.classes),
-            "functions": len(g.functions),
-            "edges": len(g.edges),
-            "tests": sum(1 for f in g.functions.values() if f.is_test),
-        }
-        print(json.dumps(summary, indent=2))
-        if args.neo4j:
-            from .neo4j_io import get_neo4j_driver, load_graph
-            driver = get_neo4j_driver()
-            load_graph(driver, g)
-            print("Successfully loaded graph into Neo4j.")
-
-    elif args.command == "changed":
-        cs = detect_changes(args.repo, args.base, args.head)
-        if args.json:
-            out = {
-                fid: {"kind": ci.kind, "flags": ci.flags, "head_lines": ci.head_lines}
-                for fid, ci in cs.changed_functions.items()
-            }
-            print(json.dumps(out, indent=2))
-        else:
-            print(f"Changed functions ({len(cs.changed_functions)}):")
-            for fid, ci in cs.changed_functions.items():
-                print(f"  [{ci.kind.upper()}] {fid} (flags: {', '.join(ci.flags)})")
-
-    elif args.command == "region":
-        cs = detect_changes(args.repo, args.base, args.head)
-        view = build_region(cs, cap=args.cap, tests_per_node=args.tests_per_node)
-        formatted = json.dumps(view, indent=2)
-        if args.out:
-            Path(args.out).write_text(formatted, encoding="utf-8")
-            print(f"GraphView written to {args.out}")
-        else:
-            print(formatted)
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

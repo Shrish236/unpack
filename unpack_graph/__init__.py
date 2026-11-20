@@ -1,22 +1,19 @@
-"""Unpack code knowledge graph library."""
+"""Unpack code knowledge graph: a tree-sitter based builder for Python repositories.
 
-from .diff import detect_changes
-from .graph import Graph, build_graph
-from .model import ChangeItem, ChangeSet, Edge, FuncInfo, ModuleInfo, ReachInfo
-from .region import build_region
+Pass 1 (`extract`) parses each file independently into a `ModuleInfo`.  Later passes add
+call resolution, test reachability, change detection and Neo4j output.
+"""
+
+from .extract import extract_file, module_name_for
+from .model import FuncInfo, ModuleInfo, Shape
 from .source import FsSource, GitSource
 
 __all__ = [
-    "Graph",
-    "build_graph",
     "FsSource",
     "GitSource",
-    "detect_changes",
-    "build_region",
-    "ChangeItem",
-    "ChangeSet",
-    "Edge",
     "FuncInfo",
     "ModuleInfo",
-    "ReachInfo",
+    "Shape",
+    "extract_file",
+    "module_name_for",
 ]
