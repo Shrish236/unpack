@@ -146,7 +146,9 @@ def verify_reasoning_output(
 
     # 2. Verify each LLM function reason
     for item in llm_output.functions:
-        node_id = alias_to_node.get(item.fn)
+        # The prompt lists "F1 path::Name"; models sometimes answer with the path::Name. Accept both, but
+        # only ids we sent: an unknown id is still dropped.
+        node_id = alias_to_node.get(item.fn) or (item.fn if item.fn in alias_to_node.values() else None)
         if node_id is None:
             rejected_count += 1
             continue
@@ -231,7 +233,8 @@ def verify_reasoning_output(
             continue
 
         resolved_nodes = [
-            alias_to_node[alias] for alias in raw_f.functions if alias in alias_to_node
+            alias_to_node.get(alias) or alias for alias in raw_f.functions
+            if alias in alias_to_node or alias in alias_to_node.values()
         ]
         if _finding_contradicts_facts(
             raw_f.kind, raw_f.finding, resolved_nodes, link_outcome, nodes_by_id
