@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 from ..config import settings
-from .client import LLMCallRecord, LLMBackendError, get_llm_client
+from .client import LLMCallRecord, LLMBackendError, first_available_model, get_llm_client, is_quota_error, mark_quota_used
 from .graph_context import GraphTools
 
 log = logging.getLogger("unpack.llm")
@@ -32,7 +32,11 @@ async def graph_notes(
     if not settings.LLM_GRAPH_TOOLS or not changed or not hasattr(llm, "generate_text_with_tools"):
         return None, []
     user = "Task given to the agent:\n" + task[:1500] + "\n\nChanged functions (ids for the tools):\n" + "\n".join(changed[:15])
-    model = settings.GEMINI_MODEL_PRIMARY
+    # Notes are optional: use the first model that still has quota, and never let a quota error here stop the main
+    # call (which falls through to the other models by itself).
+    model = first_available_model()
+    if model is None:
+        return None, []
     started = time.monotonic()
     try:
         raw = await llm.generate_text_with_tools(
@@ -40,15 +44,20 @@ async def graph_notes(
             max_calls=settings.GRAPH_TOOLS_MAX_CALLS, timeout_s=settings.GEMINI_TIMEOUT_S,
         )
     except (LLMBackendError, Exception) as exc:  # notes are optional
-        log.warning("graph notes unavailable: %s", exc)
+        quota = is_quota_error(exc)
+        if quota:
+            mark_quota_used(model, str(exc))
+        log.warning("graph notes unavailable on %s: %s", model, str(exc)[:300])
         return None, [LLMCallRecord(
             purpose="graph_notes", model=model, attempt=1, prompt_version=settings.PROMPT_VERSION,
-            latency_ms=int((time.monotonic() - started) * 1000), status="error", error=str(exc)[:500],
+            latency_ms=int((time.monotonic() - started) * 1000), status="quota" if quota else "error", error=str(exc)[:500],
         )]
     record = LLMCallRecord(
         purpose="graph_notes", model=raw.model, attempt=1, prompt_version=settings.PROMPT_VERSION,
         input_tokens=raw.input_tokens, output_tokens=raw.output_tokens,
-        latency_ms=int((time.monotonic() - started) * 1000), response_text=raw.text[:4000],
+        latency_ms=int((time.monotonic() - started) * 1000),
+        # the notes, then the lookups the model made to write them, so a stored analysis shows how the graph was used
+        response_text=(raw.text + "\n\n[lookups: " + (", ".join(tools.calls) or "none") + "]")[:6000],
     )
     notes = raw.text.strip()
     return (notes[:3000] or None), [record]

@@ -42,17 +42,35 @@ export interface AnalysisResponse {
   timeline: TimelineItem[];
   reasons: Record<string, Reason>;
   findings: Finding[];
-  diff_hunks: Record<string, { start_line: number; end_line: number; patch: string }[]>;
+  diff_hunks: Record<string, { start_line: number; end_line: number; patch: string; id?: string | null }[]>;
+  // Optional: an analysis stored before these existed does not have them, and the page has to cope.
+  diff_files?: DiffFile[];
+  flow?: Flow | null;
   governance: Governance;
 }
+export type OwnerKind = "function" | "class" | "module" | "file" | "none";
+export interface FileHunk {
+  id: string; old_start: number; old_end: number; new_start: number; new_end: number; added: number; removed: number;
+  patch: string; owners: string[]; owner_kind: OwnerKind;
+}
+export interface DiffFile {
+  path: string; old_path: string | null; status: "A" | "M" | "D" | "R"; is_binary: boolean; truncated: boolean;
+  no_patch: boolean; added: number; removed: number; hunks: FileHunk[];
+}
+export type FlowRole = "entry" | "logic" | "persistence" | "io" | "test" | "glue";
+export interface FlowStage { title: string; summary: string; node_ids: string[]; steps: { node: string; role: FlowRole | null; note: string }[] }
+export interface FlowVariant { mode: "deterministic" | "llm"; stages: FlowStage[]; order: string[] }
+export interface Flow { deterministic: FlowVariant; llm: FlowVariant | null; model: string | null; prompt_version: number | null; warnings: string[] }
+export type Outcome = "ok" | "overruled" | "reverted" | "rule_violated" | "unverified";
 export interface GovDecision {
   turn: string; actor: "agent" | "human"; kind: string; type: string; proposal: string; choice: string; statement: string;
   quote: string; rule: string | null; rule_followed: boolean | null; source: "parsed" | "llm";
+  nodes?: string[]; outcome?: Outcome;
 }
 export interface Governance {
   decisions: GovDecision[];
-  highlights: { kind: "went_right" | "went_wrong"; text: string; turn: string; quote: string }[];
-  flags: { flag: string; path: string; detail: string }[];
+  highlights: { kind: "went_right" | "went_wrong"; text: string; turn: string; quote: string; nodes?: string[] }[];
+  flags: { flag: string; path: string; detail: string; nodes?: string[] }[];
   tool_stats: Record<string, { calls: number; tokens: number }>;
   attempts: number; human_interventions: number; steering_files: string[]; steering_rules: number; available: boolean;
 }
@@ -61,7 +79,7 @@ export interface Measured {
   adherence: number | null; rule_checks: number; overrides_per_100: number | null; tool_calls: number; tokens: number;
   flags: Record<string, number>;
 }
-export interface Turn { turn_id: string; kind: string; ts: string; text: string | null; path: string | null; excerpt: string | null; command: string | null }
+export interface Turn { turn_id: string; kind: string; ts: string; text: string | null; path: string | null; excerpt: string | null; command: string | null; instruction?: string | null; exit_code?: number | null }
 
 export class ApiError extends Error {
   constructor(public kind: "login" | "forbidden" | "notfound" | "network" | "server", message: string, public status = 0) { super(message); }
@@ -110,21 +128,25 @@ export type Scope = "repo" | "team" | "org";
 export type Enforcement = "advice" | "check" | "gate";
 export type Flag = "unsupported" | "new-dependency" | "skipped-test" | "async-gap";
 
+// Which sections come from sessions and which are still the sample baseline.
+export type Source = "sample" | "measured";
+
 export interface ExecData {
   period: Period;
   measured?: Measured;
+  sources: Record<"trend" | "kpis" | "rework" | "human_kinds" | "agents", Source>;
   weeks: string[]; // ISO Mondays, oldest first, within the period
-  adherence: number[];
-  repeat_overrides: number[];
+  adherence: (number | null)[]; // null: no decision was checked against a rule that week
+  repeat_overrides: (number | null)[];
   human_per_week: number[];
   mix: Record<DType, number[]>;
   policy_events: { id: string; week: number; text: string }[]; // week is an index into weeks
   headline: { id: string; before: number; after: number } | null;
   kpis: {
-    adherence: { v: number; d: number };
-    override: { v: number; before: number };
-    verified: { v: number; d: number };
-    unrequested: { v: number; d: number };
+    adherence: { v: number | null; d: number | null };
+    override: { v: number | null; before: number | null };
+    verified: { v: number | null; d: number | null };
+    unrequested: { v: number | null; d: number | null };
     pending: { v: number; oldest_days: number };
     sessions: number;
   };
@@ -150,6 +172,7 @@ export interface TeamsIndex {
 export interface TeamPage {
   id: string;
   name: string;
+  sources: Record<"kpis" | "areas" | "funnel" | "suggestions" | "mix" | "tools" | "consistency", Source>;
   weeks: string[]; // ISO Mondays, oldest first
   kpis: { prs: number; prs_delta: string; attempts: number; attempts_delta: string; overrules: number; thin: number; unsupported: number };
   areas: { path: string; attempts: number[]; overrules: number[] }[]; // one value per week, 0 = no criteria
@@ -160,12 +183,13 @@ export interface TeamPage {
   prs: {
     number: number; title: string; area: string; week: number; agent: string; agent_decisions: number;
     human_decisions: number; overrules: number; attempts: number; flags: Flag[]; source?: "sample" | "measured";
+    public_id?: string | null; // the analysis a measured row came from
   }[];
 }
 
 export interface GovEvidence {
   id: string; session: string; pr: string; team: string; dev: string; turn: number; kind: HumanKind;
-  proposal: string; choice: string; quote: string; when: string; source?: "sample" | "measured";
+  proposal: string; choice: string; quote: string; when: string; source?: "sample" | "measured"; public_id?: string | null;
 }
 
 export interface GovCandidate {
@@ -182,7 +206,7 @@ export interface GovPolicy {
 
 export interface GovRule {
   id: string; text: string; skill: string; followed: number; violated: number; trend: number[];
-  latest_pr: string; latest_turn: number; source?: "sample" | "measured";
+  latest_pr: string; latest_turn: number; source?: "sample" | "measured"; latest_public_id?: string | null;
 }
 
 export interface GovHistory { id: string; statement: string; outcome: "approved" | "rejected" | "expired"; role: string; when: string; why: string }

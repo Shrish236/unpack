@@ -1,9 +1,10 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Bot, Code2, User } from "lucide-react";
-import { ApiError, fetchAnalysis, fetchTurns, type AnalysisResponse, type Driver, type GovDecision, type Governance, type GNode, type Reason, type TimelineItem, type Turn } from "../api";
+import { ApiError, fetchAnalysis, fetchTurns, type AnalysisResponse, type Driver, type GovDecision, type Governance, type GNode, type Outcome, type Reason, type TimelineItem, type Turn } from "../api";
 import { TYPE_LABEL, type DType } from "../data";
 import { Kpi, PageHead, Panel, Seg } from "../ui";
 import PrMode from "./PrMode";
+import DiffFiles from "./DiffFiles";
 // the graph brings in React Flow and its layout, so it loads when a PR page opens, not with the rest of the app
 const GraphPanel = lazy(() => import("../graph/GraphPanel"));
 import "../styles/prlive.css";
@@ -141,9 +142,14 @@ function Live({ a, turns }: { a: AnalysisResponse; turns: Record<string, Turn> }
         <Kpi value={findings.length} label="review findings" tone={findings.length ? "bad" : "ok"} sub="checked against the session" />
       </section>
 
-      <Suspense fallback={<Panel title="What this change touched"><p className="lv-muted">Loading the graph…</p></Panel>}><GraphPanel analysis={a} /></Suspense>
+            {/* one selection for the whole page: the graph, the file diff, the decisions and the findings move together */}
+      <Suspense fallback={<Panel title="What this change touched"><p className="lv-muted">Loading the graph…</p></Panel>}>
+        <GraphPanel analysis={a} sel={sel || null} onSelect={(id) => { setTurn(null); setSel(id ?? ""); }} />
+      </Suspense>
 
-      <GovernancePanel g={a.governance} onTurn={setTurn} />
+      <DiffFiles a={a} sel={sel || null} onSelect={(id) => { setTurn(null); setSel(id); }} />
+
+      <GovernancePanel g={a.governance} nodes={nodes} sel={sel || null} onTurn={setTurn} onNode={(id) => { setTurn(null); setSel(id); }} />
 
       <Panel title="Review findings" sub={findings.length ? `${findings.length} · each backed by a quoted turn` : undefined}>
         {findings.length === 0 ? <p className="lv-muted">No review findings.</p> : (
@@ -227,7 +233,11 @@ const FLAG_LABEL: Record<string, string> = {
   "new-dependency": "New dependency", "skipped-test": "Skipped test", unsupported: "Unsupported claim", "async-gap": "Async gap",
 };
 
-function GovernancePanel({ g, onTurn }: { g: Governance; onTurn: (t: string) => void }) {
+const OUTCOME_LABEL: Record<Outcome, string> = {
+  ok: "", overruled: "Overruled", reverted: "Reverted", rule_violated: "Rule not followed", unverified: "Claim not backed",
+};
+
+function GovernancePanel({ g, nodes, sel, onTurn, onNode }: { g: Governance; nodes: Record<string, GNode>; sel: string | null; onTurn: (t: string) => void; onNode: (id: string) => void }) {
   if (!g.available) {
     return (
       <Panel title="Governance" sub="decisions, human interventions and steering">
@@ -239,10 +249,14 @@ function GovernancePanel({ g, onTurn }: { g: Governance; onTurn: (t: string) => 
   const agent = g.decisions.filter((d) => d.actor === "agent");
   const tools = Object.entries(g.tool_stats).sort((x, y) => y[1].calls - x[1].calls);
   const row = (d: GovDecision) => (
-    <li key={d.turn + d.kind + d.quote.slice(0, 12)}>
+    <li key={d.turn + d.kind + d.quote.slice(0, 12)} className={sel && d.nodes?.includes(sel) ? "hot" : undefined}>
       <span className={`chip ${d.actor === "human" ? "warn" : "agent"}`}>{d.actor === "human" ? <User size={11} /> : <Bot size={11} />} {KIND_LABEL[d.kind] ?? d.kind}</span>
       <div>
         <b>{d.choice || d.proposal}</b>
+        {d.outcome && d.outcome !== "ok" && <small><span className="chip bad">{OUTCOME_LABEL[d.outcome]}</span></small>}
+        {(d.nodes ?? []).filter((n) => nodes[n]).length > 0 && (
+          <small>On: {(d.nodes ?? []).filter((n) => nodes[n]).map((n) => <button key={n} className="lv-link" onClick={() => onNode(n)} style={{ marginRight: 6 }}>{short(n)}</button>)}</small>
+        )}
         {d.proposal && d.choice && <small>{d.proposal}</small>}
         {d.quote && <small><button className="lv-link" onClick={() => onTurn(d.turn)}>{d.turn}</button> “{d.quote}”</small>}
         {d.rule && <small>Rule: {d.rule} {d.rule_followed === true && <span className="chip ok">followed</span>}{d.rule_followed === false && <span className="chip bad">not followed</span>}</small>}
@@ -254,7 +268,13 @@ function GovernancePanel({ g, onTurn }: { g: Governance; onTurn: (t: string) => 
     <Panel title="Governance" sub={`${g.decisions.length} decisions · ${g.human_interventions} human interventions · ${g.attempts} attempt${g.attempts === 1 ? "" : "s"} · ${g.steering_rules} steering rules read from ${g.steering_files.length ? g.steering_files.join(", ") : "no steering files"}`}>
       {g.flags.length > 0 && (
         <div className="gv-chips" style={{ marginBottom: 12 }}>
-          {g.flags.map((f) => <span key={f.flag + f.path} className="chip bad" title={f.detail}>{FLAG_LABEL[f.flag] ?? f.flag}{f.path ? ` · ${base(f.path)}` : ""}</span>)}
+          {g.flags.map((f) => {
+            const target = f.nodes?.find((n) => nodes[n]);
+            const label = `${FLAG_LABEL[f.flag] ?? f.flag}${f.path ? ` · ${base(f.path)}` : ""}`;
+            return target
+              ? <button key={f.flag + f.path} className="chip bad" style={{ cursor: "pointer" }} title={`${f.detail} · show ${short(target)} in the graph`} onClick={() => onNode(target)}>{label}</button>
+              : <span key={f.flag + f.path} className="chip bad" title={f.detail}>{label}</span>;
+          })}
         </div>
       )}
       {g.highlights.length > 0 && (
@@ -262,7 +282,9 @@ function GovernancePanel({ g, onTurn }: { g: Governance; onTurn: (t: string) => 
           {g.highlights.map((h) => (
             <li key={h.turn + h.text}>
               <span className={`chip ${h.kind === "went_right" ? "ok" : "bad"}`}>{h.kind === "went_right" ? "Went right" : "Went wrong"}</span>
-              <div><b>{h.text}</b>{h.quote && <small><button className="lv-link" onClick={() => onTurn(h.turn)}>{h.turn}</button> “{h.quote}”</small>}</div>
+              <div><b>{h.text}</b>{h.quote && <small><button className="lv-link" onClick={() => onTurn(h.turn)}>{h.turn}</button> “{h.quote}”</small>}
+                {(h.nodes ?? []).filter((n) => nodes[n]).length > 0 && <small>On: {(h.nodes ?? []).filter((n) => nodes[n]).map((n) => <button key={n} className="lv-link" onClick={() => onNode(n)} style={{ marginRight: 6 }}>{short(n)}</button>)}</small>}
+              </div>
             </li>
           ))}
         </ul>

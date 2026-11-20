@@ -84,3 +84,4 @@
   .lv-card.h { margin-left: var(--sp-4); }
   .lv-findings li { grid-template-columns: 1fr; }
 }
+.lv-findings li.hot { background: var(--human-soft); box-shadow: inset 3px 0 0 var(--human-line); }

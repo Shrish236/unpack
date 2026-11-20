@@ -1,0 +1,23 @@
+/* The file diff: one block per file, one per hunk, with line numbers and the owners of each hunk. */
+.df-box { max-height: 560px; overflow: auto; display: grid; gap: var(--sp-4); position: relative; }
+.df-file { border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface); }
+.df-file-h { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); z-index: 1; border-radius: var(--r-2) var(--r-2) 0 0; }
+.df-path { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-3); }
+.df-st.A { color: var(--ok); } .df-st.D { color: var(--bad); } .df-st.R { color: var(--warn); }
+.df-count { font-size: var(--fs-2); white-space: nowrap; } .df-count .add { color: var(--ok); } .df-count .del { color: var(--bad); }
+.df-none { padding: var(--sp-2) var(--sp-3); margin: 0; }
+.df-hunk { border-top: 1px solid var(--line); }
+.df-hunk:first-of-type { border-top: 0; }
+.df-hunk.hot { background: var(--human-soft); box-shadow: inset 3px 0 0 var(--human-line); }
+.df-hunk-h { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-1) var(--sp-3); font-size: var(--fs-2); color: var(--ink-3); }
+.df-range { color: var(--ink-3); }
+.df-owners { display: flex; gap: var(--sp-1); flex-wrap: wrap; flex: 1; }
+.df-owner { cursor: pointer; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font-family: var(--font-mono); }
+.df-owner:hover, .df-owner:focus-visible { border-color: var(--human-line); background: var(--human-soft); }
+.df-patch { margin: 0; padding: 0 0 var(--sp-2); font: var(--fs-2)/1.5 var(--font-mono); overflow-x: auto; }
+.df-row { display: grid; grid-template-columns: 3.4em 3.4em 1fr; white-space: pre; min-width: max-content; }
+.df-row .ln { font-style: normal; color: var(--ink-3); text-align: right; padding-right: var(--sp-2); user-select: none; opacity: 0.7; }
+.df-row.add { background: var(--ok-soft); } .df-row.add .tx { color: var(--ok); }
+.df-row.del { background: var(--bad-soft); } .df-row.del .tx { color: var(--bad); }
+.df-row.hh .tx { color: var(--ink-3); grid-column: 3; }
+.df-more { margin: 0 var(--sp-3) var(--sp-2); }

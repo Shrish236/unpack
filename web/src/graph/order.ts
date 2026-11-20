@@ -1,18 +1,46 @@
-// The order a reviewer reads the changed functions in. Three choices:
+// The order a reviewer reads the changed functions in. Four choices:
 //   session      the order the agent edited them (first edit turn in the session timeline), so you can follow how it worked
-//   logical      callers before callees: the entry points first, then what they depend on
+//   logical      callers before callees: the entry points first, then what they depend on. The server computes it
+//                (analysis.flow.deterministic); an older analysis without it falls back to the same rule here
+//   ai           the model's reading flow: stages with a title, and a note per function (analysis.flow.llm)
 //   alphabetical by file, then function name
 // Functions the session did not edit (changed outside it) follow the session ones, in the server's reading order.
 import type { Graph } from "./model";
 
-export type OrderMode = "session" | "logical" | "alphabetical";
+export type OrderMode = "session" | "logical" | "ai" | "alphabetical";
 
-export const ORDER_LABEL: Record<OrderMode, string> = { session: "Agent's order", logical: "Logical", alphabetical: "A–Z" };
+export const ORDER_LABEL: Record<OrderMode, string> = { session: "Agent's order", logical: "Call order", ai: "AI flow", alphabetical: "A–Z" };
 export const ORDER_HINT: Record<OrderMode, string> = {
   session: "The order the agent edited them in this session",
   logical: "Callers first, then the functions they depend on",
+  ai: "The model's reading flow: stages, from where the work enters to where it ends",
   alphabetical: "By file, then function name",
 };
+
+// The modes a given analysis can offer. The AI flow only exists when the model produced one.
+export function availableModes(g: Graph): OrderMode[] {
+  return (["ai", "logical", "session", "alphabetical"] as OrderMode[]).filter((m) => m !== "ai" || !!g.analysis.flow?.llm);
+}
+
+// Keep the flow's order for the functions that are in the graph, and put any the flow left out at the end in the
+// server's reading order, so a flow can never hide a changed function.
+function fromFlow(order: string[], ids: string[]): string[] {
+  const known = new Set(ids);
+  const seen = new Set<string>();
+  const out = order.filter((id) => known.has(id) && !seen.has(id) && seen.add(id));
+  return [...out, ...ids.filter((id) => !seen.has(id))];
+}
+
+// The stage a function belongs to in the given flow, with the model's role and note for it.
+export function stageOf(g: Graph, mode: OrderMode, id: string): { title: string; summary: string; index: number; role: string | null; note: string } | null {
+  const flow = mode === "ai" ? g.analysis.flow?.llm : mode === "logical" ? g.analysis.flow?.deterministic : null;
+  if (!flow) return null;
+  const index = flow.stages.findIndex((s) => s.node_ids.includes(id));
+  if (index < 0) return null;
+  const st = flow.stages[index];
+  const step = st.steps.find((x) => x.node === id);
+  return { title: st.title, summary: st.summary, index, role: step?.role ?? null, note: step?.note ?? "" };
+}
 
 const turnNumber = (t: string) => Number(t.replace(/\D/g, "")) || 0;
 
@@ -33,7 +61,10 @@ export function orderFunctions(g: Graph, mode: OrderMode): string[] {
     return [...ids].sort((a, b) => (first.get(a) ?? 1e9) - (first.get(b) ?? 1e9) || base.get(a)! - base.get(b)!);
   }
 
-  // logical: a stable topological order over the calls between changed functions, callers first
+  if (mode === "ai" && g.analysis.flow?.llm) return fromFlow(g.analysis.flow.llm.order, ids);
+  if (mode === "logical" && g.analysis.flow?.deterministic.order.length) return fromFlow(g.analysis.flow.deterministic.order, ids);
+
+  // logical without a server flow: a stable topological order over the calls between changed functions, callers first
   const callees = new Map<string, string[]>();
   const indeg = new Map<string, number>(ids.map((id) => [id, 0]));
   for (const e of g.edges) {

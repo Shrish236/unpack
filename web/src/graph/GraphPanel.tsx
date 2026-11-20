@@ -1,20 +1,30 @@
 // The change graph as a section of the PR page: controls, the graph, and the reasoning panel for the selected function.
 // It takes an analysis and nothing else, so the PR tab and any future surface can mount it the same way.
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisResponse } from "../api";
 import { Panel, Seg } from "../ui";
 import ChangeGraph, { type Detail } from "./ChangeGraph";
 import Inspector from "./Inspector";
 import { buildGraph } from "./model";
-import { ORDER_HINT, ORDER_LABEL, orderFunctions, type OrderMode } from "./order";
+import { ORDER_HINT, ORDER_LABEL, availableModes, orderFunctions, type OrderMode } from "./order";
 import "../styles/graph.css";
 
-export default function GraphPanel({ analysis }: { analysis: AnalysisResponse }) {
+// `sel` and `onSelect` are optional: give them and the page owns the selection (so the diff, the decisions and the graph
+// move together); leave them out and the panel keeps its own.
+export default function GraphPanel({ analysis, sel: selProp, onSelect }: { analysis: AnalysisResponse; sel?: string | null; onSelect?: (id: string | null) => void }) {
   const g = useMemo(() => buildGraph(analysis), [analysis]);
-  const [mode, setMode] = useState<OrderMode>("session");
+  const modes = useMemo(() => availableModes(g), [g]);
+  const [modeState, setMode] = useState<OrderMode>(() => (analysis.flow?.llm ? "ai" : "session"));
+  const mode = modes.includes(modeState) ? modeState : "session"; // a new analysis may not offer the mode that was chosen
   const [detail, setDetail] = useState<Detail>("auto");
   const [focus, setFocus] = useState<string | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  const [selState, setSelState] = useState<string | null>(null);
+  const controlled = selProp !== undefined;
+  const sel = controlled ? selProp : selState;
+  // stable, because the graph re-lays out when its onSelect changes
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const setSel = useCallback((id: string | null) => { setSelState(id); onSelectRef.current?.(id); }, []);
   const [blast, setBlast] = useState(false);
   const [fitNonce, setFitNonce] = useState(0);
   const [tests, setTests] = useState(false);
@@ -53,7 +63,7 @@ export default function GraphPanel({ analysis }: { analysis: AnalysisResponse })
       setSel(list[(i + step + list.length) % list.length]);
     }
   };
-  useEffect(() => { setSel(null); setFocus(null); }, [analysis]);
+  useEffect(() => { if (!controlled) setSelState(null); setFocus(null); }, [analysis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const files = new Set(g.changed.map((n) => n.path)).size;
 
@@ -61,7 +71,7 @@ export default function GraphPanel({ analysis }: { analysis: AnalysisResponse })
     <Panel
       title="What this change touched"
       sub={`${g.changed.length} functions in ${files} files · ${ORDER_HINT[mode].toLowerCase()}`}
-      aside={<Seg<OrderMode> value={mode} onChange={setMode} options={(Object.keys(ORDER_LABEL) as OrderMode[]).map((m) => ({ id: m, label: ORDER_LABEL[m] }))} />}
+      aside={<Seg<OrderMode> value={mode} onChange={setMode} options={modes.map((m) => ({ id: m, label: ORDER_LABEL[m] }))} />}
       className="gp"
     >
       <div ref={root} className="gp-body" tabIndex={0} onKeyDown={onKeyDown} onPointerDown={(e) => { if ((e.target as HTMLElement).closest("input,select,button")) return; root.current?.focus({ preventScroll: true }); }} aria-label="Change graph">
@@ -79,7 +89,7 @@ export default function GraphPanel({ analysis }: { analysis: AnalysisResponse })
         </div>
         <div className="gl-grid">
           <ChangeGraph g={g} sel={sel} blast={blast} opts={opts} detail={detail} focus={focus} neighbours={neighbours} allLinks={allLinks} order={order} numbered={mode !== "alphabetical"} fitNonce={fitNonce} onSelect={setSel} onFocus={setFocus} />
-          <Inspector g={g} sel={inspectorSel} order={order} onSelect={setSel} />
+          <Inspector g={g} sel={inspectorSel} order={order} mode={mode} onSelect={setSel} />
         </div>
         <p className="gl-keys">Click the graph, then <kbd>←</kbd> <kbd>→</kbd> step through the changes · drag cards · scroll to zoom · <kbd>Esc</kbd> clear</p>
       </div>

@@ -28,6 +28,9 @@ class _FakeLLM:
     async def generate_json(self, **kwargs) -> RawLLMResponse:
         if kwargs["response_schema"].__name__ == "LLMDecisionOutput":  # the governance pass has its own call
             return RawLLMResponse(text='{"decisions": [], "highlights": []}', model="fake-decisions")
+        if kwargs["response_schema"].__name__ == "LLMFlowOutput":  # the flow call: F2 first, F1 second
+            return RawLLMResponse(text=json.dumps({"stages": [{"title": "Both helpers", "summary": "s", "steps": [
+                {"fn": "F2", "role": "entry", "note": "new"}, {"fn": "F1", "role": "logic", "note": "bumped"}]}]}), model="fake-flow")
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -156,6 +159,17 @@ async def test_full_reasoning_pipeline_end_to_end(client, tmp_data_dir, tmp_path
         assert body["banner"] is None
         assert body["summary"].startswith("Bumped helper")
 
+        # Both reading flows are served. The model's puts brand_new first; every changed function is in both.
+        flow = body["flow"]
+        assert flow["llm"]["mode"] == "llm" and flow["model"] == "fake-flow"
+        assert flow["llm"]["order"][:2] == ["pkg/core.py::brand_new", "pkg/core.py::helper"]
+        assert sorted(flow["llm"]["order"]) == sorted(flow["deterministic"]["order"])
+        assert flow["llm"]["stages"][0]["steps"][0]["role"] == "entry"
+        # The file-level diff keeps every hunk and says who owns it.
+        owned = {o for f in body["diff_files"] for h in f["hunks"] for o in h["owners"]}
+        assert {"pkg/core.py::helper", "pkg/core.py::brand_new"} <= owned
+        assert all(h["id"].startswith("pkg/core.py#") for f in body["diff_files"] if f["path"] == "pkg/core.py" for h in f["hunks"])
+
         # Provenance & facts computed from session
         assert body["stats"]["by_source"]["session"] == 2
         assert body["facts"]["tested_after_final_edit"] is True
@@ -231,6 +245,9 @@ async def test_reasoning_degrades_gracefully_when_llm_fails(client, tmp_data_dir
         assert body["banner"]["kind"] == "reasons_unavailable"
         assert body["stats"]["by_source"]["session"] == 2
         assert body["facts"]["tested_after_final_edit"] is True
-        assert body["reasons"] == {}
+        # Every changed function still gets a row, marked as not analysed, so the UI has no holes.
+        assert body["reasons"]
+        assert all(r["reason"].startswith("Not analysed") and r["confidence"] == "low" for r in body["reasons"].values())
+        assert all(not n["has_reason"] for n in body["graph"]["nodes"] if n["id"] in body["reasons"])
     finally:
         set_llm_client(None)

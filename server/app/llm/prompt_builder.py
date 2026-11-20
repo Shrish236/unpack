@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..config import settings
 from .graph_context import build_code_context
+from .prompt_text import labels_line, reasons_prompt, repair_prompt, response_section
 from ..pipeline.edit_linker import LinkOutcome
 from ..pipeline.session import UnpackSession, UnpackTurn
 
@@ -24,18 +25,15 @@ class BuiltPrompt:
     node_to_alias: dict[str, str]  # path::Qual.Name -> F1
     target_node_ids: list[str]  # non-text_only nodes sent to LLM
     text_only_node_ids: list[str]  # auto-labelled locally, skipped by LLM
+    overflow_node_ids: list[str] = field(default_factory=list)  # past MAX_LLM_FUNCTIONS, not sent to the model
 
 
 def load_system_prompt(version: int = 1) -> str:
-    path = PROMPTS_DIR / f"reasons_v{version}.md"
-    return path.read_text(encoding="utf-8")
+    return reasons_prompt(version)
 
 
-def load_repair_prompt(version: int = 1) -> str:
-    path = PROMPTS_DIR / f"json_repair_v{version}.md"
-    if not path.exists():  # the repair prompt does not change with the reasoning prompt
-        path = PROMPTS_DIR / "json_repair_v1.md"
-    return path.read_text(encoding="utf-8")
+def load_repair_prompt(version: int = 1, schema: type | None = None) -> str:  # version is kept for callers that pass it
+    return repair_prompt(schema)
 
 
 def trim_shell_output(output: str, head_lines: int = 40, tail_lines: int = 60) -> str:
@@ -121,12 +119,15 @@ def build_reasoning_prompt(
 
     text_only_ids: list[str] = []
     target_ids: list[str] = []
+    overflow_ids: list[str] = []
     for nid in ordered_ids:
         link = link_outcome.links[nid]
         if link.change_kind == "text_only":
             text_only_ids.append(nid)
         elif len(target_ids) < limit:
             target_ids.append(nid)
+        else:
+            overflow_ids.append(nid)
 
     alias_to_node: dict[str, str] = {}
     node_to_alias: dict[str, str] = {}
@@ -206,6 +207,15 @@ def build_reasoning_prompt(
             sess_lines.append(rendered)
     sections.append("\n".join(sess_lines))
 
+    # 5. RESPONSE: last, so it is the freshest thing the model reads
+    turn_ids = [t.turn_id for t in session.turns]
+    sections.append(response_section([
+        'Reply with one JSON object with the keys "summary", "functions" and "session_review", as described in the system prompt.',
+        f'"functions" must have exactly one item for each of these labels: {labels_line(list(alias_to_node))}. One item per label: none missing, none extra.',
+        f'The turns in this session run up to {turn_ids[-1] if turn_ids else "none"}; every "turn" you give must be one of them.',
+        "Quote only from ## SESSION, copied exactly. Do not quote ## CODE CONTEXT or ## FACTS.",
+    ]))
+
     return BuiltPrompt(
         system_prompt=load_system_prompt(prompt_version),
         user_prompt="\n\n".join(sections),
@@ -213,4 +223,5 @@ def build_reasoning_prompt(
         node_to_alias=node_to_alias,
         target_node_ids=target_ids,
         text_only_node_ids=text_only_ids,
+        overflow_node_ids=overflow_ids,
     )

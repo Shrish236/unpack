@@ -120,5 +120,6 @@ export function makeLarge(base: AnalysisResponse): AnalysisResponse {
       turn: `T${5 + i * 2}`, kind: "edit", ts: "2026-11-20T09:00:00Z", label: `Edit ${n.path.split("/").pop()}: ${n.label}`, nodes: [n.id], reverted: false, exit_code: null, finding_id: null,
     })),
     reasons, findings, diff_hunks: {},
+    diff_files: [], flow: null, // the demo graph is synthetic: neither the base fixture's files nor its flow apply
   };
 }

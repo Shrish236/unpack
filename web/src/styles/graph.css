@@ -166,3 +166,7 @@
 .gp .cg-canvas { height: 640px; }
 .gp .gl-insp { max-height: 640px; }
 .cg-legend.react-flow__panel { max-width: calc(100% - 330px); border-radius: 16px; }
+
+/* reading flow: stages with their functions */
+.gl-stages { margin: 4px 0; padding-left: 18px; display: grid; gap: 10px; }
+.gl-stages .gl-order { margin: 4px 0 0; padding-left: 0; list-style: none; }

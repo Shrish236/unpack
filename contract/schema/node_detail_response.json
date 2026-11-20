@@ -53,6 +53,7 @@
       "type": "object"
     },
     "DiffHunk": {
+      "description": "A hunk as seen from one function. `id` points at the same hunk in `diff_files`.",
       "properties": {
         "start_line": {
           "title": "Start Line",
@@ -65,6 +66,18 @@
         "patch": {
           "title": "Patch",
           "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
         }
       },
       "required": [

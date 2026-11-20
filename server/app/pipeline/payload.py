@@ -21,6 +21,10 @@ class Hunk:
     new_start: int
     new_end: int
     patch: str
+    old_start: int = 0
+    old_end: int = 0
+    added: int = 0
+    removed: int = 0
 
 
 def parse_diff_hunks(diff: str) -> dict[str, list[Hunk]]:
@@ -29,13 +33,18 @@ def parse_diff_hunks(diff: str) -> dict[str, list[Hunk]]:
     current: str | None = None
     old_name: str | None = None
     hunk_lines: list[str] | None = None
-    header: tuple[int, int] | None = None
+    header: tuple[int, int, int, int] | None = None
 
     def flush() -> None:
         if current and hunk_lines is not None and header is not None:
-            start, count = header
+            start, count, old_start, old_count = header
             end = start + max(count, 1) - 1
-            result.setdefault(current, []).append(Hunk(start, end, "\n".join(hunk_lines)))
+            body = hunk_lines[1:]
+            added = sum(1 for ln in body if ln.startswith("+"))
+            removed = sum(1 for ln in body if ln.startswith("-"))
+            result.setdefault(current, []).append(Hunk(
+                start, end, "\n".join(hunk_lines), old_start, old_start + max(old_count, 1) - 1, added, removed,
+            ))
 
     for line in diff.splitlines():
         if line.startswith("diff --git "):
@@ -48,7 +57,8 @@ def parse_diff_hunks(diff: str) -> dict[str, list[Hunk]]:
             flush()
             new_start = int(match.group(3))
             new_count = int(match.group(4)) if match.group(4) is not None else 1
-            header = (new_start, new_count)
+            old_count = int(match.group(2)) if match.group(2) is not None else 1
+            header = (new_start, new_count, int(match.group(1)), old_count)
             hunk_lines = [line]
         elif hunk_lines is not None:
             hunk_lines.append(line)  # inside a hunk, "+++" and "---" are content

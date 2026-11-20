@@ -23,22 +23,24 @@ class Settings(BaseSettings):
 
     # Reasoning (LLM) is a placeholder in this build. Gemini settings are kept for later.
     REASONING_ENABLED: bool = False
+    METRICS_MIN_SESSIONS: int = 1  # measured sessions needed before a dashboard section shows measured numbers
     DASHBOARD_TEAM_ID: str = "payments"  # measured sessions are shown under this team until a team mapping exists
     CANDIDATE_MIN_SESSIONS: int = 2  # a repeated override becomes a policy candidate at this many sessions
     GEMINI_BACKEND: str = "ai_studio"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_PRIMARY: str = "gemini-3.5-flash"
-    GEMINI_MODEL_FALLBACK: str = "gemini-3.7-flash"
-    GEMINI_MODEL_REPAIR: str = "gemini-3.5-flash"
+    GEMINI_MODEL_PRIMARY: str = "gemini-3.1-flash-lite"
+    GEMINI_MODEL_FALLBACK: str = "gemini-3.5-flash-lite,gemini-3.6-flash"  # comma separated, tried in order
+    GEMINI_MODEL_REPAIR: str = "gemini-3.1-flash-lite"
     GEMINI_TIMEOUT_S: int = 120
     GEMINI_CONCURRENCY: int = 2
+    GEMINI_RETRY_BACKOFF_S: float = 1.0  # first wait between tries; doubles each time; 0 turns it off
     GEMINI_MAX_INPUT_TOKENS: int = 200000
     GEMINI_MAX_OUTPUT_TOKENS: int = 16384
     GEMINI_DAILY_TOKEN_BUDGET_PER_REPO: int = 5000000
-    PROMPT_VERSION: int = 2
+    PROMPT_VERSION: int = 3
     GRAPH_CONTEXT_ENABLED: bool = True  # put callers, callees and test reach of changed functions in the prompts
-    LLM_GRAPH_TOOLS: bool = False  # let the model look things up in the code graph before it answers (extra calls)
-    GRAPH_TOOLS_MAX_CALLS: int = 24
+    LLM_GRAPH_TOOLS: bool = True  # let the model look things up in the code graph before it answers (1-3 extra calls)
+    GRAPH_TOOLS_MAX_CALLS: int = 6
 
     # GitHub App and OAuth
     GITHUB_API_URL: str = "https://api.github.com"

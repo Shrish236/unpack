@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 
 
+from ..config import settings
 from ..db import session_scope
 from ..models import Analysis, Decision, FunctionReason, SessionSignals, LLMCall, Push, Render, Repo, ReviewFinding, Session
 from ..pipeline.rollup import rollup_measured
@@ -153,6 +154,8 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
         analysis.reading_order = outcome.reading_order
         analysis.impact = outcome.impact
         analysis.diff_hunks = outcome.diff_hunks
+        analysis.diff_files = outcome.diff_files
+        analysis.flow = outcome.flow
         analysis.timeline = timeline
         analysis.llm_model = outcome.llm_model
         analysis.rejected_count = outcome.rejected_count
@@ -167,23 +170,8 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
             ))
         if outcome.signals:
             _add_governance(session, analysis_id, outcome.signals, outcome.decisions, outcome.highlights, outcome.steering)
-        for call in outcome.llm_calls:
-            session.add(LLMCall(
-                analysis_id=analysis_id,
-                purpose=call.purpose,
-                model=call.model,
-                attempt=call.attempt,
-                prompt_version=call.prompt_version,
-                input_tokens=call.input_tokens,
-                output_tokens=call.output_tokens,
-                thinking_tokens=call.thinking_tokens,
-                latency_ms=call.latency_ms,
-                status=call.status,
-                error=call.error,
-                finish_reason=call.finish_reason,
-                request_hash=call.request_hash,
-                response_text=call.response_text,
-            ))
+        analysis.prompt_version = settings.PROMPT_VERSION
+        _add_llm_calls(session, analysis_id, outcome.llm_calls)
         if data.get("session") is not None:
             existing = (await session.execute(select(Session).where(Session.push_id == snapshot["push_id"]))).scalar_one_or_none()
             if existing is None:
@@ -203,6 +191,16 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
             log.exception("dashboard rollup failed")
 
 
+def _add_llm_calls(session: Any, analysis_id: int, calls: list[Any]) -> None:
+    for call in calls:
+        session.add(LLMCall(
+            analysis_id=analysis_id, purpose=call.purpose, model=call.model, attempt=call.attempt,
+            prompt_version=call.prompt_version, input_tokens=call.input_tokens, output_tokens=call.output_tokens,
+            thinking_tokens=call.thinking_tokens, latency_ms=call.latency_ms, status=call.status, error=call.error,
+            finish_reason=call.finish_reason, request_hash=call.request_hash, response_text=call.response_text,
+        ))
+
+
 def _add_governance(session: Any, analysis_id: int, signals: dict[str, Any], decisions: list[dict[str, Any]],
                     highlights: list[dict[str, Any]], steering: dict[str, Any]) -> None:
     for d in decisions:
@@ -210,6 +208,7 @@ def _add_governance(session: Any, analysis_id: int, signals: dict[str, Any], dec
             analysis_id=analysis_id, turn=int(d["turn"][1:]), actor=d["actor"], kind=d["kind"], type=d["type"],
             proposal=d["proposal"], choice=d["choice"], statement=d.get("statement", ""), quote=d["quote"],
             rule_id=d.get("rule_id"), rule_followed=d.get("rule_followed"), source=d.get("source", "llm"),
+            node_ids=d.get("nodes", []), outcome=d.get("outcome", "ok"),
         ))
     session.add(SessionSignals(analysis_id=analysis_id, signals=signals, highlights=highlights, steering=steering))
 
@@ -224,6 +223,8 @@ async def _store_failure(analysis_id: int, push_id: int, repo_id: int, branch: s
         analysis.finished_at = _now()
         if gov is not None and gov.signals:  # the graph failed, but the session's metrics are still worth keeping
             _add_governance(session, analysis_id, gov.signals, gov.decisions, gov.highlights, gov.steering)
+        if gov is not None:  # tokens spent on a push that then failed still count against the daily budget
+            _add_llm_calls(session, analysis_id, gov.llm_calls)
         await _mark_publish_pending(session, repo_id, branch)
 
 

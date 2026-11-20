@@ -21,6 +21,7 @@ from unpack_graph.source import GitSource
 from ..config import settings
 from .changes import FuncChange, compute_changes
 from .edit_linker import LinkOutcome, link_session_to_changes
+from .diff_files import build_diff_files
 from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
 from .payload import PayloadSource, parse_diff_hunks
 from .agy_session import AGY_AGENT, parse_agy_transcript, reconstruct_edit_states
@@ -111,7 +112,10 @@ def analyze_blocking(
             unpack_session = parse_gemini_session(session_payload, known_paths=known_paths)
         link_outcome = link_session_to_changes(unpack_session, changes, base, head, files)
         sources = link_outcome.sources
-    build = build_graph_view(changes, base, head, parse_diff_hunks(diff_text), sources=sources)
+    hunks = parse_diff_hunks(diff_text)
+    build = build_graph_view(changes, base, head, hunks, sources=sources)
+    # The per-function hunks come from the file-level ones, so the two views cannot disagree.
+    build.diff_files, build.diff_hunks = build_diff_files(changed_files or [], hunks, build.graph["nodes"])
     try:
         validate_graph_view(build, settings.MAX_GRAPH_NODES, settings.MAX_GRAPH_EDGES)
     except InvalidGraphView as exc:

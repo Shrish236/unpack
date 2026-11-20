@@ -13,13 +13,13 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import session_scope
 from ..models import (
-    Analysis, Decision, GovCandidate, GovEvidence, GovSkillRule, PRAnalysis, PullRequest, Push, Repo,
+    Analysis, Decision, FunctionReason, GovCandidate, GovEvidence, GovSkillRule, PRAnalysis, PullRequest, Push, Repo,
     SessionSignals, Team, TeamPR,
 )
 
@@ -85,6 +85,11 @@ async def _load(db: AsyncSession) -> list[dict[str, Any]]:
     for analysis, _push, _repo, sig in rows:
         latest[(sig.signals or {}).get("session_key") or f"analysis-{analysis.id}"] = analysis.id
     keep = set(latest.values())
+    drivers: dict[int, Counter[str]] = defaultdict(Counter)
+    for aid, driver, n in (await db.execute(
+        select(FunctionReason.analysis_id, FunctionReason.driver, func.count()).group_by(FunctionReason.analysis_id, FunctionReason.driver)
+    )).all():
+        drivers[aid][driver] = n
     for analysis, push, repo, sig in rows:
         if analysis.id not in keep:
             continue
@@ -99,6 +104,8 @@ async def _load(db: AsyncSession) -> list[dict[str, Any]]:
         out.append({
             "analysis": analysis, "push": push, "repo": repo, "signals": sig.signals or {}, "steering": sig.steering or {},
             "decisions": decisions, "pr": pr, "when": when,
+            "facts": analysis.facts or {}, "model": analysis.llm_model, "drivers": drivers[analysis.id],
+            "area": _area(analysis.graph_view, repo.name),
             "number": pr.number if pr else 90000 + analysis.id,
             "dev": "dev-" + hashlib.sha1(f"{repo.owner}/{repo.name}:{push.branch}".encode()).hexdigest()[:4],
             "session": "s-" + analysis.public_id[:4],
@@ -106,11 +113,21 @@ async def _load(db: AsyncSession) -> list[dict[str, Any]]:
     return out
 
 
+load_sessions = _load  # the same rows, for the metrics module and the dashboard routers
+
+
 async def rollup_measured() -> dict[str, int]:
     async with session_scope() as db:
         team = await db.get(Team, settings.DASHBOARD_TEAM_ID)
-        if team is None:  # the dashboard has not been seeded, so there is nothing to attach to
-            return {"skipped": 1}
+        if team is None:  # allow a clean (unseeded) DB to store measured rollups with zero sample rows
+            team = Team(
+                id=settings.DASHBOARD_TEAM_ID, name=settings.DASHBOARD_TEAM_ID.title(), position=0,
+                prs=0, prs_delta="0%", attempts=0.0, attempts_delta="0", overrules=0.0, thin=0, unsupported=0,
+                funnel_total=0, funnel_first=0, funnel_second_agent=0, funnel_second_thin=0,
+                funnel_third_agent=0, funnel_third_thin=0,
+            )
+            db.add(team)
+            await db.flush()
         # Open measured candidates are rebuilt each run. A candidate someone already approved or rejected is kept.
         open_ids = select(GovCandidate.id).where(GovCandidate.source == "measured", GovCandidate.status == "open")
         await db.execute(delete(GovEvidence).where(GovEvidence.candidate_id.in_(open_ids)))
@@ -125,14 +142,20 @@ async def rollup_measured() -> dict[str, int]:
         data = await _load(db)
         today_week = _monday(max((d["when"] for d in data), default=date.today()))
         weeks = [today_week - timedelta(weeks=7 - i) for i in range(8)]
+        used_numbers: set[int] = set()
+        sample_numbers = set((await db.execute(select(TeamPR.number).where(TeamPR.source == "sample"))).scalars())
 
         # ---- one team PR row per measured session
         for d in data:
             a, sig, decs = d["analysis"], d["signals"], d["decisions"]
             human = [x for x in decs if x.actor == "human"]
             title = (d["pr"].title if d["pr"] and d["pr"].title else (a.summary or "Agent session"))[:90]
+            # A real PR number that a sample row already uses would break the unique key. The row then takes a
+            # number from the analysis id, and its link (public_id) still goes to the right page.
+            number = d["number"] if d["number"] not in sample_numbers | used_numbers else 90000 + a.id
+            used_numbers.add(number)
             db.add(TeamPR(
-                number=d["number"], team_id=team.id, title=title, area=_area(a.graph_view, d["repo"].name),
+                number=number, public_id=a.public_id, team_id=team.id, title=title, area=d["area"],
                 week_start=_monday(d["when"]), agent=AGENT_LABEL.get(sig.get("agent", ""), sig.get("agent") or "Agent"),
                 agent_decisions=sum(1 for x in decs if x.actor == "agent"), human_decisions=len(human),
                 overrules=sum(1 for x in human if x.kind in OVERRIDE_KINDS), attempts=float(sig.get("attempts", 1)),
@@ -173,6 +196,7 @@ async def rollup_measured() -> dict[str, int]:
                     id=f"em{x.id}", candidate_id=cid, position=n, session=d["session"], pr=f"#{d['number']}",
                     team=team.name, dev=d["dev"], turn=x.turn, kind=x.kind, occurred_on=d["when"],
                     proposal=x.proposal, choice=x.choice, quote=x.quote, source="measured",
+                    public_id=d["analysis"].public_id,
                 ))
 
         # ---- steering rule adherence
@@ -184,19 +208,19 @@ async def rollup_measured() -> dict[str, int]:
                     r = rules[x.rule_id]
                     c = counts.setdefault(
                         (r["source"], r["text"]),
-                        {"followed": 0, "violated": 0, "trend": defaultdict(int), "pr": "", "turn": 0},
+                        {"followed": 0, "violated": 0, "trend": defaultdict(int), "pr": "", "turn": 0, "public_id": None},
                     )
                     if x.rule_followed:
                         c["followed"] += 1
                     else:
                         c["violated"] += 1
                         c["trend"][_monday(d["when"])] += 1
-                        c["pr"], c["turn"] = f"#{d['number']}", x.turn
+                        c["pr"], c["turn"], c["public_id"] = f"#{d['number']}", x.turn, d["analysis"].public_id
         for pos, ((source, text), c) in enumerate(sorted(counts.items(), key=lambda kv: -kv[1]["violated"])):
             db.add(GovSkillRule(
                 id="rm" + hashlib.sha1(text.encode()).hexdigest()[:8], position=100 + pos, text=text[:280], skill=source,
                 followed=c["followed"], violated=c["violated"], trend=[c["trend"].get(w, 0) for w in weeks],
-                latest_pr=c["pr"] or "-", latest_turn=c["turn"], source="measured",
+                latest_pr=c["pr"] or "-", latest_turn=c["turn"], source="measured", latest_public_id=c["public_id"],
             ))
         return {"sessions": len(data), "candidates": n_candidates, "rules": len(counts)}
 

@@ -37,6 +37,8 @@ os.environ["DATA_DIR"] = f"/tmp/unpack-test-data-{_WORKER}"
 # Forced: the repo .env sets ANALYSIS_PROCESSES=2, and spawned analysis processes do not see the
 # per-test DATA_DIR monkeypatch, so their graph cache writes never reach the test that reads it.
 os.environ["ANALYSIS_PROCESSES"] = "0"
+# No waiting between LLM retries in tests.
+os.environ["GEMINI_RETRY_BACKOFF_S"] = "0"
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
@@ -98,6 +100,16 @@ class Origin:
 
     def push_head_to_origin(self) -> None:
         git(self.work, "push", "-q", str(self.bare), "HEAD:refs/heads/main")
+
+
+@pytest.fixture(autouse=True)
+def _no_model_cooldowns():
+    """A model that hit its quota in one test must not be skipped in the next."""
+    from server.app.llm.client import reset_cooldowns
+
+    reset_cooldowns()
+    yield
+    reset_cooldowns()
 
 
 @pytest.fixture(autouse=True)

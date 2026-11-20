@@ -41,7 +41,7 @@ function EvidenceCard({ e }: { e: GovEvidence }) {
     <div className="gv-ev">
       <div className="gv-ev-h">
         <span className="chip human">{KIND[e.kind]}</span>
-        <a href="#/pr">PR {e.pr}</a><span>{e.session}</span><span>T{e.turn}</span><span>{e.team}</span><span>{e.dev}</span>
+        <a href={e.public_id ? `#/pr/${e.public_id}` : "#/pr"}>PR {e.pr}</a><span>{e.session}</span><span>T{e.turn}</span><span>{e.team}</span><span>{e.dev}</span>
         <span className="gv-when">{shortDay(e.when)}</span>
       </div>
       <div className="gv-pair">
@@ -325,7 +325,7 @@ function GovernanceView({ g }: { g: GovernanceState }) {
                       <td className="gv-nums">{r.followed}</td><td className="gv-nums">{r.violated}</td>
                       <td><div className="gv-pair-bars"><span className="gv-nums">{pct}%</span><span className={`gv-bar ad ${pct < 75 ? "bad" : pct < 90 ? "low" : ""}`}><i style={{ width: `${pct}%` }} /></span></div></td>
                       <td><Spark v={r.trend} /></td>
-                      <td><a className="gv-link" href="#/pr">PR {r.latest_pr} · T{r.latest_turn}</a></td>
+                      <td><a className="gv-link" href={r.latest_public_id ? `#/pr/${r.latest_public_id}` : "#/pr"}>PR {r.latest_pr} · T{r.latest_turn}</a></td>
                     </tr>
                   );
                 })}

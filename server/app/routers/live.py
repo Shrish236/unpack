@@ -27,7 +27,9 @@ from ..schemas.api import (
     AnalysisResponse,
     AnalysisStats,
     Banner,
+    DiffFile,
     DiffHunk,
+    Flow,
     GovDecision,
     GovFlag,
     GovHighlight,
@@ -95,7 +97,7 @@ async def _pr_for_analysis(db: AsyncSession, analysis: Analysis, push: Push) -> 
                            state="merged" if pr.state == "merged" else ("closed" if pr.state == "closed" else "open"))
 
 
-async def _governance(db: AsyncSession, analysis_id: int) -> Governance:
+async def _governance(db: AsyncSession, analysis_id: int, graph_nodes: list[dict[str, Any]] | None = None) -> Governance:
     sig = await db.get(SessionSignals, analysis_id)
     if sig is None:
         return Governance()
@@ -105,13 +107,18 @@ async def _governance(db: AsyncSession, analysis_id: int) -> Governance:
     decisions = [
         GovDecision(turn=f"T{d.turn}", actor=d.actor, kind=d.kind, type=d.type, proposal=d.proposal, choice=d.choice,
                     statement=d.statement, quote=d.quote, rule=rules.get(d.rule_id), rule_followed=d.rule_followed,
-                    source=d.source if d.source in ("parsed", "llm") else "llm")
+                    source=d.source if d.source in ("parsed", "llm") else "llm",
+                    nodes=list(d.node_ids or []), outcome=d.outcome or "ok")
         for d in rows
     ]
+    changed_by_path: dict[str, list[str]] = {}
+    for n in graph_nodes or []:
+        if n.get("layer") in ("changed", "ghost") and n.get("kind") in ("function", "method"):
+            changed_by_path.setdefault(n["path"], []).append(n["id"])
     return Governance(
         decisions=decisions,
-        highlights=[GovHighlight(**h) for h in (sig.highlights or [])],
-        flags=[GovFlag(**f) for f in signals.get("flags", [])],
+        highlights=[GovHighlight(**{k: v for k, v in h.items() if k in GovHighlight.model_fields}) for h in (sig.highlights or [])],
+        flags=[GovFlag(**{**f, "nodes": changed_by_path.get(f.get("path", ""), [])}) for f in signals.get("flags", [])],
         tool_stats=signals.get("tool_stats", {}),
         attempts=int(signals.get("attempts", 1)),
         human_interventions=sum(1 for d in rows if d.actor == "human"),
@@ -149,7 +156,7 @@ async def _build_analysis(db: AsyncSession, analysis: Analysis, push: Push, repo
         error_code=analysis.error_code,
         error_message=analysis.error_message,
     )
-    governance = await _governance(db, analysis.id)
+    governance = await _governance(db, analysis.id, (analysis.graph_view or {}).get("nodes"))
     return AnalysisResponse(
         governance=governance,
         analysis=metadata,
@@ -165,6 +172,8 @@ async def _build_analysis(db: AsyncSession, analysis: Analysis, push: Push, repo
         reasons=reasons,
         findings=findings,
         diff_hunks={k: [DiffHunk(**h) for h in v] for k, v in (analysis.diff_hunks or {}).items()},
+        diff_files=[DiffFile(**f) for f in (analysis.diff_files or [])],
+        flow=Flow(**analysis.flow) if analysis.flow else None,
     )
 
 
