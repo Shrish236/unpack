@@ -52,6 +52,8 @@ export interface ActivePolicy {
   before: number; // overrides per 100 sessions before the policy
   after: number | null;
   match: string;
+  target?: number; // overrides per 100 sessions the policy is meant to reach
+  review?: string; // date the owner checks whether it worked
   recurrence?: { sessions: number; teams: number; developers: number; evidence: Evidence[] };
 }
 
@@ -197,3 +199,103 @@ export const history: HistoryItem[] = [
   { id: "h5", statement: "Prefer dataclasses over plain dicts.", outcome: "rejected", role: "Tech lead, Identity", when: "2026-09-03", why: "Two developers on one team. Revisit if it spreads." },
   { id: "h6", statement: "Use the repo's HTTP client. No new HTTP libraries.", outcome: "approved", role: "Tech lead, Payments", when: "2026-08-21", why: "7 sessions across 3 teams. First policy to reach a hard gate." },
 ];
+
+// ---- Decision brief ----------------------------------------------------------------------------
+// What a reviewer needs to decide on a candidate, beyond the quotes. Illustrative; shaped so a server
+// endpoint can return it later. Window: last 8 weeks for sessions, last 90 days for the PR replay.
+
+export interface TeamSplit { team: string; developers: number; overruled: number; accepted: number } // accepted = same proposal, nobody objected
+export interface Reach { repos: number; teams: number; scanned: number; flagged: number; confirmed: number } // PR replay over 90 days
+export interface Conflict { id: string; level: "overlap" | "conflict"; note: string }
+export interface Recommendation { action: "approve" | "trial" | "wait"; enforcement: Enforcement; reason: string }
+export interface Brief {
+  proposed: number; // sessions in which the agent made this kind of proposal
+  teams: TeamSplit[];
+  areas: { area: string; n: number }[];
+  rework: { turns: number; hours: number; prs: number }; // work undone or redone after the override
+  reach: Record<Scope, Reach>;
+  conflicts: Conflict[];
+  recommend: Recommendation;
+}
+
+export const briefs: Record<string, Brief> = {
+  c1: {
+    proposed: 19,
+    teams: [
+      { team: "Payments", developers: 3, overruled: 5, accepted: 1 },
+      { team: "Identity", developers: 2, overruled: 3, accepted: 3 },
+      { team: "Search", developers: 2, overruled: 3, accepted: 4 },
+    ],
+    areas: [{ area: "pyproject.toml / requirements.txt", n: 6 }, { area: "package.json", n: 3 }, { area: "go.mod", n: 2 }],
+    rework: { turns: 41, hours: 3.1, prs: 6 },
+    reach: {
+      repo: { repos: 1, teams: 1, scanned: 31, flagged: 6, confirmed: 6 },
+      team: { repos: 4, teams: 1, scanned: 52, flagged: 9, confirmed: 8 },
+      org: { repos: 14, teams: 6, scanned: 168, flagged: 21, confirmed: 18 },
+    },
+    conflicts: [{ id: "P-04", level: "overlap", note: "P-04 already blocks new HTTP libraries in payments-service. This rule generalises it to every dependency and every repo." }],
+    recommend: { action: "approve", enforcement: "check", reason: "Overruled in most sessions across all three teams, and the check would have been right 86% of the time. A hard gate would have blocked 3 PRs wrongly." },
+  },
+  c2: {
+    proposed: 14,
+    teams: [
+      { team: "Payments", developers: 2, overruled: 3, accepted: 1 },
+      { team: "Identity", developers: 2, overruled: 3, accepted: 2 },
+      { team: "Search", developers: 1, overruled: 2, accepted: 3 },
+    ],
+    areas: [{ area: "tests/ (skip or xfail markers)", n: 5 }, { area: "tests/fixtures", n: 3 }],
+    rework: { turns: 29, hours: 2.4, prs: 4 },
+    reach: {
+      repo: { repos: 1, teams: 1, scanned: 31, flagged: 3, confirmed: 3 },
+      team: { repos: 4, teams: 1, scanned: 52, flagged: 4, confirmed: 4 },
+      org: { repos: 14, teams: 6, scanned: 168, flagged: 12, confirmed: 11 },
+    },
+    conflicts: [{ id: "P-07", level: "conflict", note: "P-07 already gates skipping a test without a linked issue, and 9 sessions overrode it because a placeholder issue satisfies it. This rule is stricter. Approving it should replace P-07, not sit beside it." }],
+    recommend: { action: "approve", enforcement: "gate", reason: "The check would have been right 92% of the time, and the existing gate (P-07) is being worked around. Replacing it closes the loophole." },
+  },
+  c3: {
+    proposed: 12,
+    teams: [
+      { team: "Payments", developers: 2, overruled: 2, accepted: 3 },
+      { team: "Search", developers: 1, overruled: 1, accepted: 6 },
+    ],
+    areas: [{ area: "Client / AsyncClient", n: 2 }, { area: "Session / AsyncSession", n: 1 }],
+    rework: { turns: 9, hours: 0.7, prs: 2 },
+    reach: {
+      repo: { repos: 1, teams: 1, scanned: 31, flagged: 5, confirmed: 3 },
+      team: { repos: 4, teams: 1, scanned: 52, flagged: 8, confirmed: 5 },
+      org: { repos: 14, teams: 6, scanned: 168, flagged: 15, confirmed: 9 },
+    },
+    conflicts: [],
+    recommend: { action: "trial", enforcement: "advice", reason: "Only a quarter of proposals were overruled and the match is wrong 4 times in 10, so a check would be noisy. Start as advice and see whether overrides fall." },
+  },
+  c4: {
+    proposed: 9,
+    teams: [
+      { team: "Payments", developers: 1, overruled: 2, accepted: 2 },
+      { team: "Search", developers: 1, overruled: 2, accepted: 3 },
+    ],
+    areas: [{ area: "Client.send / AsyncClient.send", n: 3 }, { area: "transport/", n: 1 }],
+    rework: { turns: 14, hours: 1.1, prs: 3 },
+    reach: {
+      repo: { repos: 1, teams: 1, scanned: 31, flagged: 3, confirmed: 3 },
+      team: { repos: 4, teams: 1, scanned: 52, flagged: 4, confirmed: 3 },
+      org: { repos: 14, teams: 6, scanned: 168, flagged: 7, confirmed: 6 },
+    },
+    conflicts: [{ id: "r5", level: "overlap", note: "The skill rule \"Retry at the lowest transport layer\" covers retries only. This rule extends the same idea to timeouts and headers." }],
+    recommend: { action: "trial", enforcement: "advice", reason: "Placement is a judgement call, so a mechanical check will miss cases. Two developers agree. Publish as advice and review in 30 days." },
+  },
+  c5: {
+    proposed: 6,
+    teams: [{ team: "Identity", developers: 1, overruled: 2, accepted: 4 }],
+    areas: [{ area: "auth/ (renames)", n: 2 }],
+    rework: { turns: 4, hours: 0.3, prs: 1 },
+    reach: {
+      repo: { repos: 1, teams: 1, scanned: 31, flagged: 5, confirmed: 3 },
+      team: { repos: 4, teams: 1, scanned: 52, flagged: 5, confirmed: 3 },
+      org: { repos: 14, teams: 6, scanned: 168, flagged: 5, confirmed: 3 },
+    },
+    conflicts: [],
+    recommend: { action: "wait", enforcement: "advice", reason: "One developer on one team. This is a preference until a second developer makes the same correction." },
+  },
+};
