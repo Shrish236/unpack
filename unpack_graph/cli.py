@@ -8,7 +8,8 @@ Commands:
       --list prints one line per definition.
 
   build <repo> [--rev REV]
-      Passes 1 and 2: the call graph with a confidence tier on every edge.
+      Passes 1 and 2 and test reachability: the call graph with a confidence tier on every
+      edge, and for each production function a label: direct, reached, reached_uncertain or none.
 """
 
 from __future__ import annotations
@@ -117,6 +118,8 @@ def graph_summary(g) -> dict:
         "imports": len(g.imports),
         "sites": dict(sites),
         "unresolved_functions": len(g.unresolved),
+        "test_reach_labels": dict(Counter(r.label for f, r in g.reach.items()
+                                          if not g.mods[g.funcs[f].path].is_test)),
         "partial_files": sorted(m.path for m in g.mods.values() if m.partial),
         "timing_s": {k: round(v, 3) for k, v in g.timing.items()},
     }
