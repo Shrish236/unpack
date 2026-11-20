@@ -20,7 +20,7 @@ from ..deps import require_repo_access, viewer
 from ..errors import ApiError
 from ..jobs.handlers import ensure_head_graph, read_payload
 from ..models import Analysis, FunctionReason, PRAnalysis, PullRequest, Push, Repo, ReviewFinding, Session, User
-from ..pipeline.graph_view import _nearest_tested
+from ..pipeline.graph_view import _callees, _callers, _nearest_tested
 from ..pipeline.repos import data_dir, repo_dir
 from ..schemas.api import (
     AnalysisFacts,
@@ -192,8 +192,8 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
     graph_nodes = {n["id"]: n for n in (analysis.graph_view or {}).get("nodes", [])}
     in_graph = set(graph_nodes)
 
-    func = head.functions.get(node_id)
-    module_path = node_id if node_id in head.modules else None
+    func = head.funcs.get(node_id)
+    module_path = node_id if node_id in head.mods else None
     cls = next((c for c in head.classes.values() if c.id == node_id), None)
     if func is None and module_path is None and cls is None:
         raise ApiError(404, "not_found", "no such node")
@@ -212,7 +212,7 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
             class_id = f"{func.path}::{func.qualname.rsplit('.', 1)[0]}"
             cinfo = next((c for c in head.classes.values() if c.id == class_id), None)
             node["class"] = {"id": class_id, "bases": list(cinfo.bases_raw) if cinfo else []}
-        reach = head.reach_info.get(node_id)
+        reach = head.reach.get(node_id)
         if reach and reach.label in ("direct", "reached", "reached_uncertain"):
             tests = {"label": reach.label, "count": reach.count,
                      "paths": [list(reach.path)] if reach.path else [], "nearest_tested": None}
@@ -220,18 +220,18 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
             nearest = _nearest_tested(head, node_id)
             near = None
             if nearest:
-                nr = head.reach_info.get(nearest)
+                nr = head.reach.get(nearest)
                 near = {"id": nearest, "count": nr.count if nr else 0, "path": list(nr.path) if nr else []}
             tests = {"label": "none", "count": 0, "paths": [], "nearest_tested": near}
         callers = [
-            {"id": e.source, "tier": e.tier or "EXTRACTED", "via": e.via,
-             "line": e.lines[0] if e.lines else None, "in_graph": e.source in in_graph}
-            for e in head.calls_by_target.get(node_id, [])[:100] if e.source in head.functions
+            {"id": e.src, "tier": e.tier, "via": e.via,
+             "line": e.lines[0] if e.lines else None, "in_graph": e.src in in_graph}
+            for e in _callers(head, node_id)[:100]
         ]
         callees = [
-            {"id": e.target, "tier": e.tier or "EXTRACTED", "via": e.via,
-             "line": e.lines[0] if e.lines else None, "in_graph": e.target in in_graph}
-            for e in head.calls_by_source.get(node_id, [])[:100] if e.target in head.functions
+            {"id": e.dst, "tier": e.tier, "via": e.via,
+             "line": e.lines[0] if e.lines else None, "in_graph": e.dst in in_graph}
+            for e in _callees(head, node_id)[:100]
         ]
     elif cls is not None:
         path, start, end = cls.path, cls.start, cls.end
@@ -242,7 +242,7 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
         tests = {"label": "none", "count": 0, "paths": [], "nearest_tested": None}
         callers, callees = [], []
     else:
-        mod = head.modules[module_path]
+        mod = head.mods[module_path]
         path, start, end = module_path, 1, max(mod.nlines, 1)
         node = {"id": module_path, "kind": "file", "path": module_path, "start_line": 1,
                 "end_line": end, "signature": "", "decorators": [], "is_async": False,
@@ -252,13 +252,13 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
 
     module_name = path[:-3].replace("/", ".") if path.endswith(".py") else path
     file_imports = []
-    mod = head.modules.get(path)
+    mod = head.mods.get(path)
     if mod is not None:
         for imp in mod.imports:
             names = [n for n, _ in imp.names] if imp.names else []
             file_imports.append({"module": imp.module, "names": names, "context": imp.context})
     file_imported_by = sorted({
-        p for p, m in head.modules.items()
+        p for p, m in head.mods.items()
         if p != path and any(i.module == module_name or i.module.startswith(module_name + ".") for i in m.imports)
     })
 
@@ -319,7 +319,7 @@ def _map_rows(head: Any) -> tuple[list[list[Any]], dict[str, int]]:
     rows: list[list[Any]] = []
     folders: set[str] = set()
     counts = {"folders": 0, "files": 0, "classes": 0, "functions": 0, "tests": 0}
-    for path, mod in sorted(head.modules.items()):
+    for path, mod in sorted(head.mods.items()):
         parts = path.split("/")[:-1]
         for i in range(1, len(parts) + 1):
             folders.add("/".join(parts[:i]))
@@ -327,18 +327,18 @@ def _map_rows(head: Any) -> tuple[list[list[Any]], dict[str, int]]:
         parent = folder.rsplit("/", 1)[0] if "/" in folder else None
         rows.append([folder, "folder", parent, 0, 0, False])
         counts["folders"] += 1
-    for path, mod in sorted(head.modules.items()):
+    for path, mod in sorted(head.mods.items()):
         parent = path.rsplit("/", 1)[0] if "/" in path else None
         rows.append([path, "file", parent, mod.nlines, 0, mod.is_test])
         counts["files"] += 1
     for cls in sorted(head.classes.values(), key=lambda c: c.id):
         rows.append([cls.id, "class", cls.path, max(cls.end - cls.start + 1, 0), 0, False])
         counts["classes"] += 1
-    for fid, func in sorted(head.functions.items()):
+    for fid, func in sorted(head.funcs.items()):
         parent = f"{func.path}::{func.qualname.rsplit('.', 1)[0]}" if func.is_method and "." in func.qualname else func.path
         kind = "test" if func.is_test else ("method" if func.is_method else "function")
         rows.append([fid, kind, parent, max(func.end - func.start + 1, 0),
-                     len(head.calls_by_target.get(fid, [])), func.is_test])
+                     len(_callers(head, fid)), func.is_test])
         if func.is_test:
             counts["tests"] += 1
         else:
@@ -386,14 +386,14 @@ async def node_edges(owner: str, repo: str, node_id: str, sha: str, request: Req
     token = await _repo_token(repo_row)
     remote = repo_row.remote_url or f"https://github.com/{repo_row.owner}/{repo_row.name}.git"
     head = await ensure_head_graph(repo_row.id, repo_row.owner, repo_row.name, remote, token, sha)
-    if node_id not in head.functions:
+    if node_id not in head.funcs:
         raise ApiError(404, "not_found", "no such node")
-    callers = head.calls_by_target.get(node_id, [])
-    callees = head.calls_by_source.get(node_id, [])
+    callers = _callers(head, node_id)
+    callees = _callees(head, node_id)
     return {
         "id": node_id,
-        "callers": [{"id": e.source, "tier": e.tier or "EXTRACTED"} for e in callers[:200]],
-        "callees": [{"id": e.target, "tier": e.tier or "EXTRACTED"} for e in callees[:200]],
+        "callers": [{"id": e.src, "tier": e.tier} for e in callers[:200]],
+        "callees": [{"id": e.dst, "tier": e.tier} for e in callees[:200]],
         "callers_total": len(callers),
         "callees_total": len(callees),
     }

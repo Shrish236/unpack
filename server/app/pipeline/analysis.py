@@ -6,12 +6,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from unpack_graph.diff import detect_changes
 from unpack_graph.graph import build_graph
 from unpack_graph.source import GitSource
 
 from ..config import settings
 from ..llm.placeholder import generate_reasons
+from .changes import compute_changes
 from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
 from .payload import PayloadSource, build_overlay, changed_python_files, needs_head_fetch, parse_diff_hunks
 from .repos import CommitUnavailable, ensure_commit, ensure_mirror, save_cached_graph
@@ -67,19 +67,17 @@ def _banner(payload: dict[str, Any], changed_count: int) -> dict[str, str] | Non
 
 
 def _blocking_analysis(
-    mirror_path: Any,
-    base_sha: str,
-    head_sha: str,
     head_source: Any,
     base_source: GitSource,
     diff_text: str,
     repo_id: int,
+    head_sha: str,
 ) -> tuple[GraphBuild, Any]:
     base_graph = build_graph(base_source, reach=False)
     head_graph = build_graph(head_source, reach=True)
-    cs = detect_changes(mirror_path, base_sha, head_sha, base_graph=base_graph, head_graph=head_graph)
+    changes = compute_changes(base_graph, head_graph)
     hunks = parse_diff_hunks(diff_text)
-    build = build_graph_view(cs, base_graph, head_graph, hunks)
+    build = build_graph_view(changes, base_graph, head_graph, hunks)
     try:
         validate_graph_view(build, settings.MAX_GRAPH_NODES, settings.MAX_GRAPH_EDGES)
     except InvalidGraphView as exc:
@@ -126,8 +124,7 @@ async def analyze_push(
 
     try:
         build, head_graph = await asyncio.to_thread(
-            _blocking_analysis, mirror, base_sha, head_sha, head_source, base_source,
-            payload.get("diff", ""), repo_id,
+            _blocking_analysis, head_source, base_source, payload.get("diff", ""), repo_id, head_sha,
         )
     except AnalysisFailed:
         raise

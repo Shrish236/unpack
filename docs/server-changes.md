@@ -189,6 +189,7 @@ Built to the server design (latest), with the Gemini and reasoning code left out
 **Deviations from the design, on purpose:**
 - **Neo4j is not used.** The code graph is built in-process by `unpack_graph`, pickled per commit under `DATA_DIR/graphs`, and reused by the map and node endpoints. Neo4j was removed from `docker-compose.yml`. Re-add it when the map or query load needs it.
 - **Source attribution is `outside_session` for every change.** Without session parsing that is the honest answer, and the banner says so.
+- **Graph API.** The server is written against the graph stack (`graph/09-docs`). Change detection is done server-side (`pipeline/changes.py`) because the library's `detect_changes` needs the head commit in git, and the head is not on GitHub yet when a push arrives. Renames show as a deleted and an added function.
 - **`commit_message` is the first line of the commit message stored on the push.** The hook needs to send commits for this to be populated.
 
 **Verified here:**

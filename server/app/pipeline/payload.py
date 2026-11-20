@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from unpack_graph.source import IGNORE_DIRS, Source
+from unpack_graph.source import IGNORE_DIRS
 
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
@@ -71,10 +71,10 @@ def is_python_path(path: str) -> bool:
                                             for part in path.split("/"))
 
 
-class PayloadSource(Source):
-    """Base commit plus the head contents of changed files, as one Source."""
+class PayloadSource:
+    """Base commit plus the head contents of changed files: a source for build_graph (list_files/read)."""
 
-    def __init__(self, base: Source, overlay: dict[str, bytes], removed: set[str]) -> None:
+    def __init__(self, base, overlay: dict[str, bytes], removed: set[str]) -> None:
         self.base = base
         self.overlay = overlay
         self.removed = removed
