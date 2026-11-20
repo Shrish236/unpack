@@ -10,6 +10,14 @@ Commands:
   build <repo> [--rev REV]
       Passes 1 and 2 and test reachability: the call graph with a confidence tier on every
       edge, and for each production function a label: direct, reached, reached_uncertain or none.
+
+  changed <repo> <base> <head> [--json]
+      Functions added, deleted, modified (text_only, signature, functional), renamed or moved
+      between two git revisions. Built from git objects; the working tree is not touched.
+
+  region <repo> <base> <head> [--cap N] [--tests-per-node N] [--out FILE]
+      GraphView JSON for the change: the changed functions, their one-hop neighbours, parent
+      classes, the tests that reach each changed function, and ghosts for deleted functions.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ import ast
 import json
 import sys
 from collections import Counter
+from pathlib import Path
 
 from .extract import extract_file, module_name_for
 from .graph import build_graph
@@ -131,6 +140,43 @@ def cmd_build(args) -> int:
     return 0
 
 
+def cmd_changed(args) -> int:
+    from .diff import detect_changes
+
+    cs = detect_changes(args.repo, args.base, args.head)
+    if args.json:
+        print(json.dumps(cs.to_dict(), indent=2))
+        return 0
+    print(f"{args.base}..{args.head}: {len(cs.functions)} changed functions in {len(cs.files)} files")
+    for c in cs.functions:
+        flags = ",".join(c.flags) or "-"
+        extra = f"  (from {c.old_id})" if c.old_id else ""
+        extra += f"  still called by: {', '.join(c.still_called_by)}" if c.still_called_by else ""
+        ranges = c.head_lines or c.base_lines
+        diff = ",".join(f"{a}-{b}" if a != b else str(a) for a, b in ranges)
+        print(f"  {c.kind:<9} [{flags}] {c.id}  L{c.start}-{c.end} diff:{diff}{extra}")
+    for m in cs.modules:
+        if m.get("module_level_changed"):
+            print(f"  module-level code changed: {m['path']}")
+    for k in cs.classes:
+        print(f"  class {k['kind']}: {k['id']}")
+    return 0
+
+
+def cmd_region(args) -> int:
+    from .diff import detect_changes
+    from .region import build_region
+
+    cs = detect_changes(args.repo, args.base, args.head)
+    view = build_region(cs, args.cap, args.tests_per_node)
+    text = json.dumps(view, indent=2)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    else:
+        print(text)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="unpack-graph", description="Unpack code knowledge graph CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -146,6 +192,22 @@ def build_parser() -> argparse.ArgumentParser:
     bd.add_argument("repo", help="repository root (working tree)")
     bd.add_argument("--rev", default=None, help="read a git revision instead of the working tree")
     bd.set_defaults(func=cmd_build)
+
+    ch = sub.add_parser("changed", help="classify functions changed between two git revisions")
+    ch.add_argument("repo")
+    ch.add_argument("base")
+    ch.add_argument("head")
+    ch.add_argument("--json", action="store_true", help="print the full change set as JSON")
+    ch.set_defaults(func=cmd_changed)
+
+    rg = sub.add_parser("region", help="GraphView JSON around a change (schemas/graphview.schema.json)")
+    rg.add_argument("repo")
+    rg.add_argument("base")
+    rg.add_argument("head")
+    rg.add_argument("--cap", type=int, default=15, help="max callers and max callees kept per function")
+    rg.add_argument("--tests-per-node", type=int, default=5, help="max tests listed per changed function")
+    rg.add_argument("--out", default=None, help="write to a file instead of stdout")
+    rg.set_defaults(func=cmd_region)
     return parser
 
 
