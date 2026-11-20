@@ -2,6 +2,13 @@ import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import Home from "./pages/Home";
 import HomeV1 from "./pages/HomeV1";
+import HomeA from "./pages/HomeA";
+import HomeB from "./pages/HomeB";
+import Story1 from "./pages/Story1";
+import Story2 from "./pages/Story2";
+import Story3 from "./pages/Story3";
+import Story4 from "./pages/Story4";
+import { HomeDesign1, HomeDesign2, HomeDesign3, HomeDesign4, HomeDesign5 } from "./pages/HomeDesigns";
 import PrPage from "./pages/PrPage";
 import Exec from "./pages/Exec";
 import Team from "./pages/Team";
@@ -21,14 +28,24 @@ function useTheme(): [Theme, () => void] {
   return [theme, toggle];
 }
 
-// Hash routes only: the server serves this bundle at /a/*, and these are mocks.
+// Supports hash routes (#/home-design-1) as well as direct pathnames (/home-design-1, /hoeme-design-1).
 function useRoute(): string {
-  const read = () => (location.hash.replace(/^#/, "") || "/");
+  const read = () => {
+    const hash = location.hash.replace(/^#/, "");
+    if (hash) return hash;
+    const p = location.pathname.replace(/\/+$/, "");
+    if (/^\/(home|hoeme)-design-[1-5]$/.test(p)) return p;
+    return "/";
+  };
   const [route, setRoute] = useState(read);
   useEffect(() => {
     const on = () => { setRoute(read()); window.scrollTo(0, 0); };
     window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
+    window.addEventListener("popstate", on);
+    return () => {
+      window.removeEventListener("hashchange", on);
+      window.removeEventListener("popstate", on);
+    };
   }, []);
   return route;
 }
@@ -43,9 +60,31 @@ export function Mark({ size = 26 }: { size?: number }) {
   );
 }
 
+function renderRoute(route: string) {
+  const norm = route.replace(/^\/hoeme-design-/, "/home-design-");
+  if (norm === "/home-design-1") return <HomeDesign1 />;
+  if (norm === "/home-design-2") return <HomeDesign2 />;
+  if (norm === "/home-design-3") return <HomeDesign3 />;
+  if (norm === "/home-design-4") return <HomeDesign4 />;
+  if (norm === "/home-design-5") return <HomeDesign5 />;
+  if (route === "/home-v1") return <HomeV1 />;
+  if (route === "/home-a") return <HomeA />;
+  if (route === "/home-b") return <HomeB />;
+  if (route === "/story-1") return <Story1 />;
+  if (route === "/story-2") return <Story2 />;
+  if (route === "/story-3") return <Story3 />;
+  if (route === "/story-4") return <Story4 />;
+  if (route.startsWith("/pr")) return <PrPage id={route.split("/")[2]} />;
+  if (route === "/exec") return <Exec />;
+  if (route === "/team") return <Team />;
+  if (route === "/govern") return <Govern />;
+  return <Home />;
+}
+
 export default function App() {
   const route = useRoute();
   const [theme, toggle] = useTheme();
+  const isHomeFamily = route === "/" || /^\/(home|hoeme)-design-[1-5]$/.test(route);
 
   useEffect(() => { document.body.dataset.ready = "true"; }, []); // static-render signal used by the server
 
@@ -55,7 +94,7 @@ export default function App() {
         <div className="wrap nav-in">
           <a className="brand" href="#/"><Mark />unpack</a>
           <nav className="nav-links" aria-label="Main">
-            <a href="#/" aria-current={route === "/" ? "page" : undefined}>Product</a>
+            <a href="#/" aria-current={isHomeFamily ? "page" : undefined}>Product</a>
             <a href="#/exec" aria-current={route === "/exec" ? "page" : undefined}>Executive</a>
             <a href="#/team" aria-current={route === "/team" ? "page" : undefined}>Managers</a>
             <a href="#/govern" aria-current={route === "/govern" ? "page" : undefined}>Governance</a>
@@ -69,7 +108,7 @@ export default function App() {
           </div>
         </div>
       </header>
-      {route === "/home-v1" ? <HomeV1 /> : route.startsWith("/pr") ? <PrPage id={route.split("/")[2]} /> : route === "/exec" ? <Exec /> : route === "/team" ? <Team /> : route === "/govern" ? <Govern /> : <Home />}
+      {renderRoute(route)}
     </>
   );
 }
