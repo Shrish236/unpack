@@ -367,6 +367,27 @@ class Walker:
     def truthy(self, node, ctx: Ctx):
         self.implicit("bool", node, ctx, ("__bool__", "__len__"), True)
 
+    def record_value_refs(self, node, ctx: Ctx):
+        """A name or attribute in a value position (assigned, returned, stored in a display) names an
+        object without calling it: a function there is referenced by the enclosing scope."""
+        if node is None:
+            return
+        t = node.type
+        if t in ("identifier", "attribute"):
+            sh = self.shape(node, ctx)
+            if sh.kind == "name":
+                ctx.scope.value_refs.append((node.start_point[0] + 1, node.start_point[1], sh))
+        elif t == "parenthesized_expression":
+            for c in node.named_children:
+                self.record_value_refs(c, ctx)
+        elif t in ("list", "tuple", "set"):
+            for c in node.named_children:
+                self.record_value_refs(c, ctx)
+        elif t == "dictionary":
+            for c in node.named_children:
+                if c.type == "pair":
+                    self.record_value_refs(c.child_by_field_name("value"), ctx)
+
     def _ret(self, node, ctx):
         f = ctx.func
         if f is None or ctx.kind != "func":
@@ -378,6 +399,8 @@ class Walker:
                         f.return_shapes.append(sh)
 
     def v_return_statement(self, node, ctx):
+        for c in node.named_children:
+            self.record_value_refs(c, ctx)
         self._ret(node, ctx)
         self.children(node, ctx)
 
@@ -742,6 +765,9 @@ class Walker:
             if not expr:
                 continue
             expr = expr[0]
+            if expr.type == "attribute" and self.txt(expr.child_by_field_name("attribute")) in (
+                    "setter", "getter", "deleter"):
+                continue            # `@prop.setter` returns the property: no call happens
             if expr.type == "call":
                 self.visit(expr, ctx)                      # the factory call and its arguments
                 factory = self.callsite(expr, ctx)
@@ -865,7 +891,16 @@ class Walker:
             return [("val", self.shape(node, ctx))]
         if t == "yield":
             return [("yield", None)]
-        if t in ("dictionary", "list", "tuple", "set"):
+        if t == "tuple":
+            # positional: a tuple display can be unpacked by position (`a, b = f()`)
+            elems = []
+            for c in node.named_children:
+                sh = self.shape(c, ctx) if c.type in ("identifier", "attribute") else None
+                elems.append(sh if sh is not None and sh.kind == "name" else None)
+            if any(e is not None for e in elems):
+                return [("val", Shape("tuple", elems=tuple(elems), raw=self.collapse(self.txt(node), 80)))]
+            return out
+        if t in ("dictionary", "list", "set"):
             elems = []
             for c in node.named_children:
                 v = c.child_by_field_name("value") if c.type == "pair" else c
@@ -920,6 +955,7 @@ class Walker:
     def v_assignment(self, node, ctx):
         left = node.child_by_field_name("left")
         right = node.child_by_field_name("right")
+        self.record_value_refs(right, ctx)
         typ = node.child_by_field_name("type")
         targets = [left]
         r = right
@@ -977,6 +1013,16 @@ class Walker:
                 self.sub_mode = "set"
                 self.visit(tgt, ctx)
                 self.sub_mode = "get"
+            elif tgt.type in ("pattern_list", "tuple_pattern") and r is not None and len(targets) == 1:
+                # `a, b = value`: each name is the element at its position in the value
+                for i, c in enumerate(tgt.named_children):
+                    if c.type == "identifier":
+                        name = self.txt(c)
+                        self.rebind(name, ctx)
+                        for k, sh in vals:
+                            if k == "val":
+                                ctx.scope.bindings.append(Binding(name, "unpack", sh, None, line, False, i))
+                self.bind_names(tgt, ctx)
             else:
                 self.bind_names(tgt, ctx)
         if r is not None:
@@ -1133,16 +1179,42 @@ class Walker:
 
 
 # ----------------------------------------------------------------------------- API
-def module_name_for(path: str, has_init) -> tuple:
-    """Dotted name and package for `path`, following __init__.py ancestry."""
+def package_predicates(files) -> tuple:
+    """(has_init, has_py) for a set of repository-relative file paths.
+
+    has_init(d): directory d is a regular package (has __init__.py).
+    has_py(d):   directory d holds Python files, so it can be a namespace package (PEP 420).
+    """
+    file_set = set(files)
+    py_dirs = {p.rsplit("/", 1)[0] if "/" in p else "" for p in file_set if p.endswith(".py")}
+
+    def has_init(d: str) -> bool:
+        return (d + "/__init__.py" if d else "__init__.py") in file_set
+
+    def has_py(d: str) -> bool:
+        return d in py_dirs
+
+    return has_init, has_py
+
+
+def module_name_for(path: str, has_init, has_py=None) -> tuple:
+    """Dotted name and package for `path`.
+
+    Walks up from the file's directory while a directory is a package (has __init__.py) or a
+    namespace package (holds Python files), and stops at a source root such as `src/`, which
+    holds neither.  `src/flask/sansio/app.py` is `flask.sansio.app`, as Python imports it.
+    """
     parts = path.split("/")
     fname = parts[-1]
     stem = fname[:-3] if fname.endswith(".py") else fname
     dirs = parts[:-1]
-    pkg_parts = []
     i = len(dirs)
-    while i > 0 and has_init("/".join(dirs[:i]) + "/__init__.py"):
-        i -= 1
+    while i > 0:
+        d = "/".join(dirs[:i])
+        if has_init(d) or (has_py is not None and has_py(d)):
+            i -= 1
+        else:
+            break
     pkg_parts = dirs[i:]
     if stem == "__init__":
         name = ".".join(pkg_parts)

@@ -29,9 +29,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from .extract import extract_file, module_name_for
+from .extract import extract_file, module_name_for, package_predicates
 from .graph import build_graph
 from .source import FsSource, GitSource
+
+
+def _policy(args) -> bool:
+    return not getattr(args, "strict_none", False)
 
 
 def _source(repo: str, rev: str | None):
@@ -40,10 +44,10 @@ def _source(repo: str, rev: str | None):
 
 def extract_all(src) -> dict:
     files = src.list_files()
-    known = set(files)
+    predicates = package_predicates(files)
     mods = {}
     for path in files:
-        name, package = module_name_for(path, lambda x: x in known)
+        name, package = module_name_for(path, *predicates)
         mods[path] = extract_file(path, src.read(path), name, package)
     return mods
 
@@ -135,7 +139,7 @@ def graph_summary(g) -> dict:
 
 
 def cmd_build(args) -> int:
-    g = build_graph(_source(args.repo, args.rev))
+    g = build_graph(_source(args.repo, args.rev), implicit_uncertain=_policy(args))
     summary = graph_summary(g)
     if args.neo4j:
         from . import neo4j_io
@@ -212,7 +216,7 @@ def cmd_eval(args) -> int:
 def cmd_coverage_check(args) -> int:
     from .evaluate import compare_with_coverage
 
-    g = build_graph(FsSource(args.repo))
+    g = build_graph(FsSource(args.repo), implicit_uncertain=_policy(args))
     coverage = json.loads(Path(args.coverage).read_text(encoding="utf-8"))
     result = compare_with_coverage(g, coverage)
     text = json.dumps(result, indent=2)
@@ -254,6 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--cap", type=int, default=15, help="max callers and max callees kept per function")
     rg.add_argument("--tests-per-node", type=int, default=5, help="max tests listed per changed function")
     rg.add_argument("--out", default=None, help="write to a file instead of stdout")
+    rg.add_argument("--strict-none", action="store_true", help="label every function without a static path none, including dunders, closures and methods of externally based classes")
     rg.add_argument("--neo4j", action="store_true",
                     help="answer with the single Cypher region query instead of the in-memory builder")
     rg.set_defaults(func=cmd_region)
@@ -269,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     cc.add_argument("repo", help="repository root; coverage must have been recorded from here")
     cc.add_argument("coverage", help="coverage.py JSON report (`coverage json -o FILE`)")
     cc.add_argument("--json", default=None, help="also write the comparison to this file")
+    cc.add_argument("--strict-none", action="store_true", help="see `build --help`")
     cc.set_defaults(func=cmd_coverage_check)
     return parser
 

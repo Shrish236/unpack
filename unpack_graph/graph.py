@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .extract import extract_file, module_name_for
+from .extract import extract_file, module_name_for, package_predicates
 from .model import TIER_AMBIGUOUS, TIER_INFERRED, TIER_RANK
 from .resolve import Resolver
 
@@ -63,16 +63,17 @@ class Graph:
 
 
 def build_graph(source, resolver_opts: Optional[dict] = None, reach: bool = True,
-                files: Optional[list] = None, mods: Optional[dict] = None) -> Graph:
+                files: Optional[list] = None, mods: Optional[dict] = None,
+                implicit_uncertain: bool = True) -> Graph:
     t0 = time.time()
     g = Graph()
     g.label = getattr(source, "label", "")
     paths = files if files is not None else source.list_files()
-    pset = set(paths)
+    predicates = package_predicates(paths)
     if mods is None:
         mods = {}
         for p in paths:
-            name, pkg = module_name_for(p, lambda x: x in pset)
+            name, pkg = module_name_for(p, *predicates)
             mods[p] = extract_file(p, source.read(p), name, pkg)
     g.mods = mods
     t1 = time.time()
@@ -80,7 +81,7 @@ def build_graph(source, resolver_opts: Optional[dict] = None, reach: bool = True
     t2 = time.time()
     if reach:
         from .reach import compute_reach
-        compute_reach(g)
+        compute_reach(g, implicit_uncertain=implicit_uncertain)
     t3 = time.time()
     g.timing = {"extract_s": t1 - t0, "resolve_s": t2 - t1, "reach_s": t3 - t2, "total_s": t3 - t0}
     return g

@@ -2,7 +2,7 @@
 
 import os
 
-from unpack_graph.extract import extract_file, module_name_for
+from unpack_graph.extract import extract_file, module_name_for, package_predicates
 from unpack_graph.graph import build_graph
 from unpack_graph.source import FsSource
 
@@ -22,10 +22,10 @@ def extract_tree(root):
     """Pass 1 only (no call resolution)."""
     src = FsSource(root)
     files = src.list_files()
-    known = set(files)
+    predicates = package_predicates(files)
     mods = {}
     for p in files:
-        name, pkg = module_name_for(p, lambda x: x in known)
+        name, pkg = module_name_for(p, *predicates)
         mods[p] = extract_file(p, src.read(p), name, pkg)
     return Extracted(mods)
 
