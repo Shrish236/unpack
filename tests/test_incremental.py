@@ -41,6 +41,18 @@ def use():
 ''',
     "pkg/leaf.py": "def leaf():\n    return 1\n",
     "pkg/unused.py": "def unused():\n    return 9\n",
+    "pkg/base.py": "class Base:\n    pass\n",
+    # a chain of re-exports: child.py is three import hops from base.py, beyond the two-hop closure
+    "pkg/top.py": "from pkg.base import Base\n",
+    "pkg/mid.py": "from pkg.top import Base\n",
+    "pkg/child.py": (
+        "from pkg.mid import Base\n\n\n"
+        "class Child(Base):\n"
+        "    def visit(self, n):\n"
+        "        return getattr(self, 'v_' + n)()\n\n"
+        "    def v_a(self):\n"
+        "        return 1\n"
+    ),
     "tests/test_core.py": '''from pkg import core, user
 
 
@@ -125,6 +137,11 @@ def _reexport(root):
     _write(root, {"pkg/__init__.py": "from .core import helper\n"})
 
 
+def _ancestor_gains_handler(root):
+    # child.py is not changed, but its getattr-dispatched site now reaches the new handler
+    _write(root, {"pkg/base.py": "class Base:\n    def v_b(self):\n        return 2\n"})
+
+
 def _delete_callee_keep_caller(root):
     _write(root, {"pkg/core.py": BASE_FILES["pkg/core.py"].replace("def helper(x):\n    return x * 2\n", "")})
 
@@ -137,6 +154,7 @@ SCENARIOS = {
     "override_signature_change": _override_signature_change,
     "reexport_added": _reexport,
     "callee_deleted": _delete_callee_keep_caller,
+    "ancestor_gains_dispatch_target": _ancestor_gains_handler,
 }
 
 

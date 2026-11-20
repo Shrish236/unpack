@@ -1239,6 +1239,43 @@ class Resolver:
                        list(targets.values()))
 
     # -------------------------------------------------------------- driver
+    def resolve_dynamic(self, cs: CallSite, sc: Scope, owner_path: str) -> Optional[SiteRes]:
+        """getattr(obj, "name") and getattr(obj, "prefix" + x): edges to the methods they can name.
+
+        A literal name is INFERRED (the name is in the source; the receiver's class has it). A known
+        prefix reaches every method of the receiver's class that starts with it: AMBIGUOUS, one edge
+        per candidate. An unknown name adds nothing.
+        """
+        receiver, (kind, text) = cs.dyn
+        if kind == "unknown":
+            return None
+        targets: dict = {}
+        for v in self.eval_value(receiver, sc):
+            if v.ent[0] not in ("inst", "cls"):
+                continue
+            order = self.mro(v.ent[1])
+            if kind == "literal":
+                names = [text]
+            else:
+                names = sorted({n for c in order for n in self.members.get(c, {}) if n.startswith(text)})
+            for name in names:
+                hit = self.find_member(order, name)
+                if not hit or hit[0] != "fn":
+                    continue
+                f = self.pick_func(hit[2])
+                if f is None or f.is_property:
+                    continue
+                tier = TIER_INFERRED if kind == "literal" else TIER_AMBIGUOUS
+                via = "getattr" if kind == "literal" else "getattr_prefix"
+                targets.setdefault(f.id, Target(f.id, tier, via))
+        if not targets:
+            return None
+        ambiguous = any(t.tier == TIER_AMBIGUOUS for t in targets.values())
+        return SiteRes("dynamic", owner_path, cs.line, cs.col, cs.raw, cs.owner, "getattr",
+                       "ambiguous" if ambiguous else "resolved", list(targets.values()),
+                       sorted(targets) if ambiguous else [],
+                       reason=f"{kind}:{text}")   # the pattern, for the incremental update
+
     def resolve_module(self, mod: ModuleInfo) -> list:
         """Resolve every site owned by `mod` (module level and all its functions)."""
         out = []
@@ -1248,6 +1285,10 @@ class Resolver:
             for cs in owner.calls:
                 site = self.resolve_call(cs, sc, mod.path)
                 out.append(site)
+                if cs.dyn:
+                    dyn = self.resolve_dynamic(cs, sc, mod.path)
+                    if dyn is not None:
+                        out.append(dyn)
                 if cs.arg_names:
                     if self.enable_ref_edges:
                         r = self.resolve_refs(cs, sc, mod.path)
