@@ -1,0 +1,5 @@
+# Files that run on the Linux VM must keep LF line endings (core.autocrlf would otherwise add CR).
+*.sh text eol=lf
+deploy/frontdoor/* text eol=lf
+deploy/*.yml text eol=lf
+deploy/.env.prod.example text eol=lf

@@ -1,4 +1,5 @@
-# Production stack for a single VM. Copy the deploy/ folder to /opt/unpack on the VM and run deploy.sh.
+# Production stack for a single VM. Copy the deploy/ folder to ~/unpack on the VM and run deploy.sh.
+# Public HTTPS comes from the Cloud Run front door (deploy/frontdoor), which proxies to api:8000 over the VPC.
 # Postgres runs here as a container; switch DATABASE_URL to Cloud SQL later without changing anything else.
 name: unpack
 
@@ -40,7 +41,8 @@ services:
     command: ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000",
               "--proxy-headers", "--forwarded-allow-ips=*"]
     ports:
-      - "127.0.0.1:8000:8000"  # for debugging over SSH only; the public entry point is Caddy
+      # Reached by the Cloud Run front door over the VPC. The firewall only lets the VPC subnet in on 8000.
+      - "8000:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -55,22 +57,5 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  caddy:
-    image: caddy:2.8.4-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:

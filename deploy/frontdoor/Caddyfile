@@ -1,0 +1,18 @@
+# Cloud Run front door: Cloud Run terminates HTTPS on the fixed *.run.app URL; this forwards
+# every request to the Unpack API on the VM's internal IP (UPSTREAM, e.g. 10.160.0.2:8000).
+{
+	auto_https off
+	admin off
+}
+
+:{$PORT:8080} {
+	request_body {
+		max_size 30MB
+	}
+	reverse_proxy {$UPSTREAM} {
+		transport http {
+			dial_timeout 10s
+			response_header_timeout 120s
+		}
+	}
+}

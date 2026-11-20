@@ -17,4 +17,6 @@ compose="docker compose -f docker-compose.prod.yml"
 $compose pull migrate api worker
 $compose up -d --remove-orphans
 $compose ps
-echo "check: curl -fsS https://\$(grep -E '^DOMAIN=' .env | cut -d= -f2-)/readyz"
+sleep 5
+curl -fsS http://127.0.0.1:8000/readyz && echo || echo "readyz not ok yet: docker compose -f docker-compose.prod.yml logs api worker"
+echo "public: $(grep -E '^UNPACK_BASE_URL=' .env | cut -d= -f2-)/readyz"
