@@ -2,6 +2,16 @@ import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import Home from "./pages/Home";
 import HomeV1 from "./pages/HomeV1";
+import HomeA from "./pages/HomeA";
+import HomeB from "./pages/HomeB";
+import Cast1 from "./pages/Cast1";
+import Cast2 from "./pages/Cast2";
+import Cast3 from "./pages/Cast3";
+import Story1 from "./pages/Story1";
+import Story2 from "./pages/Story2";
+import Story3 from "./pages/Story3";
+import Story4 from "./pages/Story4";
+import { HomeDesign1, HomeDesign2, HomeDesign3, HomeDesign4, HomeDesign5 } from "./pages/HomeDesigns";
 import PrPage from "./pages/PrPage";
 import Exec from "./pages/Exec";
 import Team from "./pages/Team";
@@ -22,14 +32,24 @@ function useTheme(): [Theme, () => void] {
   return [theme, toggle];
 }
 
-// Hash routes only: the server serves this bundle at /a/*, and these are mocks.
+// Supports hash routes (#/home-4) as well as direct pathnames (/home-4).
 function useRoute(): string {
-  const read = () => (location.hash.replace(/^#/, "") || "/");
+  const read = () => {
+    const hash = location.hash.replace(/^#/, "");
+    if (hash) return hash;
+    const p = location.pathname.replace(/\/+$/, "");
+    if (/^\/home-\d+$/.test(p)) return p;
+    return "/";
+  };
   const [route, setRoute] = useState(read);
   useEffect(() => {
     const on = () => { setRoute(read()); window.scrollTo(0, 0); };
     window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
+    window.addEventListener("popstate", on);
+    return () => {
+      window.removeEventListener("hashchange", on);
+      window.removeEventListener("popstate", on);
+    };
   }, []);
   return route;
 }
@@ -44,9 +64,34 @@ export function Mark({ size = 26 }: { size?: number }) {
   );
 }
 
+// Home concepts, numbered in the order they were made. `#/` is the isometric home whose hero loops through the six steps.
+//  1 original PR-comprehension home    2 product-surface scene       3 Monday to Monday
+//  4-8 motion studies (morph, topology, 2.5D stack, state machine, film)
+//  9-12 story-led (Groundhog Day, new hire, 2am pager, three seats)   13-15 cast-led (orbit, studio, road)
+//  16 the earlier `#/`: hero scene idles on one miniature loop (no per-step callouts)
+const HOMES: Record<string, () => React.ReactNode> = {
+  "/home-1": () => <HomeV1 />, "/home-2": () => <HomeA />, "/home-3": () => <HomeB />,
+  "/home-4": () => <HomeDesign1 />, "/home-5": () => <HomeDesign2 />, "/home-6": () => <HomeDesign3 />,
+  "/home-7": () => <HomeDesign4 />, "/home-8": () => <HomeDesign5 />,
+  "/home-9": () => <Story1 />, "/home-10": () => <Story2 />, "/home-11": () => <Story3 />, "/home-12": () => <Story4 />,
+  "/home-13": () => <Cast1 />, "/home-14": () => <Cast2 />, "/home-15": () => <Cast3 />,
+  "/home-16": () => <Home />,
+};
+
+function renderRoute(route: string) {
+  const home = HOMES[route];
+  if (home) return home();
+  if (route.startsWith("/pr")) return <PrPage id={route.split("/")[2]} />;
+  if (route === "/exec") return <Exec />;
+  if (route === "/team") return <Team />;
+  if (route === "/govern") return <Govern />;
+  return <Home live />;
+}
+
 export default function App() {
   const route = useRoute();
   const [theme, toggle] = useTheme();
+  const isHomeFamily = route === "/" || /^\/home-\d+$/.test(route);
 
   useEffect(() => { document.body.dataset.ready = "true"; }, []); // static-render signal used by the server
 
@@ -56,7 +101,7 @@ export default function App() {
         <div className="wrap nav-in">
           <a className="brand" href="#/"><Mark />unpack</a>
           <nav className="nav-links" aria-label="Main">
-            <a href="#/" aria-current={route === "/" ? "page" : undefined}>Product</a>
+            <a href="#/" aria-current={isHomeFamily ? "page" : undefined}>Product</a>
             <a href="#/exec" aria-current={route === "/exec" ? "page" : undefined}>Executive</a>
             <a href="#/team" aria-current={route === "/team" ? "page" : undefined}>Managers</a>
             <a href="#/govern" aria-current={route === "/govern" ? "page" : undefined}>Governance</a>
@@ -70,7 +115,7 @@ export default function App() {
           </div>
         </div>
       </header>
-      {route === "/home-v1" ? <HomeV1 /> : route.startsWith("/pr") ? <PrPage id={route.split("/")[2]} /> : route === "/exec" ? <Exec /> : route === "/team" ? <Team /> : route === "/govern" ? <Govern /> : <Home />}
+      {renderRoute(route)}
     </>
   );
 }

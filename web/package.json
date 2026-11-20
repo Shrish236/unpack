@@ -17,6 +17,7 @@
     "elkjs": "^0.9.3",
     "graphology": "^0.25.4",
     "lucide-react": "^0.441.0",
+    "motion": "^14.14.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "shiki": "^1.18.0",
