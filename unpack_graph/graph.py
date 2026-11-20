@@ -1,4 +1,4 @@
-"""Graph assembly: pass 1 (extraction) + pass 2 (resolution) + structural edges."""
+"""Graph assembly: pass 1 (extraction) + pass 2 (resolution) + structural edges + reachability."""
 from __future__ import annotations
 
 import time
@@ -46,6 +46,9 @@ class Graph:
         self.overrides: list = []        # (method, overridden)
         self.imports: list = []          # ImportEdge
         self.unresolved: dict = {}       # fid -> [(line, raw, reason)]
+        self.reach: dict = {}            # fid -> ReachInfo (see reach.py)
+        self.reach_pairs: dict = {}
+        self.reach_pairs_loose: dict = {}
         self.timing: dict = {}
         self.out_adj: dict = {}
         self.in_adj: dict = {}
@@ -59,7 +62,7 @@ class Graph:
         return None
 
 
-def build_graph(source, resolver_opts: Optional[dict] = None,
+def build_graph(source, resolver_opts: Optional[dict] = None, reach: bool = True,
                 files: Optional[list] = None, mods: Optional[dict] = None) -> Graph:
     t0 = time.time()
     g = Graph()
@@ -75,7 +78,11 @@ def build_graph(source, resolver_opts: Optional[dict] = None,
     t1 = time.time()
     link(g, resolver_opts or {})
     t2 = time.time()
-    g.timing = {"extract_s": t1 - t0, "resolve_s": t2 - t1, "total_s": t2 - t0}
+    if reach:
+        from .reach import compute_reach
+        compute_reach(g)
+    t3 = time.time()
+    g.timing = {"extract_s": t1 - t0, "resolve_s": t2 - t1, "reach_s": t3 - t2, "total_s": t3 - t0}
     return g
 
 
