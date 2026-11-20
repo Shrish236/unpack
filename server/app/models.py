@@ -525,6 +525,7 @@ class GovCandidate(Base):
     status = Column(Text, nullable=False, default="open")
     decided_at = Column(DateTime(timezone=True), nullable=True)
     source = Column(Text, nullable=False, server_default="sample")  # sample | measured
+    brief = Column(JSONB, nullable=True)  # what a reviewer needs to decide: split by team, rework, reach, fit, recommendation
 
 
 class GovPolicy(Base):
@@ -548,6 +549,11 @@ class GovPolicy(Base):
     recurrence_developers = Column(Integer, nullable=True)
     status = Column(Text, nullable=False, default="active")
     published_on = Column(Date, nullable=True)
+    target = Column(Integer, nullable=True)  # overrides per 100 sessions the policy is meant to reach
+    review_on = Column(Date, nullable=True)  # when the owner checks whether it worked
+    weekly = Column(ARRAY(Integer), nullable=True)  # overrides per 100 sessions per week since approval
+    checks_flagged = Column(Integer, nullable=True)  # PRs the check flagged (null for advice)
+    checks_wrong = Column(Integer, nullable=True)  # of those, how many a reviewer overrode as wrong
 
 
 class GovEvidence(Base):
