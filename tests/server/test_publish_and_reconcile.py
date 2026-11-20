@@ -179,6 +179,8 @@ async def test_failed_analysis_publishes_a_short_failure_comment(client, tmp_dat
 async def test_skips_repos_without_the_app(client, tmp_data_dir, origin, fake_github, no_render):
     _, token = await create_repo(remote_url=origin.remote_url, installation_id=None, status="active")
     # An active repo without an installation can still ingest, but nothing may be published to GitHub.
+    # The App is not installed on this repo, so the installation sync must not re-attach it.
+    fake_github.installation_repos = []
     response = await client.post("/v1/ingest", content=gzip_json(origin_payload(origin)), headers=ingest_headers(token))
     assert response.status_code == 202
     await drain_jobs()
