@@ -1,0 +1,228 @@
+/* Density pass for the product pages (Executive, Managers, PR analyses, Governance).
+   Loaded last from App.tsx, so it overrides the page sheets. Every value and component stays;
+   this only changes spacing, label style and how long lists are shown.
+   To revert: delete the import in App.tsx. */
+
+/* Sections breathe; cards hold their own content tighter. */
+.page { gap: var(--sp-6); }
+.panel { padding: var(--sp-4); }
+.panel-h { margin-bottom: var(--sp-3); }
+.panel-title { font-size: var(--fs-5); line-height: 1.3; }
+.panel-sub { font-family: var(--font-body); font-size: var(--fs-3); color: var(--ink-3); line-height: 1.5; }
+
+/* KPIs are the anchor of each page: keep the number big, make the caption quieter. */
+.kpi { padding: var(--sp-4) var(--sp-4) var(--sp-3); gap: 4px; }
+.kpi-label { font-size: var(--fs-3); color: var(--ink); margin-top: 0; line-height: 1.35; }
+.kpi-sub { font-family: var(--font-body); font-size: var(--fs-2); line-height: 1.45; color: var(--ink-3); }
+
+/* Mono caps everywhere made the eye work harder. Labels become quiet sentence-case text. */
+.dl, .chain li span, blockquote span, .gv-label, .tm-ct .tn {
+  text-transform: none; letter-spacing: 0; font-family: var(--font-body); font-weight: 600;
+  font-size: var(--fs-2); color: var(--ink-2);
+}
+.dl { margin-top: var(--sp-3); padding-top: var(--sp-3); }
+
+/* Body copy: a little more line height so long sentences read line by line. */
+.dt-sum, .gv-headline, .gv-rule, .gh-why, .claims p, .ladder-v p { line-height: 1.55; }
+.dt-sum { max-width: 62ch; }
+.table td { padding: var(--sp-2) var(--sp-3) var(--sp-2) 0; line-height: 1.45; }
+.table th { padding-bottom: var(--sp-2); }
+
+/* Long diffs and file lists scroll inside their box instead of pushing the page down. */
+.diff { max-height: 280px; overflow: auto; }
+.gv-code { max-height: 220px; overflow: auto; }
+
+/* ---- Light mode only: outlines, gridlines and chart marks need more weight on a near-white ground.
+   Dark mode is untouched (it already reads well). ---- */
+:root:not([data-theme="dark"]) {
+  --line: rgb(30 41 59 / 0.26);      /* hairlines and gridlines: 0.12 -> 0.26 */
+  --line-2: rgb(30 41 59 / 0.46);   /* card and control edges: 0.22 -> 0.46 */
+  --surface: #ffffff;               /* cards sit a step above the ground */
+  --bg: #eceff3;                    /* ground a little darker so cards separate */
+  --sunken: #e2e7ed;
+}
+/* charts: axis text, grid, series marks */
+:root:not([data-theme="dark"]) .chart .ax { fill: var(--ink-2); }
+:root:not([data-theme="dark"]) .chart .grid { stroke: rgb(30 41 59 / 0.2); }
+:root:not([data-theme="dark"]) .chart .line.human { stroke: #a86f00; }
+:root:not([data-theme="dark"]) .chart .pt { stroke: #ffffff; stroke-width: 2; }
+:root:not([data-theme="dark"]) .chart .end { fill: var(--ink); }
+/* session timeline: only the selected or linked events carry their label; the rest show the turn and the tooltip has the text */
+:root .lv-ev:not(.hot):not(.on) .lv-txt { display: none; }
+
+/* decisions chart: thin separators between types, readable week totals (both themes) */
+.chart rect { stroke: var(--surface); stroke-width: 1; }
+.chart .total { font: 500 var(--fs-2) var(--font-mono); fill: var(--ink); }
+/* PR graph: edges and their count labels were too pale on the canvas */
+:root:not([data-theme="dark"]) .cg-canvas .react-flow__edge-path { stroke: var(--ink-2); stroke-width: 1.75; }
+:root:not([data-theme="dark"]) .cg-e.reach .react-flow__edge-path { stroke: #7a2a36; }
+:root:not([data-theme="dark"]) .cg-e.hot .react-flow__edge-path { stroke: #a86f00; }
+:root:not([data-theme="dark"]) .react-flow__edge-textbg { fill: #ffffff; stroke: var(--line-2); }
+:root:not([data-theme="dark"]) .react-flow__edge-text { fill: var(--ink); font-weight: 600; }
+:root:not([data-theme="dark"]) .react-flow__minimap { border: 1px solid var(--line-2); }
+/* the yellow "modified" and "signature" badges: stronger number ink on the pale chip */
+:root:not([data-theme="dark"]) .cg-glyph, :root:not([data-theme="dark"]) .gl-toolbar { color: var(--ink); }
+
+/* Detail column on PR analyses: keep the stack compact. */
+.detail { gap: var(--sp-2); }
+.dt-title { font-size: var(--fs-5); }
+.rules li, .stats, .alts li { line-height: 1.45; }
+
+/* PR graph minimap: nodes were unstyled grey placeholders; draw them as quiet ink marks in both themes */
+:root .react-flow__minimap-node { fill: var(--ink-3); stroke: none; opacity: 0.55; }
+
+/* session timeline: turn numbers were too faint in light mode; the selected label gets a plate so it never sits on a neighbour */
+:root:not([data-theme="dark"]) .lv-ev .lv-l b { color: var(--ink-2); }
+:root .lv-ev.hot .lv-l, .lv-ev.on .lv-l { background: var(--surface); border-radius: 4px; padding: 0 4px; }
+
+/* Change graph: reasoning panel. Sections breathe, each heading reads as a label, and long detail folds away. */
+:root .gl-insp-body { display: grid; gap: var(--sp-4); align-content: start; }
+:root .gl-insp-title { font: 600 var(--fs-5)/1.3 var(--font-body); letter-spacing: -0.01em; }
+:root .gl-sec { display: grid; gap: var(--sp-2); }
+:root .gl-sec-h { font: 600 var(--fs-2) var(--font-body); letter-spacing: 0; text-transform: none; color: var(--ink-2); margin: 0; }
+:root .gl-sec p, :root .gl-sec li { font-size: var(--fs-3); line-height: 1.55; }
+:root .gl-reason { font-size: var(--fs-4) !important; line-height: 1.55 !important; color: var(--ink); }
+:root .gl-chips { gap: var(--sp-2); }
+:root .gl-fold { border-top: 1px solid var(--line); padding-top: var(--sp-2); }
+:root .gl-fold > summary { cursor: pointer; font: 500 var(--fs-2) var(--font-body); color: var(--ink-2); list-style: none; }
+:root .gl-fold > summary::-webkit-details-marker { display: none; }
+:root .gl-fold > summary::before { content: "▸ "; color: var(--ink-3); }
+:root .gl-fold[open] > summary::before { content: "▾ "; }
+:root .gl-fold[open] > summary { margin-bottom: var(--sp-2); }
+:root .gl-toolbar { gap: var(--sp-3); }
+:root .gl-keys { font-size: var(--fs-2); color: var(--ink-3); }
+
+/* ---- PR analysis: governance, review findings, decision story ----
+   One pattern: a bold statement, one muted meta line, italic quotes, clear space between items. */
+.rv-h { font: 600 13px/1.3 var(--font-body); color: var(--ink-2); margin: 22px 0 10px; }
+.rv-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.rv-item { display: grid; gap: 4px; padding: 14px 0; border-top: 1px solid var(--line); }
+.rv-list > .rv-item:first-child { border-top: 0; padding-top: 2px; }
+.rv-item.hot { background: var(--human-soft); margin: 0 -12px; padding: 14px 12px; border-radius: var(--r-2); border-top-color: transparent; }
+.rv-main { font-size: 14px; line-height: 1.5; margin: 0; color: var(--ink); }
+.rv-main b { font-weight: 600; }
+.rv-kind { font: 500 12px var(--font-body); color: var(--ink-2); margin-right: 6px; }
+.rv-kind.ok { color: var(--ok); } .rv-kind.bad { color: var(--bad); } .rv-kind.warn { color: var(--warn); }
+.rv-meta { font-size: 13px; color: var(--ink-3); margin: 0; line-height: 1.5; }
+.rv-quote { font-size: 13px; color: var(--ink-2); margin: 2px 0; line-height: 1.55; }
+.rv-quote i { font-style: italic; }
+.rv-turn { font: 500 12px var(--font-mono); background: none; border: 0; padding: 0; color: var(--agent); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.rv-fn { font: 500 13px var(--font-mono); background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.rv-tag { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; font: 500 12px var(--font-body); background: var(--sunken); color: var(--ink-2); border: 1px solid var(--line); vertical-align: 1px; }
+.rv-tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.rv-tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.rv-flags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.rv-flags .rv-tag { margin-left: 0; cursor: pointer; }
+.rv-empty { font-size: 14px; color: var(--ink-3); margin: 0; }
+.rv-foot { font: 12px/1.5 var(--font-mono); color: var(--ink-3); margin: 16px 0 0; }
+
+.ds-file { display: grid; gap: 6px; margin-top: 16px; }
+.ds-file:first-child { margin-top: 0; }
+.ds-path { font: 500 13px var(--font-mono); color: var(--ink-2); margin: 0; }
+.ds-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ds-row { width: 100%; display: grid; gap: 3px; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface); color: var(--ink); cursor: pointer; }
+.ds-row:hover { border-color: var(--line-2); }
+.ds-row.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--line-2); }
+.ds-row.hot { background: var(--human-soft); }
+.ds-name { font: 500 14px var(--font-body); }
+.ds-meta { font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+.ds-who { display: inline-flex; align-items: center; gap: 4px; font-style: italic; }
+.ds-who.human { color: var(--human-text); }
+.ds-who.agent { color: var(--agent); }
+.ds-meta .bad { color: var(--bad); font-weight: 500; }
+.ds-meta .warn { color: var(--warn); font-weight: 500; }
+.ds-turns { font-family: var(--font-mono); }
+
+/* ---- PR analysis: session timeline (full width, one row per step) ---- */
+.tl-help { font-size: 13px; color: var(--ink-3); margin: 0 0 12px; line-height: 1.5; }
+.tl-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.tl-list > li { border-top: 1px solid var(--line); }
+.tl-row { width: 100%; display: grid; grid-template-columns: 56px 190px minmax(0, 1fr) auto; gap: 14px; align-items: baseline; text-align: left; padding: 10px 10px; margin: 0 -10px; border: 0; border-radius: var(--r-2); background: none; color: var(--ink); cursor: pointer; }
+.tl-row:hover { background: var(--sunken); }
+.tl-row.on { background: var(--human-soft); }
+.tl-turn { font: 600 13px var(--font-mono); color: var(--ink-2); }
+.tl-who { font: 500 13px var(--font-body); color: var(--ink-2); }
+.tl-who.human { color: var(--human-text); font-style: italic; }
+.tl-who.ok { color: var(--ok); }
+.tl-who.bad { color: var(--bad); }
+.tl-who.warn { color: var(--warn); }
+.tl-what { font-size: 14px; line-height: 1.45; min-width: 0; overflow-wrap: anywhere; }
+.tl-n { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+@media (max-width: 760px) { .tl-row { grid-template-columns: 44px minmax(0, 1fr); } .tl-what, .tl-n { grid-column: 2; } }
+
+/* ---- PR analysis: reasoning panel (minimal) ---- */
+.ld-path { font: 12px/1.4 var(--font-mono); color: var(--ink-3); margin: 0; overflow-wrap: anywhere; }
+.ld-name { font: 600 18px/1.3 var(--font-body); letter-spacing: -0.01em; margin: 4px 0 0; overflow-wrap: anywhere; }
+.ld-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.ld-sec { display: grid; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line); margin-top: 8px; }
+.ld-label { font: 600 12px var(--font-body); color: var(--ink-2); margin: 0; }
+.ld-why { font-size: 15px; line-height: 1.55; margin: 0; color: var(--ink); }
+.ld-line { font-size: 14px; line-height: 1.5; margin: 0; color: var(--ink-2); }
+.ld-line b { font-weight: 600; color: var(--ink); margin-right: 6px; }
+
+/* ---- PR analysis: session timeline as a graph of turns ---- */
+.tl-legend { list-style: none; margin: 10px 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); }
+.tl-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.tl-key { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--ink-3); }
+.tl-key.human { background: var(--human); }
+.tl-key.agent { background: var(--agent); }
+.tl-key.ok { background: var(--ok); }
+.tl-key.bad { background: var(--bad); }
+.tl-key.warn { background: var(--warn); }
+.tl-key.denied { background: var(--bad); border-radius: 2px; transform: rotate(45deg); width: 8px; height: 8px; }
+
+.tl-track { position: relative; height: 72px; margin: 14px 8px 0; }
+.tl-axis { position: absolute; left: 0; right: 0; top: 16px; height: 2px; background: var(--line-2); border-radius: 2px; }
+.tl-dot { position: absolute; top: 9px; width: 16px; height: 16px; margin-left: -8px; padding: 0; border: 2px solid var(--surface); border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 1px var(--line-2); cursor: pointer; transition: transform 0.15s var(--ease); }
+.tl-dot:hover { transform: scale(1.25); }
+.tl-dot:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.tl-dot.human { background: var(--human); box-shadow: 0 0 0 1px var(--human-line); }
+.tl-dot.agent { background: var(--agent); }
+.tl-dot.ok { background: var(--ok); }
+.tl-dot.bad { background: var(--bad); }
+.tl-dot.warn { background: var(--warn); }
+.tl-dot.denied { background: var(--bad); border-radius: 3px; transform: rotate(45deg); }
+.tl-dot.on { transform: scale(1.3); box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--ink); }
+.tl-num { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); font: 500 11px var(--font-mono); color: var(--ink-3); white-space: nowrap; pointer-events: none; }
+
+.tl-read { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-2); background: var(--sunken); display: grid; gap: 6px; }
+.tl-read p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); }
+.tl-read .tl-label { font-style: italic; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
+.tl-idle { color: var(--ink-3); font-size: 13px; }
+.tl-go { justify-self: start; margin-top: 4px; padding: 0; border: 0; background: none; color: var(--ink); font: 600 13px var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* ---- PR analysis: decision story and reasoning panel sit side by side at the same height ---- */
+.lv-main { align-items: stretch; }
+.ds-scroll { max-height: 640px; overflow: auto; padding-right: 4px; }
+.ds-why { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.45; color: var(--ink-2); margin-top: 4px; white-space: normal; }
+.ld-hist { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--ink-2); display: grid; gap: 4px; }
+.ld-hist .mono { color: var(--ink-3); margin-right: 4px; }
+.lv-detail { align-self: stretch; }
+
+/* ---- Managers page: rework each week (overrules as bars, average attempts underneath) ---- */
+.tm-weeks { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(36px, 1fr); gap: 8px; height: 230px; align-items: stretch; }
+.tm-wk { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; justify-items: center; gap: 4px; min-width: 0; }
+.tm-wk-n { font: 500 12px var(--font-mono); color: var(--ink); }
+.tm-wk-bar { display: flex; align-items: flex-end; width: 100%; max-width: 44px; height: 100%; min-height: 0; }
+.tm-wk-bar i { display: block; width: 100%; min-height: 2px; background: var(--human); border-radius: 4px 4px 0 0; }
+.tm-wk-d { font: 500 11px var(--font-mono); color: var(--ink-3); }
+.tm-wk-a { font: 11px var(--font-mono); color: var(--ink-3); }
+/* Managers page: the criteria and weekly panels share one height */
+.tm .grid-7-5 { align-items: stretch; }
+
+/* ---- Managers page: where rework concentrates (ranked areas) ---- */
+.tm-rank { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.tm-rank li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: baseline; }
+.tm-rank-p { font: 500 13px var(--font-mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tm-rank li > b { font: 600 14px var(--font-body); color: var(--ink); }
+.tm-rank-bar { grid-column: 1 / -1; height: 8px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
+.tm-rank-bar i { display: block; height: 100%; background: var(--human); border-radius: 4px; }
+.tm-rank-a { grid-column: 1 / -1; font-size: 12px; color: var(--ink-3); }
+
+/* Managers page: the rework heatmap shows four weeks, so its grid has four week columns (team.css still said eight) */
+.tm-heat { grid-template-columns: minmax(96px, 150px) repeat(4, minmax(0, 1fr)); }
+@media (max-width: 560px) { .tm-heat { grid-template-columns: 68px repeat(4, minmax(0, 1fr)); } }
+
+/* Managers page: the number in each rework cell sits in the middle and reads at a glance */
+.tm-heat .tm-cell { display: grid; place-items: center; font: 600 13px var(--font-mono); color: var(--ink); padding: 0; }
+.tm-heat .tm-cell.empty { font-weight: 500; color: var(--ink-3); }

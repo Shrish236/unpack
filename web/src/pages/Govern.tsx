@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Check, Eye, FileText, Share2, ShieldCheck } from "lucide-react";
+import { BookOpen, Check, Eye, FileText, History, Network } from "lucide-react";
 import { DataGate, Kpi, PageHead, Panel, RepoSelect, Seg, TypeChip, useSelectedRepo } from "../ui";
 import { TYPE_LABEL, type DType, type HumanKind } from "../data";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../api";
 import GovernBrief, { briefStats, ENF_LABEL } from "./GovernBrief";
 import PolicyHealth, { issuesOf, reachedTarget, STEP_DOWN } from "./GovernHealth";
-import { useGovernance, useGovernanceAction } from "../queries";
+import { useAnalyses, useGovernance, useGovernanceAction } from "../queries";
 import { longDay, shortDay } from "../format";
 import "../styles/govern.css";
 
@@ -68,6 +68,7 @@ export default function Govern() {
 }
 
 function GovernanceView({ g, repos, repo, onRepoChange }: { g: GovernanceState; repos: RepoItem[]; repo: string; onRepoChange: (r: string) => void }) {
+  const analysisCount = useAnalyses(repo).data?.analyses.length ?? 0;
   const approveM = useGovernanceAction((a: { id: string; body: ApproveBody }) => approveCandidate(a.id, a.body, repo), repo);
   const rejectM = useGovernanceAction((a: { id: string; reason: string }) => rejectCandidate(a.id, a.reason, repo), repo);
   const retireM = useGovernanceAction((id: string) => retirePolicy(id, repo), repo);
@@ -203,8 +204,8 @@ function GovernanceView({ g, repos, repo, onRepoChange }: { g: GovernanceState; 
       <section className="gv-pub" aria-label="Published to">
         <div><FileText size={18} /><p><b>AGENTS.md</b><span>{actives.length} rules · repo root</span></p></div>
         <div><BookOpen size={18} /><p><b>Skill files</b><span>skills/*.md · {new Set(actives.map((a) => a.type)).size} files</span></p></div>
-        <div><ShieldCheck size={18} /><p><b>PR check</b><span>{actives.filter((a) => a.enforcement !== "advice").length} checks · {actives.filter((a) => a.enforcement === "gate").length} gates</span></p></div>
-        <div><Share2 size={18} /><p><b>Exports</b><span>Copilot memory · Qodo rules · any agent</span></p></div>
+        <div><Network size={18} /><p><b>Code graph</b><span>{analysisCount ? `available · ${analysisCount} analysed PRs` : "not built yet"}</span></p></div>
+        <div><History size={18} /><p><b>Decision history</b><span>{hist.length} entries recorded</span></p></div>
       </section>
 
       <div className="gv-tabs">

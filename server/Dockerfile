@@ -3,9 +3,12 @@
 FROM node:20-alpine AS web-builder
 WORKDIR /web
 COPY web/package*.json ./
-RUN npm ci || npm install
+RUN npm ci
 COPY web/ ./
-RUN npm run build || mkdir -p dist && touch dist/index.html
+# web/src/pr/PrLive.tsx imports ../../../contract/fixtures, which resolves to /contract from /web
+COPY contract/fixtures /contract/fixtures
+# Fail the image build if the UI does not build (shipping an empty index.html hides the error)
+RUN npm run build
 
 # Stage 2: Python server runner with Playwright Chromium
 FROM python:3.11-slim AS runner

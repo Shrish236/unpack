@@ -54,7 +54,7 @@ export default function Cast3() {
         <p>Unpack records every decision an agent makes and every correction you make, checks them against your rules, and turns what repeats into policy every agent follows.</p>
         <div className="c3-cta">
           <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-          <a className="btn" href="#/pr">See a PR unpacked</a>
+          <a className="btn" href="#/pr">See a PR Unpacked</a>
         </div>
         <ul className="c3-chips"><li className="chip agent">Agent decided</li><li className="chip human">Human decided</li><li className="chip ok">Became policy</li><li className="chip sim">Illustrative cast</li></ul>
         <div className="c3-cast" aria-label="Illustrative cast">
@@ -97,11 +97,11 @@ export default function Cast3() {
           <h2 className="display">Make every correction <em>count once.</em></h2>
           <div className="c3-cta c3-cta-c">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
-      <footer className="wrap c3-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap c3-foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }

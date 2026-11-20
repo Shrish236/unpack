@@ -46,7 +46,7 @@ export default function Design1Morph({ step }: { step: number }) {
           <i /><i /><i />
         </div>
         <span className="mono d1-path">
-          {step === 0 && "unpack · live governance loop"}
+          {step === 0 && "Unpack · live governance loop"}
           {step === 1 && "session #482 · transcript → typed decisions"}
           {step === 2 && "turn T18 · human overrule captured"}
           {step === 3 && "verifier · skill check + code graph"}

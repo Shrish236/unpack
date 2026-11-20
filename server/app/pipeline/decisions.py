@@ -20,7 +20,7 @@ from .session import UnpackSession
 from .steering import SteeringSnapshot
 from .verify import quote_matches_turn
 
-DECISIONS_PROMPT_VERSION = 4
+DECISIONS_PROMPT_VERSION = 5
 AGENT_TURN_KINDS = {"assistant", "thought", "plan", "edit", "shell"}
 _DEP_CMD_RE = re.compile(
     r"(?i)\b(pip3? install|npm (i|install|add)|yarn add|pnpm add|poetry add|cargo add|go get|apt(-get)? install)\b"

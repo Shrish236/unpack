@@ -52,6 +52,9 @@ yarn-error.log*
 /data/*
 !/data/.gitkeep
 secrets/
+exports/
+.live_httpx_data/
+deploy/.env
 *.pem
 *.key
 

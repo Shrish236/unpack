@@ -3,7 +3,7 @@ import { AlertTriangle, Bot, FlaskConical, HelpCircle, User } from "lucide-react
 import type { AnalysisResponse, GNode, Outcome } from "../api";
 import { stageOf, type OrderMode } from "./order";
 import {
-  CHANGE_STYLE, CHANGE_WORDS, DRIVER_WORDS, SOURCE_WORDS, TEST_WORDS, changeKindOf, cardKind, isUntested,
+  CHANGE_STYLE, CHANGE_WORDS, DRIVER_WORDS, SOURCE_WORDS, TEST_WORDS, changeKindOf, isUntested,
   lastName, type ChangeKind, type Graph,
 } from "./model";
 
@@ -107,17 +107,14 @@ function NodeDetail({ g, n, mode }: { g: Graph; n: GNode; mode: OrderMode }) {
   const hits = a.impact.by_node[n.id] ?? [];
   const findings = a.findings.filter((f) => f.functions.includes(n.id));
   const hunks = a.diff_hunks[n.id] ?? [];
-  const kind = cardKind(n);
   const DriverIcon = r ? DRIVER_ICON[r.driver] : HelpCircle;
   const depths = [1, 2, 3].map((d) => ({ d, count: hits.filter((h) => h.depth === d && !h.uncertain).length, uncertain: hits.filter((h) => h.depth === d && h.uncertain).length }));
 
   return (
     <div className="gl-insp-body">
+      {/* three chips at most; the source and the kind are said again in "What changed", so they are not repeated here */}
       <div className="gl-chips">
         {ck && <span className="gl-chip-badge" style={{ color: CHANGE_STYLE[ck].text }}>{CHANGE_STYLE[ck].label}</span>}
-        {n.change?.source === "outside_session" && <span className="gl-chip-badge warn">outside session</span>}
-        {kind === "context" && <span className="gl-chip-badge">context</span>}
-        {kind === "test" && <span className="gl-chip-badge">test</span>}
         {r && <span className="gl-chip-badge"><DriverIcon size={12} /> {DRIVER_WORDS[r.driver]}</span>}
         {r && <span className="gl-chip-badge">{r.confidence} confidence</span>}
       </div>
@@ -140,12 +137,17 @@ function NodeDetail({ g, n, mode }: { g: Graph; n: GNode; mode: OrderMode }) {
         {r ? (
           <>
             <p className="gl-reason">{r.reason ?? "No reason given in the session."}</p>
-            {r.history.length > 0 && (
-              <ol className="gl-history">
-                {r.history.map((h) => <li key={h.turn + h.text}><span className="mono">{h.turn}</span> {h.text}</li>)}
-              </ol>
+            {(r.evidence.length > 0 || r.history.length > 0) && (
+              <details className="gl-fold">
+                <summary>Evidence · {r.evidence.length} quote{r.evidence.length === 1 ? "" : "s"}, {r.history.length} step{r.history.length === 1 ? "" : "s"}</summary>
+                {r.history.length > 0 && (
+                  <ol className="gl-history">
+                    {r.history.map((h) => <li key={h.turn + h.text}><span className="mono">{h.turn}</span> {h.text}</li>)}
+                  </ol>
+                )}
+                {r.evidence.map((e) => <Quote key={e.turn + e.quote} turn={e.turn} quote={e.quote} who="user" />)}
+              </details>
             )}
-            {r.evidence.map((e) => <Quote key={e.turn + e.quote} turn={e.turn} quote={e.quote} who="user" />)}
           </>
         ) : <p className="gl-muted">No reason found in the session.</p>}
       </section>
@@ -185,25 +187,21 @@ function NodeDetail({ g, n, mode }: { g: Graph; n: GNode; mode: OrderMode }) {
 
       <section className="gl-sec">
         <h4 className="gl-sec-h">Blast radius</h4>
-        <p className="gl-muted">{n.callers_count} direct caller{n.callers_count === 1 ? "" : "s"} · {n.callees_count} callee{n.callees_count === 1 ? "" : "s"}</p>
-        {hits.length > 0 && (
-          <ul className="gl-kv small">
-            {depths.map((x) => x.count + x.uncertain > 0 && (
-              <li key={x.d}>{x.d} hop{x.d > 1 ? "s" : ""}: {x.count}{x.uncertain ? ` + ${x.uncertain} uncertain` : ""}</li>
-            ))}
-          </ul>
-        )}
+        <p className="gl-muted">
+          {n.callers_count} caller{n.callers_count === 1 ? "" : "s"} · {n.callees_count} callee{n.callees_count === 1 ? "" : "s"}
+          {hits.length > 0 && ` · ${hits.filter((h) => !h.uncertain).length} upstream${depths.some((x) => x.uncertain) ? ` (${hits.filter((h) => h.uncertain).length} uncertain)` : ""}`}
+        </p>
       </section>
 
       {hunks.length > 0 && (
-        <section className="gl-sec">
-          <h4 className="gl-sec-h">Diff</h4>
+        <details className="gl-fold">
+          <summary>Diff · {hunks.length} hunk{hunks.length === 1 ? "" : "s"}</summary>
           <pre className="gl-diff">
             {hunks.flatMap((h) => h.patch.split("\n")).map((line, i) => (
               <span key={i} className={line[0] === "+" ? "add" : line[0] === "-" ? "del" : line[0] === "@" ? "hh" : ""}>{line}{"\n"}</span>
             ))}
           </pre>
-        </section>
+        </details>
       )}
 
       {r?.history.length === 0 && r.evidence.length === 0 && <p className="gl-muted">Reason is recorded, but no turns quote it.</p>}

@@ -1,28 +1,22 @@
 import { useState } from "react";
-import { ArrowRight, ExternalLink } from "lucide-react";
 import { Kpi, PageHead, Panel, RepoSelect, Seg, TypeChip, DataGate, useSelectedRepo } from "../ui";
-import { type ConsistencyItem, type Flag, type Source, type TeamPage } from "../api";
+import { type Source, type TeamPage } from "../api";
 import { useRepoDashboard } from "../queries";
 import { shortDay } from "../format";
 import "../styles/team.css";
 
-const FLAG_LABEL: Record<Flag, string> = {
-  unsupported: "Unsupported claim",
-  "new-dependency": "New dependency",
-  "skipped-test": "Skipped test",
-  "async-gap": "Untested path",
-};
-
 const fmtTok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`);
 
-function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: ConsistencyItem[]; names: Record<string, string> }) {
+// The team page: where rework piles up, whether the agent or the brief caused it, and how the team's agents work.
+// Individual PRs live on the PR analyses page, so this page links to them only where a finding needs it.
+function TeamBody({ t }: { t: TeamPage }) {
   const [metric, setMetric] = useState<"attempts" | "overrules">("attempts");
   const [tool, setTool] = useState<"calls" | "tokens">("calls");
-  const [sel, setSel] = useState<{ area: string; week: number | null } | null>(null);
 
   const k = t.kpis;
-  const labels = t.weeks.map(shortDay);
-  const prs = t.prs.filter((p) => !sel || (p.area === sel.area && (sel.week === null || p.week === sel.week)));
+  // the heatmap shows the last four weeks only; the weeks before were mostly empty
+  const from = Math.max(0, t.weeks.length - 4);
+  const labels = t.weeks.slice(from).map(shortDay);
   const maxTool = Math.max(1, ...t.tools.map((x) => x[tool]));
   const maxMix = Math.max(1, ...t.mix.map((m) => m.agent + m.human));
   const f = t.funnel;
@@ -33,11 +27,23 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
   const mixed = Object.values(t.sources).includes("measured");
   // when the page mixes measured and sample sections, each sample one says so
   const src = (s: Source) => (mixed && s === "sample" ? <span className="chip sim">Sample data</span> : undefined);
-  const prHref = (p: { public_id?: string | null }) => (p.public_id ? `#/pr/${p.public_id}` : "#/pr");
 
   const maxAttempts = Math.max(2.6, ...t.areas.flatMap((a) => a.attempts));
   const maxOverrules = Math.max(6, ...t.areas.flatMap((a) => a.overrules));
   const heat = (v: number) => (metric === "attempts" ? Math.min(1, Math.max(0, (v - 1) / Math.max(0.5, maxAttempts - 1))) : Math.min(1, v / maxOverrules));
+
+  // where rework concentrates: each area's human overrules across all the weeks, most first, with its average attempts per criterion
+  const ranked = t.areas
+    .map((a) => {
+      const withCriteria = a.attempts.filter((v) => v > 0);
+      return {
+        path: a.path,
+        overrules: a.overrules.reduce((s, v) => s + v, 0),
+        attempts: withCriteria.length ? withCriteria.reduce((s, v) => s + v, 0) / withCriteria.length : null,
+      };
+    })
+    .sort((x, y) => y.overrules - x.overrules || (y.attempts ?? 0) - (x.attempts ?? 0));
+  const maxRank = Math.max(1, ...ranked.map((r) => r.overrules));
 
   return (
     <>
@@ -50,31 +56,29 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
       </section>
 
       <Panel
-        title="Rework hotspots"
-        sub="Click a row or a cell to filter the PR list below"
+        title="Rework by area"
+        sub={`${metric === "attempts" ? "Attempts per criterion" : "Human overrules"}, by area and week`}
         aside={<>{src(t.sources.areas)} <Seg value={metric} onChange={setMetric} options={[{ id: "attempts", label: "Attempts" }, { id: "overrules", label: "Overrules" }]} /></>}
       >
-        <div className="tm-heat" role="grid" aria-label="Rework by area and week">
+        <div className="tm-heat" role="table" aria-label="Rework by area and week">
           <span />
-          {labels.map((w) => <span key={w} className="hd">{w.slice(4)}</span>)}
+          {labels.map((w) => <span key={w} className="hd">{w}</span>)}
           {t.areas.map((a) => {
-            const vals = metric === "attempts" ? a.attempts : a.overrules;
+            const vals = (metric === "attempts" ? a.attempts : a.overrules).slice(from);
             return (
               <div key={a.path} style={{ display: "contents" }} role="row">
-                <button className={`tm-rowlbl ${sel?.area === a.path && sel.week === null ? "on" : ""}`} title={a.path} onClick={() => setSel(sel?.area === a.path && sel.week === null ? null : { area: a.path, week: null })}><span className="pre">{a.path.split("/")[0]}/</span>{a.path.split("/")[1]}</button>
+                <span className="tm-rowlbl" title={a.path}><span className="pre">{a.path.split("/")[0]}/</span>{a.path.split("/")[1]}</span>
                 {vals.map((v, w) => {
-                  const empty = a.attempts[w] === 0;
-                  const on = sel?.area === a.path && sel.week === w;
+                  const empty = a.attempts[w + from] === 0;
                   return (
-                    <button
+                    <span
                       key={w}
-                      className={`tm-cell ${empty ? "empty" : ""} ${on ? "on" : ""}`}
+                      className={`tm-cell ${empty ? "empty" : ""}`}
                       style={empty ? undefined : { ["--p" as string]: `${Math.round(8 + heat(v) * 62)}%` }}
                       title={empty ? `${a.path}, week of ${labels[w]}: no criteria` : `${a.path}, week of ${labels[w]}: ${metric === "attempts" ? `${v.toFixed(1)} attempts per criterion` : `${v} overrules`}`}
-                      onClick={() => setSel(on ? null : { area: a.path, week: w })}
                     >
                       {empty ? "·" : metric === "attempts" ? v.toFixed(1) : v}
-                    </button>
+                    </span>
                   );
                 })}
               </div>
@@ -85,7 +89,7 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
       </Panel>
 
       <div className="grid-7-5">
-        <Panel title="Criteria quality" sub={t.sources.funnel === "measured" ? "Was it the agent, or the brief? One row per session." : "Was it the agent, or the brief?"} aside={src(t.sources.funnel)}>
+        <Panel title="Criteria quality" sub="Was it the agent, or the brief?" aside={src(t.sources.funnel)}>
           <div className="tm-fun">
             <div className="tm-fr"><span className="lbl">All criteria</span><div className="tm-bar"><span className="all" style={{ width: "100%" }} /></div><b>{f.total}</b></div>
             <div className="tm-fr"><span className="lbl">Met first try</span><div className="tm-bar"><span className="ok" style={{ width: bar(f.first) }} /></div><b>{f.first}</b></div>
@@ -104,41 +108,24 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
               {t.suggestions.map((s) => (
                 <li key={s.text}>
                   <span className={`chip ${s.cause === "agent-missed" ? "agent" : "warn"}`}>{s.cause === "agent-missed" ? "Agent" : "Brief"}</span>
-                  <div>
-                    {s.text}
-                    <div className="tm-ev">
-                      {(s.public_ids ?? []).length > 0
-                        ? s.public_ids!.map((pid, idx) => <a key={pid} href={`#/pr/${pid}`}>{s.prs[idx] ? `PR #${s.prs[idx]}` : "View analysis"}</a>)
-                        : s.prs.map((n) => <a key={n} href="#/pr">PR #{n}</a>)}
-                    </div>
-                  </div>
+                  <div>{s.text}</div>
                 </li>
               ))}
             </ul>
           )}
         </Panel>
 
-        <Panel title="Same decision, decided differently" sub="Across repositories, same decision type">
-          {consistency.length === 0 ? (
-            <p className="tm-note">No cross-repository decision conflicts recorded yet.</p>
-          ) : (
-            <div className="tm-cons">
-              {consistency.map((c) => (
-                <div key={c.id} className="tm-cc">
-                  <div className="tm-cc-top"><TypeChip t={c.type} /><span className="panel-sub">{c.rows.reduce((s, r) => s + r.prs, 0)} PRs</span></div>
-                  <h3>{c.question}</h3>
-                  {c.rows.map((r) => (
-                    <div key={r.team} className={`tm-ct ${r.team === t.id ? "me" : ""}`}>
-                      <span className="tn">{names[r.team] ?? r.team}</span>
-                      <span>{r.approach}</span>
-                      <span className="n">{r.prs} PRs</span>
-                    </div>
-                  ))}
-                  <a className="btn sm tm-cta" href="#/govern">Make this a policy <ArrowRight size={14} /></a>
-                </div>
-              ))}
-            </div>
-          )}
+        <Panel title="Where rework concentrates" sub="Areas ranked by human overrules, last 8 weeks" aside={src(t.sources.areas)}>
+          <ol className="tm-rank">
+            {ranked.map((r) => (
+              <li key={r.path}>
+                <span className="tm-rank-p" title={r.path}>{r.path}</span>
+                <b>{r.overrules}</b>
+                <span className="tm-rank-bar"><i style={{ width: `${(r.overrules / maxRank) * 100}%` }} /></span>
+                <span className="tm-rank-a">{r.attempts === null ? "no criteria" : `${r.attempts.toFixed(1)} attempts per criterion`}</span>
+              </li>
+            ))}
+          </ol>
         </Panel>
       </div>
 
@@ -172,60 +159,6 @@ function TeamBody({ t, consistency, names }: { t: TeamPage; consistency: Consist
           {t.sources.tools === "sample" && <p className="tm-note">Token counts are illustrative until the hook keeps them.</p>}
         </Panel>
       </div>
-
-      <Panel
-        title="Recent PRs"
-        sub={`${prs.length} of ${t.prs.length}`}
-        aside={sel && (
-          <div className="tm-filter">
-            <span className="chip human">{sel.area}{sel.week !== null && ` · wk ${labels[sel.week]}`}</span>
-            <button className="tm-clear" onClick={() => setSel(null)}>Clear</button>
-          </div>
-        )}
-      >
-        <div className="tm-scroll">
-          <table className="table tm-table">
-            <thead><tr><th>PR / Commit</th><th>Agent</th><th>Decisions</th><th>Overrules</th><th>Attempts</th><th>Flags</th><th /></tr></thead>
-            <tbody>
-              {prs.length === 0 && <tr><td colSpan={7} className="tm-none">No PRs for that selection.</td></tr>}
-              {prs.map((p) => {
-                const ghUrl = p.pr_url ?? p.commit_url;
-                return (
-                  <tr key={p.public_id ?? p.number ?? p.title} onClick={() => { location.hash = prHref(p); }}>
-                    <td>
-                      <span className="num">{p.number != null ? `#${p.number}` : (p.short_sha ?? "push")}</span>
-                      {p.source === "measured" && <span className="chip ok" style={{ marginRight: 6 }}>Measured</span>}
-                      <a href={prHref(p)} onClick={(e) => e.stopPropagation()}>{p.title}</a>
-                      <span className="ar">{p.area}</span>
-                    </td>
-                    <td>{p.agent}</td>
-                    <td>
-                      <div className="tm-dm">
-                        <div className="tm-split"><span className="a" style={{ flex: p.agent_decisions }} /><span className="h" style={{ flex: p.human_decisions }} /></div>
-                        {p.agent_decisions}/{p.human_decisions}
-                      </div>
-                    </td>
-                    <td className="mono">{p.overrules}</td>
-                    <td className="mono">{p.attempts.toFixed(2)}</td>
-                    <td>
-                      {p.flags.length === 0 ? <span className="tm-none">none</span> : (
-                        <div className="tm-flags">{p.flags.map((fl) => <span key={fl} className={`chip ${fl === "unsupported" ? "bad" : "warn"}`}>{FLAG_LABEL[fl]}</span>)}</div>
-                      )}
-                    </td>
-                    <td>
-                      {ghUrl && (
-                        <a className="btn sm" href={ghUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
-                          {p.pr_url ? "View PR" : "View PR"} <ExternalLink size={12} />
-                        </a>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
     </>
   );
 }
@@ -239,7 +172,7 @@ export default function Team() {
       <PageHead
         crumbs={<>Org <b>›</b> Repositories <b>›</b> <span>{displayName}</span></>}
         title={q.data?.name ?? repo}
-        sub="Where rework piles up, whether the agent or the brief caused it, and recent agent sessions for this repository."
+        sub="Where rework piles up, whether the agent or the brief caused it, and how the team's agents spend their effort."
         meta={<>
           <RepoSelect repos={repos} value={repo} onChange={setRepo} />
           <span className="chip">Last 8 weeks</span>
@@ -251,7 +184,7 @@ export default function Team() {
         </>}
       />
       <DataGate q={q}>
-        {(t) => <TeamBody key={t.id} t={t} consistency={t.consistency ?? []} names={{}} />}
+        {(t) => <TeamBody key={t.id} t={t} />}
       </DataGate>
     </main>
   );
