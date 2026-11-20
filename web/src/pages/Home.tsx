@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Ban, CornerUpRight, ListPlus, MessagesSquare, ShieldX, Undo2 } from "lucide-react";
-import Stage from "./Stage";
-import "../styles/home.css";
+import IsoScene from "./iso/IsoScene";
+import StepViz2 from "./StepViz2";
+import "../styles/home2.css";
+import "../styles/viz2.css";
 
 const STEPS = [
-  { n: "", h: null, p: "Unpack reads agent sessions, types every decision, checks claims against evidence, and feeds approved human corrections back to every agent." },
-  { n: "01 · Session", h: "Read the session, not the diff.", p: "Every choice in the transcript, the agent's and yours, becomes a typed decision pinned to the turn that caused it: architecture, dependency, retries, test, design, scope." },
-  { n: "02 · Who decided", h: "Agent or human. Then check the rules.", p: "Each decision is attributed. Agent decisions are checked against the skills it was given, so adherence is a number, not a feeling." },
-  { n: "03 · Overrules", h: "Keep the “no”.", p: "When you say “don't add a library”, that is the most valuable line in the session. Unpack records the proposal, your choice and your exact words." },
-  { n: "04 · Iterations", h: "Was it the agent, or the brief?", p: "Every acceptance criterion, from your prompt or the ticket, gets a ladder. Needed a second try? Unpack tells you whether the agent missed it or the requirement was too thin." },
-  { n: "05 · Evidence", h: "Check the claim, not the story.", p: "“Full test coverage” is checked against the code graph and the test runs. The model extracts. Code decides." },
-  { n: "06 · Patterns", h: "Notice what keeps happening.", p: "The same overrule across sessions and teams becomes a policy candidate. A tech lead approves, edits or rejects it." },
-  { n: "07 · Loop", h: "Feed it back.", p: "Approved decisions publish into the skills and context every agent reads. Then Unpack measures whether the override stopped." },
+  { n: "", h: "", p: "Unpack records every decision an agent makes and every correction you make, checks them against your rules, and turns what repeats into policy every agent follows." },
+  { n: "01 · Record", h: "Record both voices", p: "Every choice in the session, the agent's and yours, becomes a typed decision pinned to the turn that caused it." },
+  { n: "02 · Human decision", h: "Capture the human decision", p: "When you say “don't add a library”, that is the most valuable line in the session. Unpack records the proposal, your choice and your exact words." },
+  { n: "03 · Check", h: "Check agents against your rules", p: "Agent decisions are checked against the skills they were given and against the evidence, so adherence is a number, not a feeling." },
+  { n: "04 · Patterns", h: "Notice what repeats", p: "The same overrule across sessions and teams becomes a policy candidate. One developer is a preference; several is a pattern." },
+  { n: "05 · Approve", h: "Approve it", p: "A tech lead approves, edits or rejects. Set the scope, how hard it is enforced, and when it expires." },
+  { n: "06 · Publish", h: "Publish, then measure", p: "Approved decisions are published into the skills and context every agent reads. Then Unpack measures whether the override stopped." },
 ];
 
 const KINDS = [
@@ -25,10 +26,9 @@ const KINDS = [
 
 export default function Home() {
   const [step, setStep] = useState(0);
-  const story = useRef<HTMLDivElement>(null);
   const refs = useRef<(HTMLElement | null)[]>([]);
 
-  // which step is "current": the one crossing a band of the viewport (lower band on phones, where the figure is pinned on top)
+  // the current step is the one crossing a band of the viewport (a lower band on phones, where the scene is pinned on top)
   useEffect(() => {
     const phone = matchMedia("(max-width: 900px)").matches;
     const io = new IntersectionObserver(
@@ -39,49 +39,33 @@ export default function Home() {
     return () => io.disconnect();
   }, []);
 
-  // scroll progress drives the slight parallax of the figure
-  useEffect(() => {
-    let raf = 0;
-    const on = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const el = story.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const p = Math.min(1, Math.max(0, -r.top / Math.max(1, r.height - innerHeight)));
-        el.style.setProperty("--sp", p.toFixed(3));
-      });
-    };
-    addEventListener("scroll", on, { passive: true });
-    return () => { removeEventListener("scroll", on); cancelAnimationFrame(raf); };
-  }, []);
-
-  // hash routes own the URL hash, so in-page links scroll by hand
-  const jump = (id: string) => (e: React.MouseEvent) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); };
-
   return (
     <main>
-      <section className="wrap story" ref={story}>
-        <div className="stage-col"><div className="stage-tilt"><Stage step={step} /></div></div>
-        <div className="steps">
+      <section className="wrap hx-story">
+        <div className="hx-stage-col"><div className="hx-stage"><IsoScene step={step} /></div></div>
+        <div className="hx-steps">
           {STEPS.map((s, i) => (
-            <article key={i} className="step" data-i={i} data-active={step === i} ref={(el) => { refs.current[i] = el; }}>
+            <article key={i} className="hx-step" data-i={i} data-active={step === i} ref={(el) => { refs.current[i] = el; }}>
               {i === 0 ? (
                 <>
-                  <span className="eyebrow">Agent decision observability</span>
-                  <h1 className="display hero-h">Every decision your agents made. <em>And every one you overruled.</em></h1>
+                  <span className="eyebrow">Agent decision governance</span>
+                  <h1 className="display hx-hero">Agents decide. Humans overrule. <em>Governance makes it stick.</em></h1>
                   <p>{s.p}</p>
-                  <div className="cta">
-                    <a className="btn primary" href="#/pr">See a PR unpacked <ArrowRight size={16} /></a>
-                    <a className="btn" href="#humans" onClick={jump("humans")}>How it reads</a>
+                  <div className="hx-cta">
+                    <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
+                    <a className="btn" href="#/pr">See a PR unpacked</a>
                   </div>
-                  <ul><li className="chip agent">Agent decided</li><li className="chip human">Human overruled</li><li className="chip sim">Illustrative data</li></ul>
+                  <ul className="hx-chips">
+                    <li className="chip agent">Agent decided</li><li className="chip human">Human decided</li>
+                    <li className="chip ok">Became policy</li><li className="chip sim">Illustrative data</li>
+                  </ul>
                 </>
               ) : (
                 <>
-                  <span className="num">{s.n}</span>
+                  <span className="hx-num">{s.n}</span>
                   <h2 className="display">{s.h}</h2>
                   <p>{s.p}</p>
+                  <StepViz2 i={i} />
                 </>
               )}
             </article>
@@ -89,21 +73,18 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section" id="humans">
+      <section className="hx-section" id="humans">
         <div className="wrap">
           <span className="eyebrow">Where human decisions come from</span>
           <h2 className="display">Six ways you steer an agent. <em>All of them get recorded.</em></h2>
-          <p className="lede">Most of the signal is not in the code. It is in what you said, refused or changed while the agent worked.</p>
-          <div className="flow" aria-label="How a human decision flows through Unpack">
-            <span>Session turns + ticket and PR comments</span><b>›</b>
-            <span>Classified: who · type · kind</span><b>›</b>
-            <span>PR story</span><b>›</b>
-            <span>Governance inbox</span><b>›</b>
-            <span>Skill</span>
+          <p className="hx-lede">Most of the signal is not in the code. It is in what you said, refused or changed while the agent worked.</p>
+          <div className="hx-flow" aria-label="How a human decision flows through Unpack">
+            <span>Session turns + ticket and PR comments</span><b>›</b><span>Classified: who · type · kind</span><b>›</b>
+            <span>PR story</span><b>›</b><span>Governance inbox</span><b>›</b><span>Skill</span>
           </div>
-          <div className="hkinds">
+          <div className="hx-kinds">
             {KINDS.map(({ icon: Icon, name, quote, records, where }) => (
-              <article className="hkind" key={name}>
+              <article className="hx-kind" key={name}>
                 <header><Icon size={16} aria-hidden="true" /><h3>{name}</h3></header>
                 <blockquote>{quote}</blockquote>
                 <p><span>Records</span>{records}</p>
@@ -114,73 +95,79 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section" id="views">
+      <section className="hx-section" id="views">
         <div className="wrap">
           <span className="eyebrow">One record, every altitude</span>
           <h2 className="display">From the boardroom to <em>a single turn.</em></h2>
-          <p className="lede">The same verified record answers different questions at each level. Click down from the company to the exact quote that started it.</p>
-          <div className="drill" aria-label="Drill-down path">
+          <p className="hx-lede">The same verified record answers different questions at each level. Click down from the company to the exact quote that started it.</p>
+          <div className="hx-drill" aria-label="Drill-down path">
             <span>Company</span><b>›</b><span>Team</span><b>›</b><span>PR</span><b>›</b><span>Session</span><b>›</b><span>Decision</span>
           </div>
-          <div className="alt">
-            <a className="alt-card" href="#/exec">
+          <div className="hx-alt">
+            <a className="hx-card" href="#/exec">
               <span className="chip">Leadership</span>
               <h3>Are agents following our rules?</h3>
               <p>Adherence to skills, repeat overrides and decision mix. No names, no rankings.</p>
-              <div className="alt-viz">
-                <div className="big">86<small>% adherence</small></div>
-                <svg className="spark" viewBox="0 0 200 56" preserveAspectRatio="none"><path d="M0 46 C 30 44, 40 38, 70 34 S 120 26, 150 16 S 185 8, 200 6" /></svg>
+              <div className="hx-viz">
+                <div className="hx-big">86<small>% adherence</small></div>
+                <svg className="hx-spark" viewBox="0 0 200 56" preserveAspectRatio="none"><path d="M0 46 C 30 44, 40 38, 70 34 S 120 26, 150 16 S 185 8, 200 6" /></svg>
               </div>
+              <span className="hx-link">Open the executive view <ArrowRight size={14} /></span>
             </a>
-            <a className="alt-card" href="#/team">
+            <a className="hx-card" href="#/team">
               <span className="chip">Engineering managers</span>
               <h3>Where does rework pile up?</h3>
-              <p>Iterations per criterion by area, and whether the cause was the agent or the brief.</p>
-              <div className="alt-viz">
+              <p>Rework by area, and whether the cause was the agent or the brief.</p>
+              <div className="hx-viz">
                 {[["payments", 78, 14], ["auth", 50, 9], ["search", 22, 4]].map(([n, w, c]) => (
-                  <div className="hbar" key={n as string}><span>{n}</span><i style={{ ["--w" as string]: `${w}%` }} /><span>{c}</span></div>
+                  <div className="hx-bar" key={n as string}><span>{n}</span><i style={{ ["--w" as string]: `${w}%` }} /><span>{c}</span></div>
                 ))}
               </div>
+              <span className="hx-link">Open the manager view <ArrowRight size={14} /></span>
             </a>
-            <a className="alt-card" href="#/govern">
-              <span className="chip">Governance</span>
+            <a className="hx-card" href="#/govern">
+              <span className="chip human">Governance</span>
               <h3>What should every agent learn?</h3>
               <p>Policy candidates with their evidence. Approve, edit or reject. Set scope, enforcement and expiry.</p>
-              <div className="alt-viz inbox">
+              <div className="hx-viz hx-inbox">
                 <div>No new runtime dependency <span className="chip human">11 sessions</span></div>
                 <div>Never skip a failing test <span className="chip human">8 sessions</span></div>
                 <div>Async parity in retries <span className="chip warn">3 sessions</span></div>
               </div>
+              <span className="hx-link">Open the governance inbox <ArrowRight size={14} /></span>
             </a>
           </div>
-          <p className="eyebrow" style={{ marginTop: "var(--sp-4)" }}>Illustrative data</p>
+          <p className="hx-note">Illustrative data</p>
         </div>
       </section>
 
-      <section className="section">
+      <section className="hx-section">
         <div className="wrap">
           <span className="eyebrow">Neutral by design</span>
           <h2 className="display">Reads the agent you <em>already use.</em></h2>
-          <p className="lede">One adapter per agent, one common session format. Everything downstream sees the same record.</p>
-          <div className="agents">
+          <p className="hx-lede">One adapter per agent, one common session format. Everything downstream sees the same record.</p>
+          <div className="hx-agents">
             <span className="chip ok">Gemini CLI · built</span>
-            <span className="chip">Claude Code · next</span>
-            <span className="chip">Codex</span>
-            <span className="chip">Cursor</span>
-            <span className="chip">Copilot</span>
+            <span className="chip ok">Claude Code · adapter built</span>
+            <span className="chip">Codex · next</span>
+            <span className="chip">Cursor · next</span>
+            <span className="chip">Copilot · next</span>
           </div>
         </div>
       </section>
 
-      <section className="section final">
+      <section className="hx-section hx-final">
         <div className="wrap">
-          <span className="eyebrow">See it on a real PR</span>
-          <h2 className="display">Decisions, overrules and claims, <em>on the record.</em></h2>
-          <div className="cta"><a className="btn primary" href="#/pr">Open the example PR <ArrowRight size={16} /></a></div>
+          <span className="eyebrow">Governance, not just a log</span>
+          <h2 className="display">Make every correction <em>count once.</em></h2>
+          <div className="hx-cta hx-center">
+            <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
+            <a className="btn" href="#/pr">See a PR unpacked</a>
+          </div>
         </div>
       </section>
 
-      <footer className="wrap foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap hx-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }
