@@ -1,6 +1,6 @@
 # Code knowledge graph: design
 
-This document describes the code knowledge graph in `unpack_graph/`: what it computes, how it works, the decisions behind it, and how it is validated. It applies to any Python repository. The validation numbers quoted here come from six repositories: httpx 0.28.1, flask, requests, click, attrs and this repository.
+This document describes the code knowledge graph in `unpack_graph/`: what it computes, how it works, the decisions behind it, and how it is validated. It applies to any Python repository. The validation numbers quoted here come from six repositories: httpx 0.28.1, flask, requests, click, attrs and this repository. The contents of the graph, the response shapes and the query interface are in `graph-api.md`.
 
 ## 1. Purpose
 
@@ -80,7 +80,7 @@ The library itself needs `tree-sitter`, `tree-sitter-python` and `neo4j`. `jsons
 * A **module id** is the repository-relative path: `httpx/_client.py`.
 * A **function or class id** is `relative/path.py::Qual.Name`. Nested definitions use `<locals>`: `outer.<locals>.inner`.
 * Duplicate names within a file get a suffix: a property setter `Class.prop#setter`, a deleter `#deleter`, any other redefinition `#2`, `#3`.
-* Module names come from `__init__.py` ancestry, so `src/flask/app.py` is `flask.app`. No configuration is needed for flat, package or `src/` layouts.
+* Module names follow PEP 420: a directory is a package when it has `__init__.py` or holds `.py` files, so `src/flask/app.py` is `flask.app` and `src/flask/sansio/app.py` is `flask.sansio.app`. No configuration is needed for flat, package, `src/` or namespace layouts.
 
 ### Hashes
 
@@ -259,7 +259,7 @@ The output is validated against `schemas/graphview.schema.json`. `meta.module_ch
 
 ### 10.1 Schema
 
-`Module`, `Class` and `Function` nodes (with `:Test` on test functions and `:Ghost` on deleted functions). Relationships: `CONTAINS`, `HAS_METHOD`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `CALLS` (with the same properties as the in-memory edge) and `REACHES` (with depth, path and whether it is uncertain). Indexes on `id`, `path` and `name`. All writes are `UNWIND` batches of 500.
+`Module`, `Class` and `Function` nodes (with `:Test` on test functions and `:Ghost` on deleted functions). Relationships: `CONTAINS`, `HAS_METHOD`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `CALLS` (with the same properties as the in-memory edge) and `REACHES` (with depth, path and whether it is uncertain). Fifteen indexes are created by `ensure_schema`: `id`, `path`, `name` and `qualname` on each node label, the composite `Function(path, name)`, `Function(test_label)` for untested-function queries, `CALLS(tier)` and `REACHES(depth)` on relationships. The full list, and the queries they serve, are in `graph-api.md` section 7. All writes are `UNWIND` batches of 500. The new indexes have not yet been run against a live server (see section 13).
 
 ### 10.2 Region query
 
@@ -291,6 +291,8 @@ unpack-graph changed  <repo> <base> <head> [--json]               # classified c
 unpack-graph region   <repo> <base> <head> [--cap N] [--tests-per-node N] [--out FILE] [--neo4j]
 unpack-graph eval     <repo> [--json FILE]                        # measurements (exit 1 on mismatch)
 unpack-graph coverage-check <repo> <coverage.json> [--json FILE] [--strict-none]  # exit 1 on any false none
+unpack-graph query    <repo> <op> [target] [--rev REV] [--limit N] [--include-uncertain] [--include-tests] [--timing]  # one question, JSON
+                                                                # ops: find node callers callees tests overrides class unresolved untested
 ```
 
 Neo4j connection: `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The repository's `docker-compose.yml` provides the service.
@@ -327,7 +329,9 @@ view = build_region(cs)                              # the GraphView dict
 
 The unit tests (`pytest`) cover every corner in the fixtures under `tests/fixtures/`: nested and decorated definitions, every import form, re-exports, inheritance and `super()`, type inference forms, dispatch, ambiguity, containers, enums, yield and except bindings, argument gating, import-time code, change classification, region schema validation, Neo4j parity and delta, and incremental equivalence.
 
-Performance on httpx (60 files, one process): a full build takes about 1.3 s; loading into Neo4j about 8 s, of which about 6 s writes the 107,691 `REACHES` relationships; a region query 40 ms to 70 ms.
+Query speed, measured on this container with the in-memory index (`graph-api.md` section 8): a query over a loaded index takes 1 to 2 microseconds at the median and at most 0.14 ms at p99 on the six repositories. The cold build is the cost: 0.5 s to 2.6 s per repository, and the index build adds 4 to 82 ms. A pickled snapshot does not help: it reloads in 0.18 to 0.45 s. From a cold start the CLI answers in under a second, not in milliseconds.
+
+Neo4j timing is not re-measured yet. An earlier run on httpx gave a load of about 8 s (about 6 s writing the 107,691 `REACHES` relationships) and region queries of 40 to 70 ms; those predate the indexes. Re-measuring needs a running server (`docker compose up -d neo4j`). This session could not start one, so the new Neo4j indexes and the cypher in `graph-api.md` section 7.1 are unverified.
 
 ## 14. Limits
 
@@ -386,6 +390,9 @@ Results so far: httpx (all checks above), flask, requests, click and attrs (pass
 | Delta update by diffing keyed rows | Exact, and independent of the change that caused it |
 | Jedi not kept | It resolved none of the sites the resolver left open |
 | `none` is the only red flag; `reached` is never presented as executed | Static reachability over-approximates by about a third |
+| Indexes are built once per graph; each query reads dictionaries | Measured: 1 to 2 microseconds per query on the six repositories. The build dominates a cold start, so indexing the graph is the cheapest way to make queries fast |
+| No pickled snapshot for cold starts | Reloading a pickled graph took 0.18 to 0.45 s, and rebuilding the index added 0.15 to 0.4 s. Not milliseconds, so not used |
+| Every query returns one JSON document | One output format, scriptable, with no per-command text formatting to maintain |
 | Region output follows the existing schema | The schema is the repository's contract; the internal roles are kept as `relation` |
 | Module names follow the directory chain (PEP 420) | `src/flask/sansio/app.py` was named `app` with no `__init__.py` in `sansio/`. Fixing it cut flask's false `none` count from 130 to 23 |
 | Implicit invocations are `reached_uncertain` by default; `--strict-none` restores `none` | Dunders, closures and methods of externally based classes are run by machinery the graph cannot see. Under the default, flask's false `none` count fell from 23 to 8 and click's true `none` count from 23 to 13: the policy trades some untested-function reports for fewer false alarms. It is a flag so the choice stays with the user |
