@@ -34,6 +34,7 @@ dependencies = [
     "httpx>=0.27.0",
     "pyjwt[crypto]>=2.9.0",
     "python-multipart>=0.0.9",
+    "pillow>=10.4.0",
 
     # CLI dependencies
     "click>=8.1.7",
@@ -63,3 +64,5 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# fixtures are analysis input (deliberately unusual code), not project code
+exclude = ["tests/fixtures"]

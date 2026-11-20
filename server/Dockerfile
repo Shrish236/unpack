@@ -22,18 +22,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e .
-
-# Install Playwright browser
-RUN playwright install --with-deps chromium
-
-# Copy application source
+# Copy application source first: the editable install below needs the package directories to exist
+COPY pyproject.toml README.md ./
 COPY server/ ./server/
 COPY unpack_graph/ ./unpack_graph/
 COPY cli/ ./cli/
 COPY schemas/ ./schemas/
+
+# Install python dependencies
+RUN pip install --no-cache-dir -e .
+
+# Install Playwright browser
+RUN playwright install --with-deps chromium
 
 # Copy built frontend assets
 COPY --from=web-builder /web/dist ./web/dist
