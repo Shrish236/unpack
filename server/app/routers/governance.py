@@ -19,12 +19,11 @@ from ..db import get_db
 from ..deps import viewer
 from ..errors import ApiError
 from ..dashboard_seed import BRIEFS  # the dummy briefs; a revised policy reopens with its own when one exists
-from ..models import GovCandidate, GovEvidence, GovHistory, GovPolicy, GovSkillRule
+from ..models import Analysis, GovCandidate, GovEvidence, GovHistory, GovPolicy, GovSkillRule, Push, Repo, User
 
 router = APIRouter(prefix="/api/governance", dependencies=[Depends(viewer)])
 
-ROLE = "Tech lead (you)"
-# Placeholder mapping until a team and repo picker exists. The mock used the same names.
+# Fallback scope names when no repo query param is passed.
 SCOPE_NAME = {"org": "Org", "team": "Payments", "repo": "payments-service"}
 TREND_ON_REVISE = [1, 1, 2, 1, 2, 2, 3, 3]
 
@@ -60,7 +59,21 @@ def _evidence_out(e: GovEvidence) -> dict[str, Any]:
     }
 
 
-async def _state(db: AsyncSession) -> dict[str, Any]:
+async def _repo_public_ids(db: AsyncSession, repo: str) -> tuple[Repo | None, set[str]]:
+    q = repo.strip().lower()
+    repos = list((await db.execute(select(Repo))).scalars())
+    target = next((r for r in repos if q == f"{r.owner}/{r.name}".lower() or q == r.name.lower()), None)
+    if target is None:
+        return None, set()
+    pids = set((await db.execute(
+        select(Analysis.public_id)
+        .join(Push, Push.id == Analysis.push_id)
+        .where(Push.repo_id == target.id)
+    )).scalars())
+    return target, pids
+
+
+async def _state(db: AsyncSession, repo: str | None = None) -> dict[str, Any]:
     candidates = (await db.execute(
         select(GovCandidate).where(GovCandidate.status == "open")
         .order_by((GovCandidate.source == "measured").desc(), GovCandidate.developers.desc(), GovCandidate.sessions.desc())
@@ -80,8 +93,32 @@ async def _state(db: AsyncSession) -> dict[str, Any]:
         if e.policy_id:
             by_policy[e.policy_id].append(_evidence_out(e))
 
+    resolved_repo: str | None = None
+    if repo:
+        target, repo_pids = await _repo_public_ids(db, repo)
+        resolved_repo = f"{target.owner}/{target.name}" if target else repo
+        repo_names = {repo.strip().lower()}
+        if target:
+            repo_names |= {target.name.lower(), f"{target.owner}/{target.name}".lower()}
+        candidates = [
+            c for c in candidates
+            if c.source == "measured" and any(e.get("public_id") in repo_pids for e in by_candidate[c.id])
+        ]
+        policies = [
+            p for p in policies
+            if p.scope == "org" or p.scope_name.lower() in repo_names
+        ]
+        rules = [
+            r for r in rules
+            if r.source == "measured" and (r.latest_public_id is None or r.latest_public_id in repo_pids)
+        ]
+
+    has_sample = any(c.source == "sample" for c in candidates) or any(r.source == "sample" for r in rules)
+
     return {
         "today": _today().isoformat(),
+        "repo": resolved_repo,
+        "source": "sample" if has_sample else "measured",
         "candidates": [
             {
                 "id": c.id, "pid": c.pid, "statement": c.statement, "type": c.type, "sessions": c.sessions,
@@ -162,12 +199,18 @@ async def _active_policy(db: AsyncSession, policy_id: str) -> GovPolicy:
 
 
 @router.get("")
-async def governance_inbox(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    return await _state(db)
+async def governance_inbox(repo: str | None = None, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    return await _state(db, repo=repo)
 
 
 @router.post("/candidates/{candidate_id}/approve")
-async def approve(candidate_id: str, body: ApproveIn, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def approve(
+    candidate_id: str,
+    body: ApproveIn,
+    repo: str | None = None,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     candidate = await _open_candidate(db, candidate_id)
     today = _today()
     statement = body.statement.strip()
@@ -180,66 +223,89 @@ async def approve(candidate_id: str, body: ApproveIn, db: AsyncSession = Depends
     if await db.get(GovPolicy, candidate.pid) is not None:
         raise ApiError(409, "policy_exists", f"policy {candidate.pid} already exists")
 
+    scope_name = repo if (body.scope == "repo" and repo) else SCOPE_NAME[body.scope]
+    actor_role = f"@{auth[0].login}"
     db.add(GovPolicy(
         id=candidate.pid, statement=statement, type=candidate.type, scope=body.scope,
-        scope_name=SCOPE_NAME[body.scope], enforcement=body.enforcement, owner=body.owner, expires=body.expires,
+        scope_name=scope_name, enforcement=body.enforcement, owner=body.owner, expires=body.expires,
         adherence=None, before=candidate.per_hundred, after=None, match=candidate.match,
         status="active", published_on=today, target=body.target, review_on=body.review,
     ))
     candidate.status = "approved"
     candidate.decided_at = datetime.now(timezone.utc)
     db.add(GovHistory(
-        id=f"h-{candidate.pid}", statement=statement, outcome="approved", role=ROLE, occurred_on=today,
+        id=f"h-{candidate.pid}", statement=statement, outcome="approved", role=actor_role, occurred_on=today,
         why=f"{candidate.sessions} sessions across {candidate.teams} teams, {candidate.developers} developers."
         + (f" Target: {body.target} overrides per 100 sessions." if body.target is not None else ""),
     ))
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)
 
 
 @router.post("/candidates/{candidate_id}/reject")
-async def reject(candidate_id: str, body: RejectIn | None = None, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def reject(
+    candidate_id: str,
+    body: RejectIn | None = None,
+    repo: str | None = None,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     candidate = await _open_candidate(db, candidate_id)
     reason = body.reason.strip() if body else ""
     candidate.status = "rejected"
     candidate.decided_at = datetime.now(timezone.utc)
     db.add(GovHistory(
-        id=f"h-{candidate.pid}", statement=candidate.statement, outcome="rejected", role=ROLE, occurred_on=_today(),
+        id=f"h-{candidate.pid}", statement=candidate.statement, outcome="rejected", role=f"@{auth[0].login}", occurred_on=_today(),
         why=reason or "No reason given.",
     ))
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)
 
 
 @router.post("/candidates/{candidate_id}/watch")
-async def watch(candidate_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def watch(
+    candidate_id: str,
+    repo: str | None = None,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """"Not yet": the candidate stays in the inbox and the decision is logged, so it is looked at again later."""
     candidate = await _open_candidate(db, candidate_id)
     until = _today() + timedelta(days=WATCH_DAYS)
     db.add(GovHistory(
-        id=await _next_id(db, f"h-{candidate.pid}-w"), statement=candidate.statement, outcome="watching", role=ROLE,
+        id=await _next_id(db, f"h-{candidate.pid}-w"), statement=candidate.statement, outcome="watching", role=f"@{auth[0].login}",
         occurred_on=_today(), why=f"Not yet. Look again on {until.isoformat()}; at {candidate.sessions} sessions and "
                                   f"{candidate.developers} developers it needs more evidence.",
     ))
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)
 
 
 @router.post("/policies/{policy_id}/renew")
-async def renew(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def renew(
+    policy_id: str,
+    repo: str | None = None,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     policy = await _active_policy(db, policy_id)
     policy.expires = policy.expires + timedelta(days=RENEW_DAYS)
     now = "Still measuring." if policy.after is None else f"Overrides {policy.before} -> {policy.after} per 100 sessions."
     db.add(GovHistory(
-        id=await _next_id(db, f"h-{policy.id}-n"), statement=policy.statement, outcome="approved", role="Policy owner",
+        id=await _next_id(db, f"h-{policy.id}-n"), statement=policy.statement, outcome="approved", role=f"@{auth[0].login}",
         occurred_on=_today(), why=f"Renewed to {policy.expires.isoformat()}. {now}",
     ))
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)
 
 
 @router.post("/policies/{policy_id}/relax")
-async def relax(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def relax(
+    policy_id: str,
+    repo: str | None = None,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """Steps the enforcement down one level (gate, then check, then advice) when the check is noisy."""
     policy = await _active_policy(db, policy_id)
     step = STEP_DOWN.get(policy.enforcement)
@@ -249,27 +315,36 @@ async def relax(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str,
     if step == "advice":
         policy.checks_flagged = policy.checks_wrong = None
     db.add(GovHistory(
-        id=await _next_id(db, f"h-{policy.id}-x"), statement=policy.statement, outcome="approved", role="Policy owner",
+        id=await _next_id(db, f"h-{policy.id}-x"), statement=policy.statement, outcome="approved", role=f"@{auth[0].login}",
         occurred_on=_today(), why=f"Relaxed to {step}. Re-check accuracy before raising it again.",
     ))
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)
 
 
 @router.post("/policies/{policy_id}/retire")
-async def retire(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def retire(
+    policy_id: str,
+    repo: str | None = None,
+    auth: tuple[User, str] = Depends(viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     policy = await _active_policy(db, policy_id)
     policy.status = "retired"
     db.add(GovHistory(
-        id=f"h-{policy.id}-r", statement=policy.statement, outcome="expired", role="Policy owner",
+        id=f"h-{policy.id}-r", statement=policy.statement, outcome="expired", role=f"@{auth[0].login}",
         occurred_on=_today(), why="Retired: the override kept recurring after the policy.",
     ))
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)
 
 
 @router.post("/policies/{policy_id}/revise")
-async def revise(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def revise(
+    policy_id: str,
+    repo: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """Reopens a policy that is still being overridden as a candidate, so its statement can be edited."""
     policy = await _active_policy(db, policy_id)
     if policy.recurrence_sessions is None:
@@ -284,7 +359,7 @@ async def revise(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str
     db.add(GovCandidate(
         id=candidate_id, pid=pid, statement=policy.statement, type=policy.type,
         sessions=policy.recurrence_sessions, teams=policy.recurrence_teams or 0,
-        developers=policy.recurrence_developers or 0, trend=TREND_ON_REVISE, per_hundred=policy.after or 0,
+        developers=policy.recurrence_developers or 0, trend=list(policy.weekly) if policy.weekly else TREND_ON_REVISE, per_hundred=policy.after or 0,
         match=policy.match, scope=policy.scope, enforcement=policy.enforcement, owner=policy.owner,
         expires=policy.expires, first_seen=_today(), status="open", brief=_revised_brief(policy),
     ))
@@ -300,4 +375,4 @@ async def revise(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str
         ))
     policy.status = "revised"
     await db.flush()
-    return await _state(db)
+    return await _state(db, repo=repo)

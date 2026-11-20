@@ -39,9 +39,15 @@ function Trend({ d }: { d: ExecData }) {
   const H = 244, L = 34, R = 44, T = 32, B = 26;
   const a = d.adherence, o = d.repeat_overrides, labels = d.weeks.map(shortDay);
   const n = a.length;
+  const aVals = a.filter((v): v is number => v !== null);
+  const oVals = o.filter((v): v is number => v !== null);
+  const aMin = aVals.length ? Math.min(60, Math.floor(Math.min(...aVals) / 10) * 10) : 60;
+  const oMax = Math.max(14, Math.ceil((oVals.length ? Math.max(...oVals) : 0) / 7) * 7);
   const x = (i: number) => L + (i * (w - L - R)) / Math.max(1, n - 1);
-  const ya = (v: number) => T + ((100 - v) / 40) * (H - T - B);
-  const yo = (v: number) => T + ((14 - v) / 14) * (H - T - B);
+  const ya = (v: number) => T + ((100 - v) / Math.max(1, 100 - aMin)) * (H - T - B);
+  const yo = (v: number) => T + ((oMax - v) / Math.max(1, oMax)) * (H - T - B);
+  const aTicks = [aMin, Math.round((aMin + 100) / 2), 100];
+  const oTicks = [0, Math.round(oMax / 2), oMax];
   // a week with no value (null) leaves a gap in the line instead of a zero
   const path = (vs: (number | null)[], y: (v: number) => number) => {
     let pen = false;
@@ -53,13 +59,13 @@ function Trend({ d }: { d: ExecData }) {
   return (
     <div ref={ref} className="chart">
       <svg width={w} height={H} role="img" aria-label="Skill adherence and repeat-override rate by week, with policy publish dates">
-        {[60, 70, 80, 90, 100].map((v) => (
+        {aTicks.map((v) => (
           <g key={v}>
             <line x1={L} x2={w - R} y1={ya(v)} y2={ya(v)} className="grid" />
             <text x={L - 8} y={ya(v) + 4} textAnchor="end" className="ax">{v}%</text>
           </g>
         ))}
-        {[0, 7, 14].map((v) => <text key={v} x={w - R + 8} y={yo(v) + 4} className="ax human">{v}</text>)}
+        {oTicks.map((v) => <text key={v} x={w - R + 8} y={yo(v) + 4} className="ax human">{v}</text>)}
         {d.policy_events.map((e) => (
           <g key={e.id}>
             <line x1={x(e.week)} x2={x(e.week)} y1={T - 6} y2={H - B} className="event" />
@@ -110,7 +116,8 @@ function Mix({ d }: { d: ExecData }) {
             <g key={i}>
               {TYPE_ORDER.map((t) => {
                 const v = d.mix[t][i];
-                const r = <rect key={t} x={cx} y={y(acc + v)} width={bw} height={y(acc) - y(acc + v) - 1} rx="2" style={{ fill: `var(--t-${t})` }}><title>{shortDay(d.weeks[i])} · {TYPE_LABEL[t]}: {v}</title></rect>;
+                const h = Math.max(0, y(acc) - y(acc + v) - 1);
+                const r = h > 0 ? <rect key={t} x={cx} y={y(acc + v)} width={bw} height={h} rx="2" style={{ fill: `var(--t-${t})` }}><title>{shortDay(d.weeks[i])} · {TYPE_LABEL[t]}: {v}</title></rect> : null;
                 acc += v;
                 return r;
               })}
@@ -212,11 +219,15 @@ function ExecBody({ d }: { d: ExecData }) {
           </p>
         </Panel>
         <Panel title="Where human decisions come from" sub="share of human decisions, by how they entered the record" aside={src(d.sources.human_kinds)}>
-          <ul className="kinds">
-            {d.human_kinds.map((h) => (
-              <li key={h.kind}><span>{h.label}</span><span className="track"><i style={{ width: `${h.pct * 2.2}%` }} /></span><b className="mono">{h.pct}%</b></li>
-            ))}
-          </ul>
+          {d.human_kinds.length === 0 ? (
+            <p className="panel-sub">No human interventions recorded in this period yet.</p>
+          ) : (
+            <ul className="kinds">
+              {d.human_kinds.map((h) => (
+                <li key={h.kind}><span>{h.label}</span><span className="track"><i style={{ width: `${Math.min(100, h.pct)}%` }} /></span><b className="mono">{h.pct}%</b></li>
+              ))}
+            </ul>
+          )}
         </Panel>
         </div>
       </div>
@@ -247,23 +258,31 @@ function ExecBody({ d }: { d: ExecData }) {
         </Panel>
 
         <Panel title="Governance backlog" sub="policy candidates and expiries" aside={<Link href="#/govern">Open inbox</Link>}>
-          <ul className="rows">
-            {d.backlog.map((b) => (
-              <li key={b.id}>
-                <div><b>{b.statement}</b><div className="panel-sub">{b.id} · waiting {b.waiting_days}d</div></div>
-                <div className="chips left"><span className="chip human">{b.sessions} sessions</span><span className="chip">{b.teams} {b.teams === 1 ? "team" : "teams"}</span><span className="chip">{b.developers} devs</span></div>
-              </li>
-            ))}
-          </ul>
+          {d.backlog.length === 0 ? (
+            <p className="panel-sub">No policy candidates waiting for review.</p>
+          ) : (
+            <ul className="rows">
+              {d.backlog.map((b) => (
+                <li key={b.id}>
+                  <div><b>{b.statement}</b><div className="panel-sub">{b.id} · waiting {b.waiting_days}d</div></div>
+                  <div className="chips left"><span className="chip human">{b.sessions} sessions</span><span className="chip">{b.teams} {b.teams === 1 ? "team" : "teams"}</span><span className="chip">{b.developers} devs</span></div>
+                </li>
+              ))}
+            </ul>
+          )}
           <p className="panel-sub sect">Expiring soon</p>
-          <ul className="rows">
-            {d.expiring.map((e) => (
-              <li key={e.id}>
-                <div><b>{e.statement}</b><div className="panel-sub">{e.id} · owner {e.owner}</div></div>
-                <span className={`chip ${e.in_days <= 14 ? "warn" : ""}`}>in {e.in_days} days</span>
-              </li>
-            ))}
-          </ul>
+          {d.expiring.length === 0 ? (
+            <p className="panel-sub">No active policies expiring within 90 days.</p>
+          ) : (
+            <ul className="rows">
+              {d.expiring.map((e) => (
+                <li key={e.id}>
+                  <div><b>{e.statement}</b><div className="panel-sub">{e.id} · owner {e.owner}</div></div>
+                  <span className={`chip ${e.in_days <= 14 ? "warn" : ""}`}>in {e.in_days} days</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Panel>
       </div>
     </>
@@ -274,16 +293,18 @@ export default function Exec() {
   const [period, setPeriod] = useState<Period>("30d");
   const q = useExec(period);
   const sessions = q.data?.kpis.sessions;
+  const repoCount = q.data?.repo_count;
+  const repoLabel = repoCount === undefined ? "All repositories" : repoCount === 1 ? (q.data?.repos?.[0] ?? "1 repository") : `${repoCount} repositories`;
   return (
     <main className="wrap page exec">
       <PageHead
-        crumbs={<>Company <b>›</b> <span>Agent programme</span></>}
+        crumbs={<>Org <b>›</b> <span>All repositories</span></>}
         title="Can we trust our agent programme?"
-        sub="Adherence to our own rules, how often the same correction repeats, and whether claims hold up. Measured on agents, areas and policies, never on people."
+        sub="Adherence to our own rules, how often the same correction repeats, and whether claims hold up across every repository. Measured on agents, areas and policies, never on people."
         meta={
           <>
             <Seg<Period> value={period} onChange={setPeriod} options={[{ id: "30d", label: "30 days" }, { id: "90d", label: "90 days" }]} />
-            <span className="chip"><Layers size={12} /> All teams</span>
+            <span className="chip" title={q.data?.repos?.join(", ")}><Layers size={12} /> {repoLabel}</span>
             {sessions !== undefined && <span className="chip mono">{sessions.toLocaleString("en-US")} sessions</span>}
             {q.data && (Object.values(q.data.sources).every((s) => s === "measured")
               ? <span className="chip ok">Measured</span>

@@ -96,6 +96,17 @@ def repeated_ids(data: list[dict[str, Any]]) -> set[int]:
     return out
 
 
+def earned_autonomy(verified: int | None, unrequested: int | None) -> str | None:
+    """Earned autonomy level from measured verification and unrequested-change rates."""
+    if verified is None:
+        return None
+    if verified >= 80 and (unrequested is None or unrequested <= 10):
+        return "advice"
+    if verified >= 65 and (unrequested is None or unrequested <= 20):
+        return "check"
+    return "gate"
+
+
 def exec_metrics(data: list[dict[str, Any]], today: date, n_weeks: int) -> dict[str, Any] | None:
     weeks = week_window(today, n_weeks)
     start, end = weeks[0], weeks[-1] + timedelta(weeks=1)
@@ -141,11 +152,15 @@ def exec_metrics(data: list[dict[str, Any]], today: date, n_weeks: int) -> dict[
         },
         "rework": {"first": rework["first"], "missed": rework["missed"], "thin": rework["thin"]},
         "human_kinds": [{"kind": k, "label": label, "pct": _pct(kinds[k], len(human_all)) or 0}
-                        for k, label in HUMAN_KIND_LABELS] if human_all else None,
+                        for k, label in HUMAN_KIND_LABELS] if human_all else [],
         "agents": [
-            {"name": name, "tool": tool, "decisions": sum(1 for d in ds for x in d["decisions"] if x.actor == "agent"),
-             "verified": _pct(sum(is_verified(d) for d in ds), len(ds)), "unrequested": _unrequested(ds),
-             "attempts": round(sum(float(d["signals"].get("attempts", 1)) for d in ds) / len(ds), 2), "autonomy": None}
+            {
+                "name": name, "tool": tool, "decisions": sum(1 for d in ds for x in d["decisions"] if x.actor == "agent"),
+                "verified": (ver := _pct(sum(is_verified(d) for d in ds), len(ds))),
+                "unrequested": (unreq := _unrequested(ds)),
+                "attempts": round(sum(float(d["signals"].get("attempts", 1)) for d in ds) / len(ds), 2),
+                "autonomy": earned_autonomy(ver, unreq),
+            }
             for (name, tool), ds in sorted(agents.items(), key=lambda kv: -len(kv[1]))
         ],
     }

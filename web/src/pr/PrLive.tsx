@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { Bot, Code2, User } from "lucide-react";
+import { Bot, Code2, ExternalLink, User } from "lucide-react";
 import { ApiError, fetchAnalysis, fetchTurns, type AnalysisResponse, type Driver, type GovDecision, type Governance, type GNode, type Outcome, type Reason, type TimelineItem, type Turn } from "../api";
 import { TYPE_LABEL, type DType } from "../data";
 import { Kpi, PageHead, Panel, Seg } from "../ui";
@@ -128,6 +128,14 @@ function Live({ a, turns }: { a: AnalysisResponse; turns: Record<string, Turn> }
           {an.llm_model && <span className="chip">{an.llm_model}</span>}
           <span className="chip">{a.pull_request ? `PR #${a.pull_request.number} · ${a.pull_request.state}` : "No PR yet"}</span>
           <span className="chip ok">Live data · {an.public_id}</span>
+          <a
+            className="btn sm"
+            href={a.pull_request?.url || `https://github.com/${an.repo.owner}/${an.repo.name}/commit/${an.head_sha ?? an.short_sha}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View PR <ExternalLink size={13} />
+          </a>
           <PrMode mode="live" />
         </>}
       />
