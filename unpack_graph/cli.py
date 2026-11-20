@@ -198,6 +198,30 @@ def cmd_region(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    from .evaluate import evaluate_repo
+
+    result = evaluate_repo(args.repo)
+    text = json.dumps(result, indent=2)
+    if args.json:
+        Path(args.json).write_text(text, encoding="utf-8")
+    print(text)
+    return 0 if not result["coverage_vs_ast"]["files_with_mismatch"] else 1
+
+
+def cmd_coverage_check(args) -> int:
+    from .evaluate import compare_with_coverage
+
+    g = build_graph(FsSource(args.repo))
+    coverage = json.loads(Path(args.coverage).read_text(encoding="utf-8"))
+    result = compare_with_coverage(g, coverage)
+    text = json.dumps(result, indent=2)
+    if args.json:
+        Path(args.json).write_text(text, encoding="utf-8")
+    print(text)
+    return 0 if not result["false_none"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="unpack-graph", description="Unpack code knowledge graph CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -233,6 +257,19 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--neo4j", action="store_true",
                     help="answer with the single Cypher region query instead of the in-memory builder")
     rg.set_defaults(func=cmd_region)
+
+    ev = sub.add_parser("eval", help="measure extraction against ast, resolution and reachability")
+    ev.add_argument("repo")
+    ev.add_argument("--json", default=None, help="also write the measurements to this file")
+    ev.set_defaults(func=cmd_eval)
+
+    cc = sub.add_parser(
+        "coverage-check",
+        help="compare reachability labels with a real coverage run (exit 1 on any false none)")
+    cc.add_argument("repo", help="repository root; coverage must have been recorded from here")
+    cc.add_argument("coverage", help="coverage.py JSON report (`coverage json -o FILE`)")
+    cc.add_argument("--json", default=None, help="also write the comparison to this file")
+    cc.set_defaults(func=cmd_coverage_check)
     return parser
 
 
