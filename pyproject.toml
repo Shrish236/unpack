@@ -63,3 +63,5 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# fixtures are analysis input (deliberately unusual code), not project code
+exclude = ["tests/fixtures"]

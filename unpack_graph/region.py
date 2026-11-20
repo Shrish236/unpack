@@ -33,6 +33,20 @@ def func_props(f) -> dict:
     }
 
 
+def to_contract(node_list: list, edge_list: list) -> None:
+    """Shape nodes and edges as schemas/graphview.schema.json requires, in place.
+
+    Internal roles are finer than the contract's, so the internal role is kept as `relation`.
+    Every edge gets a stable `id`. Shared by the in-memory and the Neo4j region paths so that
+    both produce identical output.
+    """
+    for n in node_list:
+        n["relation"] = n["role"]
+        n["role"] = CONTRACT_ROLE[n["role"]]
+    for e in edge_list:
+        e["id"] = f'{e["kind"]}:{e["source"]}->{e["target"]}'
+
+
 def class_props(c) -> dict:
     return {"id": c.id, "name": c.name, "qualname": c.qualname, "path": c.path, "start": c.start,
             "end": c.end, "bases_raw": list(c.bases_raw), "bases": list(c.bases_raw)}
@@ -197,13 +211,7 @@ def build_region(cs: ChangeSet, cap: int = DEFAULT_CAP, tests_per_node: int = DE
                           "depth": t["depth"], "path": path_of(pairs[tid], fid)})
     node_list = sorted(nodes.values(), key=lambda n: (n["role"] != "changed", n["role"], n["id"]))
     edge_list = sorted(edges.values(), key=lambda e: (e["kind"], e["source"], e["target"]))
-    # Map to the GraphView contract (schemas/graphview.schema.json): its roles are coarser than the
-    # internal ones, so the detailed role is kept as `relation`.
-    for n in node_list:
-        n["relation"] = n["role"]
-        n["role"] = CONTRACT_ROLE[n["role"]]
-    for e in edge_list:
-        e["id"] = f'{e["kind"]}:{e["source"]}->{e["target"]}'
+    to_contract(node_list, edge_list)
 
     meta = build_meta(cs, changed_funcs, cap, tests_per_node)
     return {"version": VERSION, "meta": meta, "nodes": node_list, "edges": edge_list}
