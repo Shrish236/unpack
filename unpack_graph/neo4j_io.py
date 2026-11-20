@@ -55,6 +55,12 @@ SCHEMA_STMTS = [
     "CREATE INDEX function_id IF NOT EXISTS FOR (n:Function) ON (n.id)",
     "CREATE INDEX function_path IF NOT EXISTS FOR (n:Function) ON (n.path)",
     "CREATE INDEX function_name IF NOT EXISTS FOR (n:Function) ON (n.name)",
+    "CREATE INDEX function_qualname IF NOT EXISTS FOR (n:Function) ON (n.qualname)",
+    "CREATE INDEX function_path_name IF NOT EXISTS FOR (n:Function) ON (n.path, n.name)",
+    "CREATE INDEX function_label IF NOT EXISTS FOR (n:Function) ON (n.test_label)",
+    "CREATE INDEX class_qualname IF NOT EXISTS FOR (n:Class) ON (n.qualname)",
+    "CREATE INDEX calls_tier IF NOT EXISTS FOR ()-[r:CALLS]-() ON (r.tier)",
+    "CREATE INDEX reaches_depth IF NOT EXISTS FOR ()-[r:REACHES]-() ON (r.depth)",
 ]
 
 

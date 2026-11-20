@@ -26,6 +26,7 @@ import argparse
 import ast
 import json
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -213,6 +214,52 @@ def cmd_eval(args) -> int:
     return 0 if not result["coverage_vs_ast"]["files_with_mismatch"] else 1
 
 
+def cmd_query(args) -> int:
+    """Answer one question from an indexed in-memory graph (see docs/graph-api.md)."""
+    from .query import GraphIndex
+
+    t0 = time.perf_counter()
+    g = build_graph(_source(args.repo, args.rev), implicit_uncertain=_policy(args))
+    t1 = time.perf_counter()
+    ix = GraphIndex(g)
+    t2 = time.perf_counter()
+    op, target = args.op, args.target
+    if op == "find":
+        result = [ix.node(i) for i in ix.find(target, args.limit)]
+    else:
+        ids = ix.find(target, 5) if target else []
+        if not ids and op != "untested":
+            print(f"no function or class matches {target!r}", file=sys.stderr)
+            return 1
+        if op == "untested":
+            result = ix.untested_in(target or "", args.limit)
+        else:
+            fid = ids[0]
+            if len(ids) > 1:
+                print(f"note: {target!r} matches {len(ids)} ids, using {fid}", file=sys.stderr)
+            if op == "node":
+                result = ix.node(fid)
+            elif op == "callers":
+                result = ix.callers(fid, production_only=not args.include_tests)
+            elif op == "callees":
+                result = ix.callees(fid, production_only=not args.include_tests)
+            elif op == "tests":
+                result = ix.tests_for(fid, include_uncertain=args.include_uncertain, limit=args.limit)
+            elif op == "overrides":
+                result = ix.overrides(fid)
+            elif op == "class":
+                result = ix.class_info(fid)
+            elif op == "unresolved":
+                result = ix.unresolved(fid)
+            else:
+                raise SystemExit(f"unknown query {op!r}")
+    t3 = time.perf_counter()
+    print(json.dumps(result, indent=1, default=str))
+    if args.timing:
+        print(f"build {t1 - t0:.3f}s, index {t2 - t1:.4f}s, query {(t3 - t2) * 1000:.3f} ms", file=sys.stderr)
+    return 0
+
+
 def cmd_coverage_check(args) -> int:
     from .evaluate import compare_with_coverage
 
@@ -276,6 +323,21 @@ def build_parser() -> argparse.ArgumentParser:
     cc.add_argument("--json", default=None, help="also write the comparison to this file")
     cc.add_argument("--strict-none", action="store_true", help="see `build --help`")
     cc.set_defaults(func=cmd_coverage_check)
+
+    qy = sub.add_parser("query", help="answer one question from the graph: find, node, callers, callees, tests, "
+                                      "overrides, class, unresolved, untested")
+    qy.add_argument("repo", help="repository root (working tree)")
+    qy.add_argument("op", choices=["find", "node", "callers", "callees", "tests", "overrides", "class",
+                                   "unresolved", "untested"])
+    qy.add_argument("target", nargs="?", default="", help="function or class id, name, or qualified name; "
+                                                          "for untested, a path prefix")
+    qy.add_argument("--rev", default=None, help="read a git revision instead of the working tree")
+    qy.add_argument("--limit", type=int, default=None, help="maximum number of results")
+    qy.add_argument("--include-uncertain", action="store_true", help="tests: also list uncertain (ambiguous) paths")
+    qy.add_argument("--include-tests", action="store_true", help="callers/callees: include test code")
+    qy.add_argument("--strict-none", action="store_true", help="see `build --help`")
+    qy.add_argument("--timing", action="store_true", help="print build, index and query time to stderr")
+    qy.set_defaults(func=cmd_query)
     return parser
 
 
