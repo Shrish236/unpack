@@ -1,100 +1,115 @@
-"""Data model and schema definitions for the Unpack code knowledge graph."""
-
+"""Plain data model shared by extraction (pass 1), resolution (pass 2) and output."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Optional
 
-# Tiers of confidence for call resolution
-Tier = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS", "UNRESOLVED"]
-SiteStatus = Literal["resolved", "ambiguous", "unresolved", "external", "builtin", "no_init"]
-ReachLabel = Literal["direct", "reached", "reached_uncertain", "none", "test"]
-ChangeKind = Literal["added", "deleted", "modified", "renamed", "moved"]
+TIER_EXTRACTED = "EXTRACTED"
+TIER_INFERRED = "INFERRED"
+TIER_AMBIGUOUS = "AMBIGUOUS"
+TIER_UNRESOLVED = "UNRESOLVED"
+TIER_RANK = {TIER_EXTRACTED: 0, TIER_INFERRED: 1, TIER_AMBIGUOUS: 2, TIER_UNRESOLVED: 3}
 
 
 @dataclass
 class Shape:
-    """Syntactic shape of an expression or callee."""
-    kind: str  # "name", "call", "super", "literal", "coll", "index", "other"
+    """Syntactic shape of a callee or of a value expression.
+
+    kind: name | call | literal | other.  `base` is the identifier for kind=name
+    (this includes ``self``/``cls``; the resolver decides what they mean).  `super`
+    is encoded as kind=super.  `recv` is the inner call whose *result* is the
+    base for kind=call (``self.f(x).g()``).  `attrs` is the attribute chain after the base.
+    """
+    kind: str
     base: str = ""
-    attrs: list[str] = field(default_factory=list)
-    recv: CallSite | None = None
-    elems: list[str] = field(default_factory=list)
-    inner: Shape | None = None
+    attrs: tuple = ()
+    recv: Optional["CallSite"] = None
+    raw: str = ""
+    elems: tuple = ()                # kind=coll: shapes of the container's values/elements
+    inner: Optional["Shape"] = None  # kind=index: the subscripted expression
+
+    def last(self) -> str:
+        return self.attrs[-1] if self.attrs else self.base
 
 
 @dataclass
 class CallSite:
-    """Recorded call site in a function or module."""
     line: int
     col: int
+    end_line: int
     raw: str
-    callee: Shape
-    owner: str  # function id or module path
-    kwargs: list[str] = field(default_factory=list)
-    npos: int = 0
-    splat: bool = False
-    guards: list[str] = field(default_factory=list)  # parameter names guarding this call
-    arg_shapes: list[Shape] = field(default_factory=list)
+    shape: Shape
+    owner: str = ""            # function id, or module id for module-level calls
+    arg_names: tuple = ()      # bare Shapes passed as arguments (function references)
+    is_await: bool = False
+    kwargs: tuple = ()         # keyword argument names passed at this site
+    npos: int = 0              # number of positional arguments
+    splat: bool = False        # *args / **kwargs expansion present
+    guards: tuple = ()         # parameters whose positive test (`if p`, `p is not None`) encloses the call
 
 
 @dataclass
 class AttrAccess:
-    """Non-call attribute access (candidate for property getter/setter)."""
+    """A non-call attribute chain (property getter/setter candidates)."""
     line: int
-    raw: str
-    chain: list[str]
-    owner: str
-    is_write: bool = False
+    col: int
+    shape: Shape               # attrs non-empty
+    write: bool = False
+    owner: str = ""
 
 
 @dataclass
 class Implicit:
-    """Implicit protocol site (__enter__, __iter__, __getitem__, __bool__, etc.)."""
+    """An implicit protocol call, e.g. ``with expr as x`` -> __enter__/__exit__."""
     line: int
-    kind: str  # "with", "for", "subscript", "eq", "bool", "str", "len", "sorted"
-    dunder: str  # "__enter__", "__exit__", "__iter__", etc.
-    owner: str
+    col: int
+    kind: str                  # with | async_with | iter | getitem | eq | bool | str | op ...
+    shape: Shape               # shape of the operand expression
+    is_call: bool
+    owner: str = ""
+    raw: str = ""
+    names: tuple = ()          # dunder methods the protocol invokes
+    first: bool = False        # True: use the first dunder found; False: use all found
 
 
 @dataclass
 class Binding:
-    """Local variable binding for type inference."""
     name: str
-    kind: str  # "val", "ann", "param", "with", "for", "yield", "cast"
-    val: Shape | None = None
-    ann: str | None = None
+    kind: str                  # call | expr | with | ann | param
+    shape: Optional[Shape] = None
+    ann: Optional[str] = None
     line: int = 0
+    is_async: bool = False     # for `with`
+    index: int = 0             # for_unpack: position in the target tuple
 
 
 @dataclass
 class AttrBinding:
-    """Attribute binding (self.attr = ... or class-level attr = ...)."""
-    target: str  # "self.foo" or "Cls.foo"
-    val: Shape | None = None
-    ann: str | None = None
+    attr: str
+    kind: str                  # call | expr | ann
+    shape: Optional[Shape] = None
+    ann: Optional[str] = None
     line: int = 0
 
 
 @dataclass
 class ImportRec:
-    """One import record."""
-    kind: str  # "import" or "from"
-    module: str
-    level: int  # leading dots for relative imports
-    names: list[tuple[str, str | None]] = field(default_factory=list)  # (name, as_name)
-    star: bool = False
-    context: str = "runtime"  # "runtime", "type_only", "deferred"
+    kind: str                  # import | from
+    module: str                # dotted module text ("" for `from . import x`)
+    level: int
+    names: list                # [(name, alias_or_None)]; for kind=import: [(dotted, alias)]
+    star: bool
+    context: str               # runtime | type_only | deferred
+    line: int
+    scope: str = ""            # owning function id when deferred ('' = module)
     try_guard: bool = False
-    owner: str | None = None
 
 
 @dataclass
 class FuncInfo:
-    """Extracted function or method metadata."""
-    id: str  # relative/path.py::Qual.Name
-    qualname: str
+    id: str
     name: str
+    qualname: str
     path: str
     start: int
     end: int
@@ -105,127 +120,84 @@ class FuncInfo:
     is_abstract: bool = False
     is_property: bool = False
     is_setter: bool = False
-    decorators: list[str] = field(default_factory=list)
+    is_staticmethod: bool = False
+    is_classmethod: bool = False
+    is_overload: bool = False
+    is_contextmanager: bool = False
+    is_nested: bool = False
+    decorators: list = field(default_factory=list)
     signature: str = ""
-    doc: str | None = None
+    doc: str = ""
+    returns: Optional[str] = None
+    params: list = field(default_factory=list)       # [(name, annotation|None, has_default)]
+    first_param: Optional[str] = None
+    class_id: Optional[str] = None                   # enclosing class id for methods
+    parent_func: Optional[str] = None                # enclosing function id (nested)
     body_hash: str = ""
     logic_hash: str = ""
     signature_hash: str = ""
-    params: list[dict[str, Any]] = field(default_factory=list)  # name, default, ann
-    returns: str | None = None
-    calls: list[CallSite] = field(default_factory=list)
-    accesses: list[AttrAccess] = field(default_factory=list)
-    implicits: list[Implicit] = field(default_factory=list)
-    bindings: list[Binding] = field(default_factory=list)
-    attr_bindings: list[AttrBinding] = field(default_factory=list)
-    return_shapes: list[Shape] = field(default_factory=list)
-    rebound: set[str] = field(default_factory=set)
+    text_hash: str = ""
+    # per-scope data for pass 2
+    calls: list = field(default_factory=list)
+    accesses: list = field(default_factory=list)
+    implicits: list = field(default_factory=list)
+    bindings: list = field(default_factory=list)
+    attr_bindings: list = field(default_factory=list)
+    return_shapes: list = field(default_factory=list)   # value shapes of return/yield statements
+    local_names: set = field(default_factory=set)
+    nested_defs: dict = field(default_factory=dict)  # local name -> func/class id (nested defs)
+    param_defaults: dict = field(default_factory=dict)   # parameter -> default expression text
+    rebound: set = field(default_factory=set)            # names re-assigned inside the body
+    fixture_autouse: bool = False
+    fixture_name: Optional[str] = None
+    usefixtures: list = field(default_factory=list)
+    imports: list = field(default_factory=list)      # deferred ImportRec owned by this function
 
 
 @dataclass
 class ClassInfo:
-    """Extracted class metadata."""
-    id: str  # relative/path.py::Qual.Name
+    id: str
     name: str
     qualname: str
     path: str
     start: int
     end: int
-    bases_raw: list[str] = field(default_factory=list)
-    decorators: list[str] = field(default_factory=list)
-    doc: str | None = None
-    doc_hash: str = ""
-    logic_hash: str = ""
-    bindings: list[Binding] = field(default_factory=list)
-    attr_bindings: list[AttrBinding] = field(default_factory=list)
+    bases_raw: list = field(default_factory=list)
+    decorators: list = field(default_factory=list)
+    is_nested: bool = False
+    parent_func: Optional[str] = None
+    parent_class: Optional[str] = None
+    attr_anns: dict = field(default_factory=dict)       # name -> annotation text
+    attr_bindings: list = field(default_factory=list)   # class-level `x = Cls()`
+    is_test_class: bool = False
+    metaclass: Optional[str] = None
+    doc: str = ""
+    doc_hash: str = ""         # hash of the full (untruncated) docstring
+    logic_hash: str = ""       # class-level code: attributes etc., without docstring and method bodies
 
 
 @dataclass
 class ModuleInfo:
-    """Extracted module metadata (result of Pass 1)."""
-    id: str  # relative/path.py
+    id: str                    # relative path
     path: str
-    name: str
-    package: str
-    is_test: bool = False
+    name: str                  # dotted module name
+    package: str               # dotted package the module lives in
+    is_test: bool
+    is_init: bool = False
     partial: bool = False
     decode_errors: bool = False
-    imports: list[ImportRec] = field(default_factory=list)
-    defs: list[FuncInfo] = field(default_factory=list)
-    classes: list[ClassInfo] = field(default_factory=list)
-    calls: list[CallSite] = field(default_factory=list)
-    bindings: list[Binding] = field(default_factory=list)
-    all_exports: list[str] = field(default_factory=list)
-    logic_hash: str = ""
     nlines: int = 0
-
-
-@dataclass
-class SiteRes:
-    """Result of resolving a call, property, or implicit protocol site."""
-    kind: str  # "call", "property", "implicit", "ref"
-    status: SiteStatus
-    targets: list[tuple[str, Tier, str]] = field(default_factory=list)  # (target_id, tier, via)
-    candidates: list[str] = field(default_factory=list)
-    reason: str | None = None
-    raw: str = ""
-    line: int = 0
-    owner: str = ""
-    kwargs: list[str] = field(default_factory=list)
-    npos: int = 0
-    splat: bool = False
-    guards: list[str] = field(default_factory=list)
-
-
-@dataclass
-class Edge:
-    """Relationship between graph nodes."""
-    source: str
-    target: str
-    kind: str  # "CALLS", "HAS_METHOD", "INHERITS", "OVERRIDES", "REACHES", "IMPORTS"
-    tier: Tier | None = None
-    via: str | None = None
-    lines: list[int] = field(default_factory=list)
-    count: int = 1
-    raw: str | None = None
-    candidates: list[str] = field(default_factory=list)
-    props: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class ReachInfo:
-    """Reachability facts computed from test suite."""
-    label: ReachLabel
-    count: int = 0
-    min_depth: int | None = None
-    path: list[str] = field(default_factory=list)
-    tests: list[dict[str, Any]] = field(default_factory=list)
-    unresolved_hint: int = 0
-
-
-@dataclass
-class ChangeItem:
-    """Change detection status for a single function or class."""
-    id: str
-    kind: ChangeKind
-    flags: list[str] = field(default_factory=list)  # "functional", "signature", "text_only"
-    head_lines: list[list[int]] = field(default_factory=list)
-    base_lines: list[list[int]] = field(default_factory=list)
-    old_id: str | None = None
-    still_called_by: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ChangeSet:
-    """Detected changes between two revisions."""
-    base_rev: str
-    head_rev: str
-    added_files: list[str] = field(default_factory=list)
-    modified_files: list[str] = field(default_factory=list)
-    deleted_files: list[str] = field(default_factory=list)
-    renamed_files: list[tuple[str, str]] = field(default_factory=list)
-    changed_functions: dict[str, ChangeItem] = field(default_factory=dict)
-    class_changes: dict[str, ChangeItem] = field(default_factory=dict)
-    module_changes: dict[str, bool] = field(default_factory=dict)
-    base_graph: Any = None
-    head_graph: Any = None
+    imports: list = field(default_factory=list)
+    funcs: list = field(default_factory=list)          # FuncInfo
+    classes: list = field(default_factory=list)        # ClassInfo
+    calls: list = field(default_factory=list)          # module-level calls
+    accesses: list = field(default_factory=list)
+    implicits: list = field(default_factory=list)
+    bindings: list = field(default_factory=list)       # module-level bindings
+    local_names: set = field(default_factory=set)
+    all_names: Optional[list] = None                   # __all__ if statically known
+    typevars: dict = field(default_factory=dict)       # name -> bound text or ""
+    top_defs: dict = field(default_factory=dict)       # name -> (kind 'func'|'class', id)
+    logic_hash: str = ""       # tokens outside function bodies (module-level code)
+    content_hash: str = ""
+    error_lines: list = field(default_factory=list)
