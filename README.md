@@ -77,9 +77,10 @@ Developer + Agent (Gemini CLI, Claude Code, Cursor)
    - Rigorous verification checking every quote verbatim against session turns.
 4. **Code Knowledge Graph (`unpack_graph/`)**:
    - Tree-sitter and AST two-pass parser.
-   - Call graph resolution with confidence tiers (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`, `UNRESOLVED`).
-   - Argument-gated BFS test reachability discovering untested functions (flagging `none`).
-   - Neo4j persistence and fast Cypher region queries.
+   - Call graph resolution with confidence tiers on every edge (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`). Calls that cannot be resolved are kept on their function with the reason, not as edges.
+   - Argument-gated BFS test reachability with the labels `direct`, `reached`, `reached_uncertain` and `none`. `none` is the only red flag, and it is checked against a real coverage run (`unpack-graph coverage-check`).
+   - Function-level change classification (text only, signature, behaviour) and the GraphView region for a change.
+   - Neo4j persistence, a single-query region, and incremental updates.
 5. **PR Comment Bot (`server/app/github/`)**:
    - GitHub App integration editing a single comment per PR on every push.
    - Includes change summary, risk flags (e.g. untested functions), rendered graph screenshot, and authenticated live link.
@@ -103,7 +104,7 @@ unpack/
 ├── schemas/
 │   └── graphview.schema.json      # Stable JSON schema for GraphView
 ├── unpack_graph/                  # Code knowledge graph library & CLI
-│   ├── model.py                   # Data models (Shape, CallSite, FuncInfo, Edge)
+│   ├── model.py                   # Data models (Shape, CallSite, FuncInfo, ModuleInfo, ...)
 │   ├── extract.py                 # Pass 1: Syntax extraction & hashing
 │   ├── resolve.py                 # Pass 2: Whole-repo symbol & call resolution
 │   ├── graph.py                   # In-memory graph container & builder
@@ -141,6 +142,15 @@ unpack/
 │   ├── vite.config.ts
 │   └── src/                       # PR view, Codebase map, Timeline, Detail panel
 └── tests/                         # Test suite
+    ├── test_extraction.py         # Pass 1 corner cases, checked against ast
+    ├── test_resolution.py         # Pass 2: imports, types, dispatch, containers
+    ├── test_reachability.py       # Test reachability and argument gating
+    ├── test_dynamic_dispatch.py   # getattr-dispatched methods
+    ├── test_diff.py               # Change classification and the region schema
+    ├── test_neo4j.py              # Neo4j parity and delta (needs the neo4j service)
+    ├── test_incremental.py        # Incremental update equals a full rebuild
+    ├── test_evaluate.py           # Measurements and the coverage check
+    └── fixtures/                  # Small Python packages the graph tests analyse
 ```
 
 ---
@@ -180,7 +190,8 @@ cd web && npm install && cd ..
 # Export Pydantic models to JSON schemas for the frontend
 python contract/export_schemas.py
 
-# Run test suite
+# Run test suite (the Neo4j tests need `docker compose up -d neo4j`;
+# without it they are skipped, and with it they clear the database they use)
 pytest
 ```
 
