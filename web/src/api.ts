@@ -168,16 +168,37 @@ export interface GovEvidence {
   proposal: string; choice: string; quote: string; when: string; source?: "sample" | "measured";
 }
 
+// The decision brief: what a reviewer needs to decide on a candidate beyond the quotes.
+export interface Reach { repos: number; teams: number; scanned: number; flagged: number; confirmed: number } // PR replay over 90 days
+export interface TeamSplit { team: string; developers: number; overruled: number; accepted: number } // accepted = same proposal, nobody objected
+export interface Conflict { id: string; level: "overlap" | "conflict"; note: string }
+export interface Recommendation { action: "approve" | "trial" | "wait"; enforcement: Enforcement; reason: string }
+export interface Brief {
+  proposed: number; // sessions in which the agent made this kind of proposal
+  teams: TeamSplit[];
+  areas: { area: string; n: number }[];
+  rework: { turns: number; hours: number; prs: number };
+  reach: Record<Scope, Reach>;
+  conflicts: Conflict[];
+  recommend: Recommendation;
+}
+
 export interface GovCandidate {
   id: string; pid: string; statement: string; type: DType; sessions: number; teams: number; developers: number;
   trend: number[]; per_hundred: number; match: string; scope: Scope; enforcement: Enforcement; owner: string;
   expires: string; evidence: GovEvidence[]; source?: "sample" | "measured";
+  brief?: Brief | null;
 }
 
 export interface GovPolicy {
   id: string; statement: string; type: DType; scope: Scope; scope_name: string; enforcement: Enforcement; owner: string;
   expires: string; adherence: number | null; before: number; after: number | null; match: string;
   recurrence: { sessions: number; teams: number; developers: number; evidence: GovEvidence[] } | null;
+  target?: number | null; // overrides per 100 sessions the policy is meant to reach
+  review?: string | null; // date the owner checks whether it worked
+  approved?: string | null;
+  weekly?: number[] | null; // overrides per 100 sessions per week since approval, oldest first
+  checks?: { flagged: number; wrong: number } | null; // PRs the check flagged, and how many a reviewer overrode as wrong
 }
 
 export interface GovRule {
@@ -185,7 +206,7 @@ export interface GovRule {
   latest_pr: string; latest_turn: number; source?: "sample" | "measured";
 }
 
-export interface GovHistory { id: string; statement: string; outcome: "approved" | "rejected" | "expired"; role: string; when: string; why: string }
+export interface GovHistory { id: string; statement: string; outcome: "approved" | "rejected" | "expired" | "watching"; role: string; when: string; why: string }
 
 export interface GovernanceState {
   today: string;
@@ -195,7 +216,7 @@ export interface GovernanceState {
   history: GovHistory[];
 }
 
-export interface ApproveBody { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string }
+export interface ApproveBody { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string; target?: number | null; review?: string | null }
 
 export const fetchExec = (period: Period) => request<ExecData>(`/api/dashboard/exec?period=${period}`);
 export const fetchTeams = () => request<TeamsIndex>("/api/dashboard/teams");
@@ -209,3 +230,9 @@ export const retirePolicy = (id: string) =>
   request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/retire`, { method: "POST" });
 export const revisePolicy = (id: string) =>
   request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/revise`, { method: "POST" });
+export const watchCandidate = (id: string) =>
+  request<GovernanceState>(`/api/governance/candidates/${encodeURIComponent(id)}/watch`, { method: "POST" });
+export const renewPolicy = (id: string) =>
+  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/renew`, { method: "POST" });
+export const relaxPolicy = (id: string) =>
+  request<GovernanceState>(`/api/governance/policies/${encodeURIComponent(id)}/relax`, { method: "POST" });
