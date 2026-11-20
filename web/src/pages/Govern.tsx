@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, FileText, Share2, ShieldCheck } from "lucide-react";
+import { BookOpen, Check, Eye, FileText, Share2, ShieldCheck } from "lucide-react";
 import { Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
 import { TYPE_LABEL, type DType, type HumanKind } from "../data";
 import {
-  TODAY, actives as seedActives, candidates as seedCandidates, history as seedHistory, rules,
+  TODAY, briefs, actives as seedActives, candidates as seedCandidates, history as seedHistory, rules,
   type ActivePolicy, type Candidate, type Enforcement, type Evidence, type HistoryItem, type Scope,
 } from "../data.govern";
+import GovernBrief, { briefStats, ENF_LABEL } from "./GovernBrief";
+import PolicyHealth, { issuesOf, reachedTarget, STEP_DOWN } from "./GovernHealth";
 import "../styles/govern.css";
 
 type Tab = "candidates" | "active" | "skills" | "history";
-interface Draft { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string }
+interface Draft { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string; target: number; review: string }
 
 const KIND: Record<HumanKind, string> = {
   redirect: "Redirect", reject: "Reject", permission_denied: "Permission denied",
@@ -24,6 +26,8 @@ const OWNERS = ["@platform", "@quality", "@api-guild", "@security"];
 
 const fmt = (d: string) => new Date(d).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const daysLeft = (d: string) => Math.round((Date.parse(d) - Date.parse(TODAY)) / 864e5);
+const addDays = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+const defaultTarget = (x: Candidate) => Math.max(1, Math.round(x.perHundred * 0.25));
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 function Spark({ v, w = 72, h = 22 }: { v: number[]; w?: number; h?: number }) {
@@ -67,6 +71,7 @@ export default function Govern() {
   const [reason, setReason] = useState("");
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [watch, setWatch] = useState<Record<string, string>>({}); // candidate id -> date to look again
   const detail = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,11 +82,11 @@ export default function Govern() {
 
   const meets = (c: Candidate) => c.sessions >= minS && c.developers >= minD;
   // strongest evidence first: more developers, then more sessions
-  const sorted = useMemo(() => [...cands].sort((a, b) => b.developers - a.developers || b.sessions - a.sessions), [cands]);
+  const sorted = useMemo(() => [...cands].sort((a, b) => Number(!!watch[a.id]) - Number(!!watch[b.id]) || b.developers - a.developers || b.sessions - a.sessions), [cands, watch]);
   const c = sorted.find((x) => x.id === sel) ?? sorted[0];
   const ready = cands.filter(meets).length;
 
-  const draftOf = (x: Candidate): Draft => drafts[x.id] ?? { statement: x.statement, scope: x.scope, enforcement: x.enforcement, owner: x.owner, expires: x.expires };
+  const draftOf = (x: Candidate): Draft => drafts[x.id] ?? { statement: x.statement, scope: x.scope, enforcement: x.enforcement, owner: x.owner, expires: x.expires, target: defaultTarget(x), review: addDays(TODAY, 30) };
   const patch = (x: Candidate, p: Partial<Draft>) => setDrafts((d) => ({ ...d, [x.id]: { ...draftOf(x), ...p } }));
 
   const pick = (id: string) => {
@@ -98,9 +103,9 @@ export default function Govern() {
     const d = draftOf(x);
     setActives((a) => [{
       id: x.pid, statement: d.statement, type: x.type, scope: d.scope, scopeName: d.scope === "org" ? "Org" : d.scope === "team" ? "Payments" : "payments-service",
-      enforcement: d.enforcement, owner: d.owner, expires: d.expires, adherence: null, before: x.perHundred, after: null, match: x.match,
+      enforcement: d.enforcement, owner: d.owner, expires: d.expires, adherence: null, before: x.perHundred, after: null, match: x.match, target: d.target, review: d.review,
     }, ...a]);
-    setHist((h) => [{ id: `h-${x.pid}`, statement: d.statement, outcome: "approved", role: "Tech lead (you)", when: TODAY, why: `${x.sessions} sessions across ${x.teams} teams, ${x.developers} developers.` }, ...h]);
+    setHist((h) => [{ id: `h-${x.pid}`, statement: d.statement, outcome: "approved", role: "Tech lead (you)", when: TODAY, why: `${x.sessions} sessions across ${x.teams} teams, ${x.developers} developers. Target: ${d.target} overrides per 100 sessions by ${fmt(d.review)}.` }, ...h]);
     leave(x);
     setToast(`${x.pid} approved. Published to AGENTS.md${d.enforcement === "advice" ? "" : " and the PR check"}.`);
   };
@@ -110,11 +115,32 @@ export default function Govern() {
     setToast(`${x.pid} rejected and moved to history.`);
   };
 
+  const watchOn = (x: Candidate) => {
+    const until = new Date(Date.parse(TODAY) + 14 * 864e5).toISOString().slice(0, 10);
+    setWatch((w) => ({ ...w, [x.id]: until }));
+    setHist((h) => [{ id: `h-${x.pid}-w${h.length}`, statement: x.statement, outcome: "watching", role: "Tech lead (you)", when: TODAY, why: `Not yet. Look again on ${fmt(until)}; at ${x.sessions} sessions and ${x.developers} developers it needs more evidence.` }, ...h]);
+    setToast(`${x.pid} is being watched until ${fmt(until)}. It stays in the inbox.`);
+  };
+  const watchOff = (x: Candidate) => { setWatch((w) => { const { [x.id]: _, ...rest } = w; return rest; }); setToast(`Stopped watching ${x.pid}.`); };
+
   const stillHappening = (p: ActivePolicy) => p.after !== null && p.after >= p.before * 0.6;
   const retire = (p: ActivePolicy) => {
+    const why = issuesOf(p).includes("noisy") ? "Retired: reviewers kept overriding the check." : issuesOf(p).includes("overridden") ? "Retired: the override kept recurring after the policy." : "Retired by the owner.";
     setActives((a) => a.filter((y) => y.id !== p.id));
-    setHist((h) => [{ id: `h-${p.id}-r`, statement: p.statement, outcome: "expired", role: "Policy owner", when: TODAY, why: "Retired: the override kept recurring after the policy." }, ...h]);
+    setHist((h) => [{ id: `h-${p.id}-r`, statement: p.statement, outcome: "expired", role: "Policy owner", when: TODAY, why }, ...h]);
     setToast(`${p.id} retired.`);
+  };
+  const renew = (p: ActivePolicy) => {
+    const expires = new Date(Date.parse(p.expires) + 180 * 864e5).toISOString().slice(0, 10);
+    setActives((a) => a.map((y) => (y.id === p.id ? { ...y, expires } : y)));
+    setHist((h) => [{ id: `h-${p.id}-n${h.length}`, statement: p.statement, outcome: "approved", role: "Policy owner", when: TODAY, why: `Renewed to ${fmt(expires)}. ${p.after === null ? "Still measuring." : `Overrides ${p.before} → ${p.after} per 100 sessions.`}` }, ...h]);
+    setToast(`${p.id} renewed to ${fmt(expires)}.`);
+  };
+  const relax = (p: ActivePolicy) => {
+    const next = STEP_DOWN[p.enforcement];
+    if (!next) return;
+    setActives((a) => a.map((y) => (y.id === p.id ? { ...y, enforcement: next, checks: next === "advice" ? undefined : y.checks } : y)));
+    setToast(`${p.id} relaxed to ${ENF_LABEL[next]}. Re-check accuracy before raising it again.`);
   };
   const revise = (p: ActivePolicy) => {
     if (!p.recurrence) return;
@@ -131,10 +157,19 @@ export default function Govern() {
 
   const avgAdherence = Math.round(actives.filter((a) => a.adherence !== null).reduce((s, a) => s + a.adherence!, 0) / Math.max(1, actives.filter((a) => a.adherence !== null).length));
   const overridden = actives.filter(stillHappening).length;
+  const flaggedPolicies = actives.filter((a) => issuesOf(a).length);
+  const noisy = actives.filter((a) => issuesOf(a).includes("noisy")).length;
+  const expiring = actives.filter((a) => issuesOf(a).includes("expiring")).length;
+  const measured = actives.filter((a) => a.after !== null);
+  const cut = Math.round((measured.reduce((s, a) => s + (a.before - a.after!), 0) / Math.max(1, measured.reduce((s, a) => s + a.before, 0))) * 100);
+  const onTarget = actives.filter(reachedTarget).length;
+  const watching = cands.filter((x) => watch[x.id]).length;
 
   const d = c ? draftOf(c) : null;
   const agentsMd = c && d ? `## ${HEADING[c.type]}\n- ${d.statement}\n  <!-- ${c.pid} · scope: ${d.scope} · owner: ${d.owner} · expires: ${d.expires} -->` : "";
   const prRule = c && d ? `rule: ${slug(d.statement)}\nwhen: ${c.match}\nscope: ${d.scope}\nenforcement: ${d.enforcement}\non_violation: ${ON_VIOLATION[d.enforcement]}\nexpires: ${d.expires}` : "";
+  const brief = c ? briefs[c.id] : undefined;
+  const bs = c && d && brief ? briefStats(c, brief, d.scope) : null;
   const evidence = c ? (showAll ? c.evidence : c.evidence.slice(0, 3)) : [];
 
   return (
@@ -147,10 +182,11 @@ export default function Govern() {
       />
 
       <section className="kpis" aria-label="Summary">
-        <Kpi value={ready} label="ready for review" sub={`${cands.length} candidates in the inbox`} tone="hot" />
-        <Kpi value={actives.length} label="active policies" sub={`${actives.filter((a) => a.enforcement !== "advice").length} enforced in PRs`} />
+        <Kpi value={ready - cands.filter((x) => meets(x) && watch[x.id]).length} label="ready for review" sub={`${cands.length} in the inbox${watching ? ` · ${watching} watching` : ""}`} tone="hot" />
+        <Kpi value={`−${cut}%`} label="overrides since policies" sub={`${measured.length} measured policies, per 100 sessions`} tone="ok" />
+        <Kpi value={`${onTarget} of ${actives.length}`} label="policies at target" sub="overrides at or below the target set on approval" />
         <Kpi value={`${avgAdherence}%`} label="average adherence" sub="agent decisions that followed the rule" tone="ok" />
-        <Kpi value={overridden} label="still being overridden" sub="revise or retire" tone={overridden ? "bad" : undefined} />
+        <Kpi value={flaggedPolicies.length} label="need attention" sub={`${overridden} still overridden · ${noisy} noisy · ${expiring} expiring`} tone={flaggedPolicies.length ? "bad" : undefined} />
       </section>
 
       <section className="gv-pub" aria-label="Published to">
@@ -182,7 +218,7 @@ export default function Govern() {
                   <Spark v={x.trend} />
                 </span>
                 <span className="gv-item-m">
-                  {meets(x) ? <span className="chip ok">Meets threshold</span> : <span className="chip warn">Preference · below threshold</span>}
+                  {watch[x.id] ? <span className="chip warn"><Eye size={12} aria-hidden="true" /> Watching until {fmt(watch[x.id])}</span> : meets(x) ? <span className="chip ok">Meets threshold</span> : <span className="chip warn">Preference · below threshold</span>}
                   <span>{x.pid}</span>
                 </span>
               </button>
@@ -210,6 +246,8 @@ export default function Govern() {
                 <span className="gv-hint">threshold is configurable</span>
               </div>
             </div>
+
+            {brief && <GovernBrief c={c} b={brief} scope={d!.scope} enforcement={d!.enforcement} onUse={() => patch(c, { enforcement: brief.recommend.enforcement })} />}
 
             <div className="gv-sec">
               <div className="gv-sec-h">
@@ -239,7 +277,24 @@ export default function Govern() {
                   <select className="gv-select" value={d!.owner} onChange={(e) => patch(c, { owner: e.target.value })}>{OWNERS.map((o) => <option key={o}>{o}</option>)}</select></label>
                 <label className="gv-field"><span className="gv-label">Expires</span>
                   <input className="gv-input" type="date" value={d!.expires} min={TODAY} onChange={(e) => patch(c, { expires: e.target.value })} /></label>
+                <label className="gv-field"><span className="gv-label">Success target · overrides per 100 sessions</span>
+                  <input className="gv-input" type="number" min={0} max={c.perHundred} value={d!.target} onChange={(e) => patch(c, { target: Math.max(0, +e.target.value || 0) })} />
+                  <span className="gv-hint">today {c.perHundred} · the policy is working when it reaches {d!.target}</span></label>
+                <label className="gv-field"><span className="gv-label">Review on</span>
+                  <input className="gv-input" type="date" value={d!.review} min={TODAY} max={d!.expires} onChange={(e) => patch(c, { review: e.target.value })} />
+                  <span className="gv-hint">{Math.max(0, daysLeft(d!.review))} days from today · you get the adherence and override trend</span></label>
               </div>
+              {bs && brief && (
+                <div className={`gv-impact ${d!.enforcement === "gate" && bs.falsePos > 0 ? "warn" : ""}`} aria-live="polite">
+                  <b>If you approve as {ENF_LABEL[d!.enforcement]} for {d!.scope === "org" ? "the org" : d!.scope === "team" ? "this team" : "this repo"}</b>
+                  <span>
+                    {d!.enforcement === "advice" && <>Over the last 90 days the agent would have commented on {bs.r.flagged} PRs. Nothing is blocked.</>}
+                    {d!.enforcement === "check" && <>Over the last 90 days the check would have failed {bs.r.flagged} PRs: {bs.r.confirmed} correctly and {bs.falsePos} that a reviewer would have had to override.</>}
+                    {d!.enforcement === "gate" && <>Over the last 90 days {bs.r.flagged} merges would have been blocked: {bs.r.confirmed} correctly{bs.falsePos > 0 ? <> and <b>{bs.falsePos} wrongly</b>. Consider a PR check until precision is higher.</> : <>, none wrongly.</>}</>}
+                    {" "}Target: {c.perHundred} → {d!.target} overrides per 100 sessions.
+                  </span>
+                </div>
+              )}
               {rejecting ? (
                 <div className="gv-field">
                   <span className="gv-label">Why reject? Saved to history</span>
@@ -249,6 +304,9 @@ export default function Govern() {
               ) : (
                 <div className="gv-actions">
                   <button className="btn ok" disabled={!meets(c)} onClick={() => approve(c)}><Check size={16} /> Approve and publish</button>
+                  {watch[c.id]
+                    ? <button className="btn" onClick={() => watchOff(c)}><Eye size={16} /> Stop watching</button>
+                    : <button className="btn" onClick={() => watchOn(c)}><Eye size={16} /> Not yet, watch 2 weeks</button>}
                   <button className="btn" onClick={() => setRejecting(true)}>Reject</button>
                   {!meets(c) && <span className="gv-hint">Below threshold: keep watching, or lower it above.</span>}
                 </div>
@@ -264,8 +322,10 @@ export default function Govern() {
         </div>
       ))}
 
+      {tab === "active" && <PolicyHealth actives={actives} onRevise={revise} onRetire={retire} onRenew={renew} onRelax={relax} />}
+
       {tab === "active" && (
-        <Panel title="Active policies" sub="Adherence is measured on agent decisions. Overrides are per 100 sessions."
+        <Panel title="All active policies" sub="Adherence is measured on agent decisions. Overrides are per 100 sessions."
           aside={<span className="chip sim">Illustrative data</span>}>
           <div className="gv-scroll">
             <table className="table">
@@ -284,7 +344,7 @@ export default function Govern() {
                       <td>{p.adherence === null ? <span className="gv-cell-s">Measuring</span> : (
                         <div className="gv-pair-bars"><span className="gv-nums">{p.adherence}%</span>
                           <span className={`gv-bar ad ${p.adherence < 60 ? "bad" : p.adherence < 80 ? "low" : ""}`}><i style={{ width: `${p.adherence}%` }} /></span></div>)}</td>
-                      <td>{p.after === null ? <span className="gv-cell-s">{p.before} before</span> : (
+                      <td>{p.after === null ? <span className="gv-cell-s">{p.before} before{p.target !== undefined && <> · target {p.target}</>}</span> : (
                         <div className="gv-pair-bars">
                           <span className="gv-nums">{p.before} → {p.after}</span>
                           <span className="gv-bar before"><i style={{ width: `${Math.min(100, p.before * 5)}%` }} /></span>
@@ -333,7 +393,7 @@ export default function Govern() {
           <div className="gv-hist">
             {hist.map((h) => (
               <div key={h.id}>
-                <span className={`chip ${h.outcome === "approved" ? "ok" : h.outcome === "rejected" ? "bad" : ""}`}>{h.outcome}</span>
+                <span className={`chip ${h.outcome === "approved" ? "ok" : h.outcome === "rejected" ? "bad" : h.outcome === "watching" ? "warn" : ""}`}>{h.outcome}</span>
                 <div><b>{h.statement}</b><p>{h.why}</p></div>
                 <div className="gv-cell-s">{h.role}<br />{fmt(h.when)}</div>
               </div>
