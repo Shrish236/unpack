@@ -46,6 +46,7 @@ class CallSite:
     npos: int = 0              # number of positional arguments
     splat: bool = False        # *args / **kwargs expansion present
     guards: tuple = ()         # parameters whose positive test (`if p`, `p is not None`) encloses the call
+    dyn: tuple = ()            # getattr(obj, name): (receiver Shape, (kind, text)) with kind literal|prefix|unknown
 
 
 @dataclass
