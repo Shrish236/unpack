@@ -1,0 +1,92 @@
+/* Cast 2: The Studio. Prefix c2-. Illustration colours are fixed for skin, hair and clothes only; chrome uses tokens. */
+.c2-hero { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: clamp(24px, 4vw, 64px); align-items: center; padding-top: var(--section-y); padding-bottom: var(--sp-6); }
+.c2-h1 { font-size: clamp(44px, 4.1vw, 56px); margin-top: var(--sp-3); }
+.c2-hero-text p { color: var(--ink-2); font-size: var(--fs-5); max-width: 52ch; margin-top: var(--sp-4); }
+.c2-cta { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-5); }
+.c2-cta-c { justify-content: center; }
+.c2-chips { list-style: none; margin: var(--sp-4) 0 0; padding: 0; display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.c2-portrait { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3); padding: var(--sp-4); }
+.c2-portrait svg { width: 100%; height: auto; display: block; overflow: visible; }
+.c2-roster { font-size: var(--fs-2); color: var(--ink-3); margin-top: var(--sp-2); text-align: center; }
+
+.c2-story { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); gap: clamp(24px, 4vw, 56px); align-items: start; }
+.c2-steps { grid-column: 1; grid-row: 1; padding-bottom: 14vh; }
+.c2-step { min-height: 72vh; display: flex; flex-direction: column; justify-content: center; gap: var(--sp-3); max-width: 440px; opacity: 0.3; transition: opacity 0.5s var(--ease); }
+.c2-step[data-active="true"] { opacity: 1; }
+.c2-step h2 { font-size: var(--fs-8); }
+.c2-step p { color: var(--ink-2); font-size: var(--fs-5); }
+.c2-num { font: 500 var(--fs-2) var(--font-mono); color: var(--human-text); letter-spacing: 0.08em; text-transform: uppercase; }
+.c2-cap { font-size: var(--fs-2) !important; color: var(--ink-3) !important; padding-left: var(--sp-3); border-left: 2px solid var(--human); }
+.c2-stage-col { position: sticky; top: 72px; height: calc(100vh - 88px); display: grid; place-items: center; grid-column: 2; grid-row: 1; }
+.c2-stage { width: min(100%, 640px); border: 1px solid var(--line-2); border-radius: var(--r-3); overflow: hidden; background: var(--sunken); box-shadow: var(--shadow); }
+.c2-svg { display: block; width: 100%; height: auto; }
+.c2-svg text { font-family: var(--font-body); fill: var(--ink); }
+
+/* building */
+.c2-svg { --c2-wall: color-mix(in oklab, var(--surface) 84%, var(--sunken)); --c2-desk: color-mix(in oklab, var(--ink-3) 40%, var(--surface)); }
+.c2-cam { transition: transform 1.1s var(--ease); }
+.c2-wall { fill: var(--c2-wall); } .c2-slab { fill: var(--line-2); }
+.c2-stair rect { fill: color-mix(in oklab, var(--ink) 8%, var(--c2-wall)); } .c2-stair path { fill: var(--line-2); }
+.c2-sign { font: 500 8px var(--font-mono) !important; fill: var(--ink-3) !important; letter-spacing: 0.1em; }
+.c2-tag { font: 500 6.5px var(--font-mono) !important; fill: var(--ink-3) !important; letter-spacing: 0.06em; }
+.c2-window { fill: color-mix(in oklab, var(--agent) 14%, var(--surface)); stroke: var(--line-2); } .c2-mullion { stroke: var(--line-2); fill: none; }
+.c2-desk { fill: var(--c2-desk); } .c2-mon { fill: #1e293b; } .c2-code { stroke: #7dd3fc; stroke-width: 1.4; fill: none; stroke-linecap: round; opacity: .8; }
+.c2-paper { fill: #f8fafc; stroke: #cbd5e1; } .c2-pinhead { fill: var(--human); } .c2-pin { fill: var(--bad); }
+.c2-board { fill: var(--raised); stroke: var(--human); stroke-width: 1.5; }
+.c2-bt { font-family: var(--font-body); fill: #1e293b !important; } .c2-mono { font-family: var(--font-mono) !important; fill: #64748b !important; }
+.c2-big { font-family: var(--font-body); font-weight: 600; fill: var(--ink) !important; } .c2-big.on { fill: #ffd56b !important; }
+.c2-screen { font-family: var(--font-mono) !important; fill: #94a3b8 !important; }
+.c2-card { fill: color-mix(in oklab, var(--ink) 6%, var(--c2-wall)); stroke: var(--line); opacity: 0.6; transition: fill .4s, opacity .4s, transform .4s var(--ease); }
+.c2-card.on { fill: var(--human); stroke: var(--human-line); opacity: 1; }
+.c2-line { fill: none; stroke: #ffd56b; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.c2-line.draw { animation: c2-draw 1.6s var(--ease) both; }
+.c2-stamp { transform-box: fill-box; transform-origin: center; opacity: 1; transform: rotate(-8deg); }
+.c2-stamp rect { fill: var(--human); } .c2-stamp text { fill: #1e293b !important; font-weight: 700; letter-spacing: 0.08em; }
+.c2-stamp[data-show="true"] { animation: c2-slam .5s var(--ease) both; }
+.c2-stamp[data-show="false"] { opacity: 0; }
+.c2-gaze { fill: none; stroke: var(--human-line); stroke-width: 1; stroke-dasharray: 2 4; opacity: .7; }
+.c2-tube rect:first-child { fill: color-mix(in oklab, var(--ink) 14%, var(--c2-wall)); } .c2-recv { fill: color-mix(in oklab, var(--ink) 20%, var(--c2-wall)); }
+.c2-capsule { fill: var(--human); transition: transform 1.6s var(--ease); }
+.c2-drop rect { animation: c2-fall 1.4s var(--ease) both; }
+.c2-chip { fill: var(--human); } .c2-chiptext { fill: #1e293b !important; font-weight: 600; }
+.c2-walk { transition: transform 1.6s var(--ease); }
+.c2-promo { animation: c2-pop .5s var(--ease) both; }
+.c2-bub { fill: #fff; stroke: #cbd5e1; stroke-width: 1; } .c2-bub.human { fill: #ffe9a6; stroke: var(--human-line); }
+.c2-bubble { transition: opacity .35s, transform .35s var(--ease); } .c2-bubble[data-show="false"] { opacity: 0; transform: scale(.7); pointer-events: none; }
+
+/* idle animation */
+.c2-blink { transform-box: fill-box; transform-origin: center; animation: c2-blink 4.6s infinite; }
+.c2-nod { transform-box: fill-box; transform-origin: 50% 100%; animation: c2-nod 3.4s ease-in-out infinite; }
+.c2-bob { animation: c2-bob 2.8s ease-in-out infinite; }
+.c2-type rect { transform-box: fill-box; animation: c2-typing .5s ease-in-out infinite alternate; } .c2-type rect:last-of-type { animation-delay: .25s; }
+@keyframes c2-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+@keyframes c2-nod { 50% { transform: rotate(2.4deg) translateY(.4px); } }
+@keyframes c2-bob { 50% { transform: translateY(-1.2px); } }
+@keyframes c2-typing { to { transform: translateY(1.5px); } }
+@keyframes c2-draw { from { stroke-dashoffset: 1; } }
+@keyframes c2-slam { 0% { opacity: 0; transform: scale(1.9) rotate(-18deg); } 100% { opacity: 1; transform: scale(1) rotate(-8deg); } }
+@keyframes c2-fall { from { transform: translateY(-14px); opacity: 0; } 60% { opacity: 1; } to { transform: translateY(28px); opacity: 0; } }
+@keyframes c2-pop { from { transform: scale(0); } }
+
+/* cast, final, footer */
+.c2-cast-sec { padding: var(--section-y) 0; border-top: 1px solid var(--line); }
+.c2-cast-sec h2 { font-size: var(--fs-8); margin-top: var(--sp-3); }
+.c2-cast { list-style: none; margin: var(--sp-5) 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-3); }
+.c2-cast li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3); padding: var(--sp-3); display: grid; gap: 2px; justify-items: start; }
+.c2-cast svg { width: 56px; height: 80px; overflow: visible; margin-bottom: var(--sp-2); }
+.c2-cast b { font-weight: 600; font-size: var(--fs-3); } .c2-cast span { font-size: var(--fs-1); color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+.c2-final { padding: var(--section-y) 0; border-top: 1px solid var(--line); text-align: center; }
+.c2-final h2 { font-size: var(--fs-8); margin: var(--sp-3) auto 0; max-width: 18ch; }
+.c2-foot { padding: var(--sp-5) 0 var(--sp-7); border-top: 1px solid var(--line); color: var(--ink-3); font-size: var(--fs-3); display: flex; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  .c2-hero { grid-template-columns: 1fr; }
+  .c2-story { display: block; }
+  .c2-stage-col { top: 92px; height: auto; z-index: 5; background: linear-gradient(var(--bg) 92%, transparent); padding: var(--sp-2) 0 var(--sp-3); }
+  .c2-stage { width: 100%; aspect-ratio: 480 / 336; }
+  .c2-svg { width: 100%; height: 100%; }
+  .c2-steps { padding-bottom: 4vh; }
+  .c2-step { min-height: 40vh; max-width: none; justify-content: flex-start; padding-top: 4vh; }
+  .c2-step h2 { font-size: 28px; }
+  .c2-svg .c2-tag { font-size: 8px !important; } .c2-svg .c2-sign { font-size: 9.5px !important; }
+}
