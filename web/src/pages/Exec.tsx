@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Layers, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { TYPE_LABEL, type DType } from "../data";
 import { type Autonomy, type ExecData, type Period, type Source } from "../api";
 import { useExec } from "../queries";
@@ -27,12 +27,6 @@ const Link = ({ href, children }: { href: string; children: React.ReactNode }) =
   <a className="btn sm" href={href}>{children} <ArrowRight size={14} /></a>
 );
 
-function Delta({ d, goodWhenUp = true, unit = "pts" }: { d: number | null; goodWhenUp?: boolean; unit?: string }) {
-  if (d === null) return <span className="delta">no earlier period</span>;
-  const good = d > 0 === goodWhenUp;
-  const Icon = d > 0 ? TrendingUp : TrendingDown;
-  return <span className={`delta ${good ? "up" : "down"}`}><Icon size={12} /> {d > 0 ? "+" : "−"}{Math.abs(d)} {unit}</span>;
-}
 
 function Trend({ d }: { d: ExecData }) {
   const [ref, w] = useWidth();
@@ -43,7 +37,11 @@ function Trend({ d }: { d: ExecData }) {
   const oVals = o.filter((v): v is number => v !== null);
   const aMin = aVals.length ? Math.min(60, Math.floor(Math.min(...aVals) / 10) * 10) : 60;
   const oMax = Math.max(14, Math.ceil((oVals.length ? Math.max(...oVals) : 0) / 7) * 7);
-  const x = (i: number) => L + (i * (w - L - R)) / Math.max(1, n - 1);
+  // draw only the weeks that have a value (from the first to the last), so the points are not lost in empty weeks
+  const measured = a.map((v, i) => (v !== null || o[i] !== null ? i : -1)).filter((i) => i >= 0);
+  const i0 = measured.length ? measured[0] : 0, i1 = measured.length ? measured[measured.length - 1] : Math.max(0, n - 1);
+  const x = (i: number) => (i1 === i0 ? L + (w - L - R) / 2 : L + ((i - i0) * (w - L - R)) / (i1 - i0));
+  const xTicks = [...new Set([i0, ...(i1 - i0 >= 4 ? [Math.round((i0 + i1) / 2)] : []), i1])];
   const ya = (v: number) => T + ((100 - v) / Math.max(1, 100 - aMin)) * (H - T - B);
   const yo = (v: number) => T + ((oMax - v) / Math.max(1, oMax)) * (H - T - B);
   const aTicks = [aMin, Math.round((aMin + 100) / 2), 100];
@@ -55,7 +53,6 @@ function Trend({ d }: { d: ExecData }) {
   };
   const lastOf = (vs: (number | null)[]) => { for (let i = vs.length - 1; i >= 0; i--) if (vs[i] !== null) return i; return -1; };
   const la = lastOf(a), lo = lastOf(o);
-  const step = w < 520 ? 3 : 1;
   return (
     <div ref={ref} className="chart">
       <svg width={w} height={H} role="img" aria-label="Skill adherence and repeat-override rate by week, with policy publish dates">
@@ -74,19 +71,19 @@ function Trend({ d }: { d: ExecData }) {
         ))}
         <path d={path(a, ya)} className="line agent" />
         <path d={path(o, yo)} className="line human" />
-        {a.map((v, i) => v !== null && <circle key={i} cx={x(i)} cy={ya(v)} r={i === la ? 4.5 : 2.5} className="pt agent"><title>{labels[i]}: {v}% adherence</title></circle>)}
-        {o.map((v, i) => v !== null && <circle key={i} cx={x(i)} cy={yo(v)} r={i === lo ? 4.5 : 2.5} className="pt human"><title>{labels[i]}: {v} repeat overrides per 100 sessions</title></circle>)}
+        {a.map((v, i) => v !== null && <circle key={i} cx={x(i)} cy={ya(v)} r={i === la ? 6 : 4} className="pt agent"><title>{labels[i]}: {v}% adherence</title></circle>)}
+        {o.map((v, i) => v !== null && <circle key={i} cx={x(i)} cy={yo(v)} r={i === lo ? 6 : 4} className="pt human"><title>{labels[i]}: {v} repeat overrides per 100 sessions</title></circle>)}
         {la >= 0 && <text x={Math.min(x(la) + 10, w - 36)} y={ya(a[la]!) - 8} className="end agent">{a[la]}%</text>}
         {lo >= 0 && <text x={Math.min(x(lo) + 10, w - 36)} y={yo(o[lo]!) + 16} className="end human">{o[lo]}</text>}
         {n === 0 && <text x={w / 2} y={H / 2} textAnchor="middle" className="ax">No weeks to show</text>}
-        {labels.map((l, i) => (i % step === 0 || i === n - 1) && (
-          <text key={i} x={x(i)} y={H - 6} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} className="ax">{l}</text>
+        {xTicks.map((i) => (
+          <text key={i} x={x(i)} y={H - 6} textAnchor={i1 === i0 ? "middle" : i === i0 ? "start" : i === i1 ? "end" : "middle"} className="ax">{labels[i]}</text>
         ))}
       </svg>
       <p className="legend-row">
         <span><i className="sw agent" />Skill adherence, % of agent decisions</span>
         <span><i className="sw human" />Repeat overrides per 100 sessions</span>
-        <span className="mono dim">{d.period === "30d" ? "last 5 weeks" : "last 12 weeks"}</span>
+        <span className="mono dim">{d.period === "30d" ? "last 5 weeks" : "last 12 weeks"}{i1 === i0 && n > 1 ? ` · measured from ${labels[i0]} only` : ""}</span>
       </p>
     </div>
   );
@@ -97,13 +94,16 @@ function Mix({ d }: { d: ExecData }) {
   const H = w > 560 ? 290 : 200, L = 30, T = 8, B = 22;
   const weeks = d.weeks.length;
   const totals = Array.from({ length: weeks }, (_, i) => TYPE_ORDER.reduce((s, t) => s + d.mix[t][i], 0));
-  const max = Math.max(40, Math.ceil(Math.max(...totals, 0) / 40) * 40);
+  // Scale to the data (a fixed 40 made a handful of decisions look like empty space); three ticks: 0, half, top.
+  const peak = Math.max(4, ...totals);
+  const max = Math.ceil(peak / 4) * 4;
+  const ticks = [0, Math.round(max / 2), max];
   const slot = (w - L) / weeks, bw = Math.min(28, slot * 0.64);
   const y = (v: number) => T + (1 - v / max) * (H - T - B);
   return (
     <div ref={ref} className="chart">
       <svg width={w} height={H} role="img" aria-label="Decisions per week by type">
-        {[0, 40, 80, 120].filter((v) => v <= max).map((v) => (
+        {ticks.map((v) => (
           <g key={v}>
             <line x1={L} x2={w} y1={y(v)} y2={y(v)} className="grid" />
             <text x={L - 8} y={y(v) + 4} textAnchor="end" className="ax">{v}</text>
@@ -121,6 +121,7 @@ function Mix({ d }: { d: ExecData }) {
                 acc += v;
                 return r;
               })}
+              {totals[i] > 0 && <text x={cx + bw / 2} y={y(totals[i]) - 5} textAnchor="middle" className="ax total">{totals[i]}</text>}
               {(weeks < 8 || i % 2 === 0) && <text x={cx + bw / 2} y={H - 6} textAnchor="middle" className="ax">{shortDay(d.weeks[i])}</text>}
             </g>
           );
@@ -160,11 +161,10 @@ function ExecBody({ d }: { d: ExecData }) {
   return (
     <>
       <section className="kpis five" aria-label="Summary">
-        <Kpi tone="ok" value={n(k.adherence.v, (x) => `${x}%`)} label="Skill adherence" sub={<><Delta d={k.adherence.d} /> vs prior</>} />
-        <Kpi tone="hot" value={n(k.override.v, (x) => x.toFixed(1))} label="Repeat overrides per 100 sessions"
-          sub={d.sources.kpis === "measured" ? <>{k.override.before === null ? "no earlier period" : `was ${k.override.before} in the period before`}</> : <>was {k.override.before} before {headline?.id ?? "the policy"}</>} />
-        <Kpi value={n(k.verified.v, (x) => `${x}%`)} label="Claims verified by code" sub={<><Delta d={k.verified.d} /> vs prior</>} />
-        <Kpi value={n(k.unrequested.v, (x) => `${x}%`)} label="Changes nobody asked for" sub={<><Delta d={k.unrequested.d} goodWhenUp={false} /> vs prior</>} />
+        <Kpi tone="ok" value={n(k.adherence.v, (x) => `${x}%`)} label="Skill adherence" />
+        <Kpi tone="hot" value={n(k.override.v, (x) => x.toFixed(1))} label="Repeat overrides per 100 sessions" />
+        <Kpi value={n(k.verified.v, (x) => `${x}%`)} label="Claims verified by code" />
+        <Kpi value={n(k.unrequested.v, (x) => `${x}%`)} label="Changes nobody asked for" />
         <Kpi value={k.pending.v} label="Policies waiting for approval" sub={<>oldest {k.pending.oldest_days} days</>} />
       </section>
 
@@ -196,9 +196,10 @@ function ExecBody({ d }: { d: ExecData }) {
           <Mix d={d} />
           <div className="share">
             <div className="share-bar" role="img" aria-label={`Agent decided ${100 - humanShare}%, human decided ${humanShare}%`}>
-              <i className="agent" style={{ width: `${100 - humanShare}%` }}><span className="w">Agent&nbsp;</span>{100 - humanShare}%</i>
-              <i className="human" style={{ width: `${humanShare}%` }}><span className="w">Human&nbsp;</span>{humanShare}%</i>
+              {100 - humanShare > 0 && <i className="agent" style={{ width: `${100 - humanShare}%` }}><span className="w">Agent&nbsp;</span>{100 - humanShare}%</i>}
+              {humanShare > 0 && <i className="human" style={{ width: `${humanShare}%` }}><span className="w">Human&nbsp;</span>{humanShare}%</i>}
             </div>
+            {(humanShare === 0 || humanShare === 100) && <p className="legend-row">Agent {100 - humanShare}% · Human {humanShare}%</p>}
           </div>
         </Panel>
 
@@ -293,8 +294,6 @@ export default function Exec() {
   const [period, setPeriod] = useState<Period>("30d");
   const q = useExec(period);
   const sessions = q.data?.kpis.sessions;
-  const repoCount = q.data?.repo_count;
-  const repoLabel = repoCount === undefined ? "All repositories" : repoCount === 1 ? (q.data?.repos?.[0] ?? "1 repository") : `${repoCount} repositories`;
   return (
     <main className="wrap page exec">
       <PageHead
@@ -304,7 +303,6 @@ export default function Exec() {
         meta={
           <>
             <Seg<Period> value={period} onChange={setPeriod} options={[{ id: "30d", label: "30 days" }, { id: "90d", label: "90 days" }]} />
-            <span className="chip" title={q.data?.repos?.join(", ")}><Layers size={12} /> {repoLabel}</span>
             {sessions !== undefined && <span className="chip mono">{sessions.toLocaleString("en-US")} sessions</span>}
             {q.data && (Object.values(q.data.sources).every((s) => s === "measured")
               ? <span className="chip ok">Measured</span>

@@ -39,7 +39,7 @@ export default function Story2() {
           <p>Unpack records every correction your people make to agents and turns the ones that matter into rules every agent follows, including the agents your next hire brings.</p>
           <div className="s2-cta">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
           <ul className="s2-chips">
             <li className="chip agent">Agent decided</li><li className="chip human">Human decided</li>
@@ -69,12 +69,12 @@ export default function Story2() {
           <h2 className="display">Make every correction <em>count once.</em></h2>
           <div className="s2-cta">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
 
-      <footer className="wrap s2-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap s2-foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }

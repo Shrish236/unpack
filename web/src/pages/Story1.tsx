@@ -34,7 +34,7 @@ export default function Story1() {
           <p>Unpack records every correction you make to an agent, and turns the ones that repeat into policy every agent follows.</p>
           <div className="s1-cta">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
           <ul className="s1-chips">
             <li className="chip agent">Agent decided</li><li className="chip human">Human decided</li>
@@ -64,11 +64,11 @@ export default function Story1() {
           <h2 className="display">Make every correction <em>count once.</em></h2>
           <div className="s1-cta s1-center">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
-      <footer className="wrap s1-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap s1-foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }

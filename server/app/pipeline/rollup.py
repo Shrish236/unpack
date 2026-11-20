@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import session_scope
 from ..models import (
-    Analysis, Decision, FunctionReason, GovCandidate, GovEvidence, GovSkillRule, PRAnalysis, PullRequest, Push, Repo,
+    Analysis, Decision, FunctionReason, GovCandidate, GovEvidence, GovPolicy, GovSkillRule, PRAnalysis, PullRequest, Push, Repo,
     SessionSignals, Team, TeamPR,
 )
 
@@ -114,6 +114,39 @@ async def _load(db: AsyncSession) -> list[dict[str, Any]]:
 
 
 load_sessions = _load  # the same rows, for the metrics module and the dashboard routers
+
+
+def policy_outcomes(statement: str, decided_at: datetime, data: list[dict[str, Any]]) -> dict[str, Any]:
+    """Measure an approved policy on the sessions pushed after it was approved (never on the ones before).
+
+    after: overrides per 100 sessions that repeat the policy's statement (the same word-overlap rule as candidates).
+    adherence: share of decisions citing the policy's exact rule text that followed it (null when none cite it).
+    recurrence: sessions still overridden on the statement, with the developers who did it; null when none.
+    """
+    later = [d for d in data if d["push"].received_at is not None and d["push"].received_at > decided_at]
+    if not later:
+        return {"after": None, "adherence": None, "recurrence": None}
+    target = _tokens(statement)
+    overridden: set[int] = set()
+    devs: set[str] = set()
+    followed = cited = 0
+    for d in later:
+        rules = {r["id"]: r["text"] for r in d["steering"].get("rules", [])}
+        for x in d["decisions"]:
+            if x.actor == "human" and x.kind in OVERRIDE_KINDS and x.statement:
+                toks = _tokens(x.statement)
+                union = len(target | toks)
+                if union and len(target & toks) / union >= JACCARD_MIN:
+                    overridden.add(d["analysis"].id)
+                    devs.add(d["dev"])
+            if x.rule_id and x.rule_followed is not None and rules.get(x.rule_id, "").strip() == statement.strip():
+                cited += 1
+                followed += int(bool(x.rule_followed))
+    return {
+        "after": round(100 * len(overridden) / len(later)),
+        "adherence": round(100 * followed / cited) if cited else None,
+        "recurrence": {"sessions": len(overridden), "teams": 1, "developers": len(devs)} if overridden else None,
+    }
 
 
 async def rollup_measured() -> dict[str, int]:
@@ -222,6 +255,20 @@ async def rollup_measured() -> dict[str, int]:
                 followed=c["followed"], violated=c["violated"], trend=[c["trend"].get(w, 0) for w in weeks],
                 latest_pr=c["pr"] or "-", latest_turn=c["turn"], source="measured", latest_public_id=c["public_id"],
             ))
+        # ---- approved measured policies: measured on the sessions pushed after approval
+        for pol in (await db.execute(select(GovPolicy).where(GovPolicy.status == "active"))).scalars().all():
+            cand = (await db.execute(
+                select(GovCandidate).where(GovCandidate.pid == pol.id, GovCandidate.source == "measured")
+            )).scalars().first()
+            if cand is None or cand.decided_at is None:
+                continue  # sample policies keep their seeded numbers
+            out = policy_outcomes(pol.statement, cand.decided_at, data)
+            pol.after = out["after"]
+            pol.adherence = out["adherence"]
+            rec = out["recurrence"]
+            pol.recurrence_sessions = rec["sessions"] if rec else None
+            pol.recurrence_teams = rec["teams"] if rec else None
+            pol.recurrence_developers = rec["developers"] if rec else None
         return {"sessions": len(data), "candidates": n_candidates, "rules": len(counts)}
 
 

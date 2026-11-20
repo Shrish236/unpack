@@ -1,0 +1,76 @@
+# Production stack for a single VM. Copy the deploy/ folder to /opt/unpack on the VM and run deploy.sh.
+# Postgres runs here as a container; switch DATABASE_URL to Cloud SQL later without changing anything else.
+name: unpack
+
+x-app: &app
+  image: ${UNPACK_IMAGE:?set UNPACK_IMAGE in .env}
+  env_file: .env
+  restart: unless-stopped
+  volumes:
+    - ./data:/data
+    - ./secrets:/secrets:ro
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: unpack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: unpack
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unpack -d unpack"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # no ports: only reachable from the other containers
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["alembic", "-c", "server/alembic.ini", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--proxy-headers", "--forwarded-allow-ips=*"]
+    ports:
+      - "127.0.0.1:8000:8000"  # for debugging over SSH only; the public entry point is Caddy
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "server.app.jobs.worker"]
+    environment:
+      INTERNAL_API_URL: http://api:8000  # the worker renders screenshots through the API
+    shm_size: 1gb  # Chromium crashes with Docker's default 64 MB /dev/shm
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

@@ -74,7 +74,7 @@ export default function HomeV1() {
                   <h1 className="display hero-h">Every decision your agents made. <em>And every one you overruled.</em></h1>
                   <p>{s.p}</p>
                   <div className="cta">
-                    <a className="btn primary" href="#/pr">See a PR unpacked <ArrowRight size={16} /></a>
+                    <a className="btn primary" href="#/pr">See a PR Unpacked <ArrowRight size={16} /></a>
                     <a className="btn" href="#humans" onClick={jump("humans")}>How it reads</a>
                   </div>
                   <ul><li className="chip agent">Agent decided</li><li className="chip human">Human overruled</li><li className="chip sim">Illustrative data</li></ul>
@@ -183,7 +183,7 @@ export default function HomeV1() {
         </div>
       </section>
 
-      <footer className="wrap foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }

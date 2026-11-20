@@ -17,6 +17,7 @@ import Exec from "./pages/Exec";
 import Team from "./pages/Team";
 import Govern from "./pages/Govern";
 import "./styles/base.css";
+import "./styles/density.css"; // last: overrides the page sheets (see the file's header to revert)
 
 
 type Theme = "light" | "dark";
@@ -99,12 +100,11 @@ export default function App() {
     <>
       <header className="nav">
         <div className="wrap nav-in">
-          <a className="brand" href="#/"><Mark />unpack</a>
+          <a className="brand" href="#/"><Mark />Unpack</a>
           <nav className="nav-links" aria-label="Main">
             <a href="#/" aria-current={isHomeFamily ? "page" : undefined}>Product</a>
             <a href="#/exec" aria-current={route === "/exec" ? "page" : undefined}>Executive</a>
             <a href="#/team" aria-current={route === "/team" ? "page" : undefined}>Managers</a>
-            <a href="#/govern" aria-current={route === "/govern" ? "page" : undefined}>Governance</a>
             <a href="#/pr" aria-current={route.startsWith("/pr") ? "page" : undefined}>PR analyses</a>
           </nav>
           <div className="nav-end">

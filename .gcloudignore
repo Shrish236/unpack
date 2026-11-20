@@ -1,0 +1,25 @@
+# Files Cloud Build should NOT upload (gcloud builds submit). Keep in sync with .dockerignore.
+.gcloudignore
+.git
+.github
+.claude
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+web/node_modules
+web/dist
+web/*.tsbuildinfo
+.live_httpx_data
+exports
+data
+secrets
+deploy/.env
+.env
+.env.*
+!.env.example
+*.pem
+*.key

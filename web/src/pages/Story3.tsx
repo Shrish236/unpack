@@ -35,7 +35,7 @@ export default function Story3() {
           <p className="s3-sub">Unpack turns an agent-written change into a short, verified story of every decision: the agent's, and the humans' who overruled it.</p>
           <div className="s3-cta">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
           <ul className="s3-chips">
             <li className="chip agent">Agent decided</li><li className="chip human">Human decided</li>
@@ -65,11 +65,11 @@ export default function Story3() {
           <h2 className="display">Make every correction <em>count once.</em></h2>
           <div className="s3-cta s3-center">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
-      <footer className="wrap s3-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap s3-foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }

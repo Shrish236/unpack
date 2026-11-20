@@ -65,7 +65,7 @@ export default function Home({ live = false }: { live?: boolean }) {
                   <p>{s.p}</p>
                   <div className="hx-cta">
                     <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-                    <a className="btn" href="#/pr">See a PR unpacked</a>
+                    <a className="btn" href="#/pr">See a PR Unpacked</a>
                   </div>
                   <ul className="hx-chips">
                     <li className="chip agent">Agent decided</li><li className="chip human">Human decided</li>
@@ -174,12 +174,12 @@ export default function Home({ live = false }: { live?: boolean }) {
           <h2 className="display">Make every correction <em>count once.</em></h2>
           <div className="hx-cta hx-center">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
 
-      <footer className="wrap hx-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
+      <footer className="wrap hx-foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative.</span></footer>
     </main>
   );
 }

@@ -18,7 +18,7 @@ export default function Cast1() {
           <p>Unpack records every decision an agent makes and every correction you make, checks them against your rules, and turns what repeats into policy every agent follows.</p>
           <div className="c1-cta">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
@@ -31,11 +31,11 @@ export default function Cast1() {
           <h2 className="display">Make every correction <em>count once.</em></h2>
           <div className="c1-cta c1-cta-c">
             <a className="btn primary" href="#/govern">Open the governance inbox <ArrowRight size={16} /></a>
-            <a className="btn" href="#/pr">See a PR unpacked</a>
+            <a className="btn" href="#/pr">See a PR Unpacked</a>
           </div>
         </div>
       </section>
-      <footer className="wrap c1-foot"><span>unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative. The cast is fictional.</span></footer>
+      <footer className="wrap c1-foot"><span>Unpack · built at Startup Buildathon India 2026</span><span>All figures on this page are illustrative. The cast is fictional.</span></footer>
     </main>
   );
 }

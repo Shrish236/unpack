@@ -13,9 +13,10 @@ import "../styles/graph.css";
 // move together); leave them out and the panel keeps its own.
 export default function GraphPanel({ analysis, sel: selProp, onSelect }: { analysis: AnalysisResponse; sel?: string | null; onSelect?: (id: string | null) => void }) {
   const g = useMemo(() => buildGraph(analysis), [analysis]);
-  const modes = useMemo(() => availableModes(g), [g]);
+  // two orders only: the model's flow (or the agent's order when there is no flow), and A–Z for lookup
+  const modes = useMemo<OrderMode[]>(() => [availableModes(g).includes("ai") ? "ai" : "session", "alphabetical"], [g]);
   const [modeState, setMode] = useState<OrderMode>(() => (analysis.flow?.llm ? "ai" : "session"));
-  const mode = modes.includes(modeState) ? modeState : "session"; // a new analysis may not offer the mode that was chosen
+  const mode = modes.includes(modeState) ? modeState : modes[0]; // a new analysis may not offer the mode that was chosen
   const [detail, setDetail] = useState<Detail>("auto");
   const [focus, setFocus] = useState<string | null>(null);
   const [selState, setSelState] = useState<string | null>(null);
@@ -28,13 +29,9 @@ export default function GraphPanel({ analysis, sel: selProp, onSelect }: { analy
   const [blast, setBlast] = useState(false);
   const [fitNonce, setFitNonce] = useState(0);
   const [tests, setTests] = useState(false);
-  const [context, setContext] = useState(true);
-  const [chips, setChips] = useState(true);
-  const [neighbours, setNeighbours] = useState(false);
-  const [allLinks, setAllLinks] = useState(false);
-
+  // unchanged rows and collapsed callers are always on; neighbours and all links were noise, so they are gone
+  const opts = useMemo(() => ({ tests, context: true, chips: true }), [tests]);
   const order = useMemo(() => orderFunctions(g, mode), [g, mode]);
-  const opts = useMemo(() => ({ tests, context, chips }), [tests, context, chips]);
   // the graph follows the selection at once; the text panel may trail a frame behind during fast stepping
   const inspectorSel = useDeferredValue(sel);
 
@@ -76,22 +73,18 @@ export default function GraphPanel({ analysis, sel: selProp, onSelect }: { analy
     >
       <div ref={root} className="gp-body" tabIndex={0} onKeyDown={onKeyDown} onPointerDown={(e) => { if ((e.target as HTMLElement).closest("input,select,button")) return; root.current?.focus({ preventScroll: true }); }} aria-label="Change graph">
         <div className="gl-toolbar">
-          <Seg<Detail> value={detail} onChange={(d) => { setDetail(d); setFocus(null); }} options={[{ id: "auto", label: "Auto" }, { id: "folders", label: "Folders" }, { id: "files", label: "Files" }, { id: "functions", label: "Functions" }]} />
+          {/* one grouping choice (auto or per function) and one filter; the graph's own controls handle zoom and fit */}
+          <Seg<Detail> value={detail} onChange={(d) => { setDetail(d); setFocus(null); }} options={[{ id: "auto", label: "Auto" }, { id: "functions", label: "Functions" }]} />
           {focus && <button className="chip cg-crumb" onClick={() => setFocus(null)} title="Back to all changes">All changes › <b>{focus}</b> ✕</button>}
-          <label className="gl-check" title="Unchanged functions the selected function calls or is called by"><input type="checkbox" checked={neighbours} onChange={(e) => setNeighbours(e.target.checked)} /> Neighbours</label>
-          <label className="gl-check"><input type="checkbox" checked={tests} onChange={(e) => setTests(e.target.checked)} /> Tests</label>
-          <label className="gl-check" title="Large graphs show only the selection's links and the strongest ones"><input type="checkbox" checked={allLinks} onChange={(e) => setAllLinks(e.target.checked)} /> All links</label>
-          <label className="gl-check"><input type="checkbox" checked={context} onChange={(e) => setContext(e.target.checked)} /> Unchanged rows</label>
-          <label className="gl-check"><input type="checkbox" checked={chips} onChange={(e) => setChips(e.target.checked)} /> Collapsed callers</label>
+          <label className="gl-check"><input type="checkbox" checked={tests} onChange={(e) => setTests(e.target.checked)} /> Show tests</label>
           <span className="gl-spacer" />
           <button className={`btn sm ${blast ? "primary" : ""}`} onClick={() => setBlast((b) => !b)} disabled={!sel} aria-pressed={blast}>Blast radius <kbd>B</kbd></button>
-          <button className="btn sm" onClick={() => setFitNonce((x) => x + 1)}>Fit <kbd>F</kbd></button>
         </div>
         <div className="gl-grid">
-          <ChangeGraph g={g} sel={sel} blast={blast} opts={opts} detail={detail} focus={focus} neighbours={neighbours} allLinks={allLinks} order={order} numbered={mode !== "alphabetical"} fitNonce={fitNonce} onSelect={setSel} onFocus={setFocus} />
+          <ChangeGraph g={g} sel={sel} blast={blast} opts={opts} detail={detail} focus={focus} neighbours={false} allLinks={false} order={order} numbered={mode !== "alphabetical"} fitNonce={fitNonce} onSelect={setSel} onFocus={setFocus} />
           <Inspector g={g} sel={inspectorSel} order={order} mode={mode} onSelect={setSel} />
         </div>
-        <p className="gl-keys">Click the graph, then <kbd>←</kbd> <kbd>→</kbd> step through the changes · drag cards · scroll to zoom · <kbd>Esc</kbd> clear</p>
+        <p className="gl-keys"><kbd>←</kbd> <kbd>→</kbd> step through the changes · <kbd>Esc</kbd> clear</p>
       </div>
     </Panel>
   );
