@@ -3,13 +3,14 @@ import { BookOpen, Check, FileText, Share2, ShieldCheck } from "lucide-react";
 import { Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
 import { TYPE_LABEL, type DType, type HumanKind } from "../data";
 import {
-  TODAY, actives as seedActives, candidates as seedCandidates, history as seedHistory, rules,
+  TODAY, briefs, actives as seedActives, candidates as seedCandidates, history as seedHistory, rules,
   type ActivePolicy, type Candidate, type Enforcement, type Evidence, type HistoryItem, type Scope,
 } from "../data.govern";
+import GovernBrief, { briefStats, ENF_LABEL } from "./GovernBrief";
 import "../styles/govern.css";
 
 type Tab = "candidates" | "active" | "skills" | "history";
-interface Draft { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string }
+interface Draft { statement: string; scope: Scope; enforcement: Enforcement; owner: string; expires: string; target: number; review: string }
 
 const KIND: Record<HumanKind, string> = {
   redirect: "Redirect", reject: "Reject", permission_denied: "Permission denied",
@@ -24,6 +25,8 @@ const OWNERS = ["@platform", "@quality", "@api-guild", "@security"];
 
 const fmt = (d: string) => new Date(d).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const daysLeft = (d: string) => Math.round((Date.parse(d) - Date.parse(TODAY)) / 864e5);
+const addDays = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+const defaultTarget = (x: Candidate) => Math.max(1, Math.round(x.perHundred * 0.25));
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 function Spark({ v, w = 72, h = 22 }: { v: number[]; w?: number; h?: number }) {
@@ -81,7 +84,7 @@ export default function Govern() {
   const c = sorted.find((x) => x.id === sel) ?? sorted[0];
   const ready = cands.filter(meets).length;
 
-  const draftOf = (x: Candidate): Draft => drafts[x.id] ?? { statement: x.statement, scope: x.scope, enforcement: x.enforcement, owner: x.owner, expires: x.expires };
+  const draftOf = (x: Candidate): Draft => drafts[x.id] ?? { statement: x.statement, scope: x.scope, enforcement: x.enforcement, owner: x.owner, expires: x.expires, target: defaultTarget(x), review: addDays(TODAY, 30) };
   const patch = (x: Candidate, p: Partial<Draft>) => setDrafts((d) => ({ ...d, [x.id]: { ...draftOf(x), ...p } }));
 
   const pick = (id: string) => {
@@ -98,9 +101,9 @@ export default function Govern() {
     const d = draftOf(x);
     setActives((a) => [{
       id: x.pid, statement: d.statement, type: x.type, scope: d.scope, scopeName: d.scope === "org" ? "Org" : d.scope === "team" ? "Payments" : "payments-service",
-      enforcement: d.enforcement, owner: d.owner, expires: d.expires, adherence: null, before: x.perHundred, after: null, match: x.match,
+      enforcement: d.enforcement, owner: d.owner, expires: d.expires, adherence: null, before: x.perHundred, after: null, match: x.match, target: d.target, review: d.review,
     }, ...a]);
-    setHist((h) => [{ id: `h-${x.pid}`, statement: d.statement, outcome: "approved", role: "Tech lead (you)", when: TODAY, why: `${x.sessions} sessions across ${x.teams} teams, ${x.developers} developers.` }, ...h]);
+    setHist((h) => [{ id: `h-${x.pid}`, statement: d.statement, outcome: "approved", role: "Tech lead (you)", when: TODAY, why: `${x.sessions} sessions across ${x.teams} teams, ${x.developers} developers. Target: ${d.target} overrides per 100 sessions by ${fmt(d.review)}.` }, ...h]);
     leave(x);
     setToast(`${x.pid} approved. Published to AGENTS.md${d.enforcement === "advice" ? "" : " and the PR check"}.`);
   };
@@ -135,6 +138,8 @@ export default function Govern() {
   const d = c ? draftOf(c) : null;
   const agentsMd = c && d ? `## ${HEADING[c.type]}\n- ${d.statement}\n  <!-- ${c.pid} · scope: ${d.scope} · owner: ${d.owner} · expires: ${d.expires} -->` : "";
   const prRule = c && d ? `rule: ${slug(d.statement)}\nwhen: ${c.match}\nscope: ${d.scope}\nenforcement: ${d.enforcement}\non_violation: ${ON_VIOLATION[d.enforcement]}\nexpires: ${d.expires}` : "";
+  const brief = c ? briefs[c.id] : undefined;
+  const bs = c && d && brief ? briefStats(c, brief, d.scope) : null;
   const evidence = c ? (showAll ? c.evidence : c.evidence.slice(0, 3)) : [];
 
   return (
@@ -211,6 +216,8 @@ export default function Govern() {
               </div>
             </div>
 
+            {brief && <GovernBrief c={c} b={brief} scope={d!.scope} enforcement={d!.enforcement} onUse={() => patch(c, { enforcement: brief.recommend.enforcement })} />}
+
             <div className="gv-sec">
               <div className="gv-sec-h">
                 <span className="gv-label">Evidence · human overrides</span>
@@ -239,7 +246,24 @@ export default function Govern() {
                   <select className="gv-select" value={d!.owner} onChange={(e) => patch(c, { owner: e.target.value })}>{OWNERS.map((o) => <option key={o}>{o}</option>)}</select></label>
                 <label className="gv-field"><span className="gv-label">Expires</span>
                   <input className="gv-input" type="date" value={d!.expires} min={TODAY} onChange={(e) => patch(c, { expires: e.target.value })} /></label>
+                <label className="gv-field"><span className="gv-label">Success target · overrides per 100 sessions</span>
+                  <input className="gv-input" type="number" min={0} max={c.perHundred} value={d!.target} onChange={(e) => patch(c, { target: Math.max(0, +e.target.value || 0) })} />
+                  <span className="gv-hint">today {c.perHundred} · the policy is working when it reaches {d!.target}</span></label>
+                <label className="gv-field"><span className="gv-label">Review on</span>
+                  <input className="gv-input" type="date" value={d!.review} min={TODAY} max={d!.expires} onChange={(e) => patch(c, { review: e.target.value })} />
+                  <span className="gv-hint">{Math.max(0, daysLeft(d!.review))} days from today · you get the adherence and override trend</span></label>
               </div>
+              {bs && brief && (
+                <div className={`gv-impact ${d!.enforcement === "gate" && bs.falsePos > 0 ? "warn" : ""}`} aria-live="polite">
+                  <b>If you approve as {ENF_LABEL[d!.enforcement]} for {d!.scope === "org" ? "the org" : d!.scope === "team" ? "this team" : "this repo"}</b>
+                  <span>
+                    {d!.enforcement === "advice" && <>Over the last 90 days the agent would have commented on {bs.r.flagged} PRs. Nothing is blocked.</>}
+                    {d!.enforcement === "check" && <>Over the last 90 days the check would have failed {bs.r.flagged} PRs: {bs.r.confirmed} correctly and {bs.falsePos} that a reviewer would have had to override.</>}
+                    {d!.enforcement === "gate" && <>Over the last 90 days {bs.r.flagged} merges would have been blocked: {bs.r.confirmed} correctly{bs.falsePos > 0 ? <> and <b>{bs.falsePos} wrongly</b>. Consider a PR check until precision is higher.</> : <>, none wrongly.</>}</>}
+                    {" "}Target: {c.perHundred} → {d!.target} overrides per 100 sessions.
+                  </span>
+                </div>
+              )}
               {rejecting ? (
                 <div className="gv-field">
                   <span className="gv-label">Why reject? Saved to history</span>
@@ -284,7 +308,7 @@ export default function Govern() {
                       <td>{p.adherence === null ? <span className="gv-cell-s">Measuring</span> : (
                         <div className="gv-pair-bars"><span className="gv-nums">{p.adherence}%</span>
                           <span className={`gv-bar ad ${p.adherence < 60 ? "bad" : p.adherence < 80 ? "low" : ""}`}><i style={{ width: `${p.adherence}%` }} /></span></div>)}</td>
-                      <td>{p.after === null ? <span className="gv-cell-s">{p.before} before</span> : (
+                      <td>{p.after === null ? <span className="gv-cell-s">{p.before} before{p.target !== undefined && <> · target {p.target}</>}</span> : (
                         <div className="gv-pair-bars">
                           <span className="gv-nums">{p.before} → {p.after}</span>
                           <span className="gv-bar before"><i style={{ width: `${Math.min(100, p.before * 5)}%` }} /></span>
