@@ -21,6 +21,8 @@ from typing import Optional
 from .model import (TIER_AMBIGUOUS, TIER_EXTRACTED, TIER_INFERRED, TIER_RANK, CallSite, FuncInfo, ModuleInfo, Shape)
 
 MAX_REEXPORT_HOPS = 3
+# methods whose first parameter is the class, without a @classmethod decorator
+IMPLICIT_CLASSMETHODS = {"__new__", "__init_subclass__", "__class_getitem__"}
 BUILTIN_NAMES = set(dir(builtins))
 STDLIB = set(getattr(sys, "stdlib_module_names", ()))
 BUILTIN_METHOD_NAMES = set()
@@ -364,6 +366,10 @@ class Resolver:
 
     ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag", "ReprEnum"}
 
+    def is_metaclass(self, cid: str) -> bool:
+        """A class derived from the builtin `type`: its methods receive the class they describe."""
+        return any("type" in self.classes[c].bases_raw for c in self.mro(cid))
+
     def is_enum(self, cid: str) -> bool:
         for c in self.mro(cid):
             for raw in self.classes[c].bases_raw:
@@ -566,6 +572,17 @@ class Resolver:
     def _binding_vals(self, b, sc: Scope, mod, f: Optional[FuncInfo]) -> list:
         if b.kind == "ann":
             return self.ann_types(b.ann, mod, self.class_of_func(f))
+        if b.kind == "unpack":
+            saved, self._emit = self._emit, []
+            try:
+                vals = self.eval_value(b.shape, sc)
+            finally:
+                self._emit = saved
+            out = []
+            for v in vals:
+                if v.ent[0] == "tuple" and b.index < len(v.ent[1]) and v.ent[1][b.index] is not None:
+                    out.append(V(v.ent[1][b.index], TIER_INFERRED, "unpack"))
+            return out
         if b.kind == "yield":
             # `x = yield y` receives the Generator[Y, SendType, R] send type of the enclosing function
             if f is None or not f.returns:
@@ -661,7 +678,7 @@ class Resolver:
             sc = Scope(mod, f)
             for sh in f.return_shapes:
                 for v in self.eval_value(sh, sc):
-                    if v.ent[0] in ("inst", "seq", "fn"):
+                    if v.ent[0] in ("inst", "seq", "fn", "tuple"):
                         out.append(adj(v, TIER_INFERRED, "return"))
         finally:
             self._emit = saved
@@ -721,7 +738,7 @@ class Resolver:
                 continue
             if b.kind == "param":
                 if f.is_method and name == f.first_param and f.params and f.params[0][0] == name:
-                    if f.is_classmethod:
+                    if f.is_classmethod or f.name in IMPLICIT_CLASSMETHODS or self.is_metaclass(f.class_id):
                         out.append(V(("cls", f.class_id)))
                     else:
                         out.append(V(("inst", f.class_id)))
@@ -729,9 +746,13 @@ class Resolver:
                     out += self.ann_types(b.ann, mod, self.class_of_func(f))
                 else:
                     fx = self.visible_fixture(f, name) if (mod.is_test) else None
+                    if (fx is None or fx is f) and (f.is_test or f.is_fixture) and not b.ann:
+                        # pytest fixture from a plugin or from pytest itself (monkeypatch, tmp_path, ...);
+                        # a fixture whose parameter has its own name takes the outside fixture
+                        out.append(V(("ext", None)))
                     if fx is not None and fx is not f:
                         ts = self.return_types(fx, unwrap_iter=True)
-                        out += [adj(t, TIER_INFERRED, "fixture") for t in ts if t.ent[0] == "inst"]
+                        out += [adj(t, TIER_INFERRED, "fixture") for t in ts if t.ent[0] in ("inst", "fn")]
             else:
                 out += self._binding_vals(b, sc, mod, f)
         self._active.discard(key)
@@ -801,6 +822,17 @@ class Resolver:
         if depth > 8:
             return [UNK]
         k = shape.kind
+        if k == "tuple":                                # a tuple display, positional
+            ents = []
+            for e in shape.elems:
+                first = None
+                if e is not None:
+                    for v in self.eval_value(e, sc, depth=depth + 1):
+                        if v.ent[0] != "unk":
+                            first = v.ent
+                            break
+                ents.append(first)
+            return [V(("tuple", tuple(ents)), TIER_INFERRED, "table")]
         if k == "def":                                  # a function defined in this repository, by id
             return [V(("fn", shape.base))] if shape.base in self.funcs else [UNK]
         if k == "name":
@@ -929,6 +961,8 @@ class Resolver:
                 order = order[1:]
             hit = self.find_member(order, attr)
             if hit is None:
+                if k == "super":                                  # not in the repository: a library base
+                    return [V(("ext", None))]
                 if k in ("inst", "cls"):                          # instance / class attribute with a known type
                     ts = self.attr_types(cid, attr)
                     if ts is not None:
@@ -1102,8 +1136,12 @@ class Resolver:
             self._unique_name(res, shape.attrs[-1], sc)
             return
         res.status = "unresolved"
-        res.reason = ("attr_not_found" if saw_miss else "opaque_value" if saw_opaque
-                      else "unknown_name" if not shape.attrs else "unknown_receiver")
+        params = {p[0] for p in sc.func.params} if sc.func is not None else set()
+        if not shape.attrs and shape.base in params:
+            res.reason = "parameter_callable"
+        else:
+            res.reason = ("attr_not_found" if saw_miss else "opaque_value" if saw_opaque
+                          else "unknown_name" if not shape.attrs else "unknown_receiver")
 
     @staticmethod
     def _merge_targets(ts: list) -> list:
@@ -1124,8 +1162,10 @@ class Resolver:
         guard = self.builtin_guard and name in BUILTIN_METHOD_NAMES
         props = [t for t in res.targets if (t.via or "").startswith("property")]
         if not ids:
-            res.status = "unresolved"
-            res.reason = "no_candidate"
+            # No repository method has this name, so the callee is outside the repository (a
+            # library or fixture method), unless it is created at run time (getattr, setattr).
+            res.status = "external"
+            res.reason = "no_repo_method_named"
             return
         if len(ids) == 1 and not guard:
             res.status = "resolved"
@@ -1333,6 +1373,25 @@ class Resolver:
         self._caller_is_test = mod.is_test
         scopes = [(mod, Scope(mod, None))] + [(f, Scope(mod, f)) for f in mod.funcs]
         for owner, sc in scopes:
+            if owner is not mod and owner.return_shapes:
+                # a function returned by a factory can be invoked by whoever receives it
+                returned = {}
+                for sh in owner.return_shapes:
+                    for v in self.eval_value(sh, sc):
+                        if v.ent[0] == "fn" and v.ent[1] in self.funcs and v.ent[1] != owner.id:
+                            returned[v.ent[1]] = Target(v.ent[1], TIER_INFERRED, "returned")
+                if returned:
+                    out.append(SiteRes("ref", mod.path, owner.start, 0, f"return {owner.name}", owner.id,
+                                       "returned", "resolved", list(returned.values())))
+            for line, col, sh in owner.value_refs:
+                refs = {}
+                for v in self.eval_value(sh, sc):
+                    if v.ent[0] == "fn" and v.ent[1] in self.funcs and not self.funcs[v.ent[1]].is_property:
+                        refs[v.ent[1]] = Target(v.ent[1], TIER_INFERRED if v.tier == TIER_EXTRACTED else v.tier,
+                                                "value_ref")
+                if refs:
+                    out.append(SiteRes("ref", mod.path, line, col, sh.raw, owner.id if owner is not mod else mod.path,
+                                       "value", "resolved", list(refs.values())))
             for cs in owner.calls:
                 site = self.resolve_call(cs, sc, mod.path)
                 out.append(site)

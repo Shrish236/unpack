@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from .extract import extract_file, module_name_for
+from .extract import extract_file, module_name_for, package_predicates
 from .graph import Graph, _build_calls, _build_structure
 from .resolve import Resolver
 
@@ -45,13 +45,14 @@ def update_graph(old: Graph, source, changed: set, deleted: set, resolver_opts: 
     opts = resolver_opts or {}
     paths = [p for p in source.list_files()]
     pset = set(paths)
+    predicates = package_predicates(paths)
     mods = {p: m for p, m in old.mods.items() if p in pset and p not in changed}
     for p in sorted(changed & pset):
-        name, pkg = module_name_for(p, lambda x: x in pset)
+        name, pkg = module_name_for(p, *predicates)
         mods[p] = extract_file(p, source.read(p), name, pkg)
     # module names depend on __init__.py presence; refresh them for every file (no re-parse needed)
     for p, m in mods.items():
-        name, pkg = module_name_for(p, lambda x: x in pset)
+        name, pkg = module_name_for(p, *predicates)
         m.name, m.package = name, pkg
     mods = {p: mods[p] for p in paths if p in mods}
     t1 = time.time()
@@ -94,12 +95,19 @@ def update_graph(old: Graph, source, changed: set, deleted: set, resolver_opts: 
         return c
     co, cn = count_by_name(old), count_by_name(new)
     touched |= {n for n in set(co) | set(cn) if co.get(n, 0) != cn.get(n, 0)}
+    # Every name-dependent site is re-resolved when its name is touched, whatever its status: a
+    # site that found no repository method (`external`, no_repo_method_named) changes as soon as one
+    # appears, and property reads and method references fall back by name in the same way.
     if touched:
+        dunder_touched = any(n.startswith("__") and n.endswith("__") for n in touched)
         for s in old.sites:
-            if s.kind == "call" and s.path not in affected and (
-                    s.status in ("ambiguous", "unresolved") or any(t.via == "unique_name" for t in s.targets)):
+            if s.path in affected:
+                continue
+            if s.kind in ("call", "property", "ref"):
                 if s.raw.split("(")[0].split(".")[-1].strip() in touched:
                     affected.add(s.path)
+            elif s.kind == "implicit" and dunder_touched:
+                affected.add(s.path)
 
     # getattr-dispatched sites depend on the method names of their receiver's class
     if touched:

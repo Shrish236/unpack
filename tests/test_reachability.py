@@ -4,6 +4,9 @@
 exists even through ambiguous edges, which is the only red flag. Argument gating and import-time
 execution are covered in the tests below.
 """
+from unpack_graph.graph import build_graph
+from unpack_graph.source import FsSource
+
 from tests.helpers import build
 
 # ---------------------------------------------------------------- pytest fixtures + reachability
@@ -40,6 +43,30 @@ def test_import_time_reachability_and_instance_protocol_labels():
     assert r["m.py::Pat.__init__"].label == "direct"
     assert r["m.py::Pat.__hash__"].label == "reached_uncertain"
     assert r["m.py::Holder.use"].label == "none"
+
+
+def test_strict_none_policy_relabels_implicit_invocations(tmp_path):
+    # no static path reaches these, and no ambiguous path either: only the implicit rule applies
+    (tmp_path / "test_x.py").write_text("def test_a():\n    pass\n")
+    (tmp_path / "lib.py").write_text(
+        "class Plain:\n"
+        "    def __repr__(self):\n"
+        "        return 'p'\n\n"
+        "def outer():\n"
+        "    def inner():\n"
+        "        return 2\n"
+        "    return 1\n\n"
+        "def dead():\n"
+        "    return 3\n"
+    )
+    default = build_graph(FsSource(str(tmp_path))).reach
+    assert default["lib.py::Plain.__repr__"].label == "reached_uncertain"
+    assert default["lib.py::outer.<locals>.inner"].label == "reached_uncertain"
+    assert default["lib.py::dead"].label == "none"
+    strict = build_graph(FsSource(str(tmp_path)), implicit_uncertain=False).reach
+    assert strict["lib.py::Plain.__repr__"].label == "none"
+    assert strict["lib.py::outer.<locals>.inner"].label == "none"
+    assert strict["lib.py::dead"].label == "none"
 
 
 # ---------------------------------------------------------------- argument-sensitive reachability

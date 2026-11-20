@@ -1,6 +1,6 @@
 # Code knowledge graph: design
 
-This document describes the code knowledge graph in `unpack_graph/`: what it computes, how it works, the decisions behind it, and how it is validated. It applies to any Python repository, and the validation numbers quoted here come from httpx 0.28.1, flask and requests.
+This document describes the code knowledge graph in `unpack_graph/`: what it computes, how it works, the decisions behind it, and how it is validated. It applies to any Python repository. The validation numbers quoted here come from six repositories: httpx 0.28.1, flask, requests, click, attrs and this repository.
 
 ## 1. Purpose
 
@@ -107,6 +107,7 @@ What is recorded for each scope:
 * **Implicit protocol sites**: `with`, `for`, subscripts, operators, comparisons, truthiness, f-strings, builtin conversions.
 * **Bindings** for type inference: constructor results, annotated parameters and assignments, `with ... as`, `for` targets, tuple unpacking, `except ... as`, `typing.cast`, `yield` values, dictionary, list and tuple displays.
 * **Guards**: parameters whose positive test encloses a call (`if p:`, `if p is not None:`).
+* **Module names**: a directory counts as a package when it has `__init__.py` or holds `.py` files (namespace packages, PEP 420), so `src/flask/sansio/app.py` is `flask.sansio.app`, not `app`. Names come from the whole file list, which is why an incremental update refreshes them for every file.
 * **Parse health**: `partial` when the tree has errors (with the error lines), `decode_errors` for non-UTF-8 bytes.
 
 Tree-sitter details that mattered: annotations arrive as text and are re-parsed with `ast`; `with` and `except` items wrap their alias in `as_pattern`; a block's end includes trailing indented comments, while `ast` stops at the last statement, so the end line is taken from the last non-comment token.
@@ -186,6 +187,8 @@ These exist because a call-only graph reports functions as untested when tests d
 | property read, unknown receiver | `x.name` where `x` has no known type falls back to the repository's property `name`: `INFERRED` when unique, `AMBIGUOUS` otherwise. A receiver with any known type never falls back |
 | method reference | a method read without a call (`report = err.show`) is a `ref`-style edge: it can be called later |
 | module `__getattr__` | a missing attribute on a module links to the module's `__getattr__` (PEP 562), via `module_getattr` |
+| value reference | a function name in a value position (returned, stored, passed as an argument) gives a `ref` edge from the function that holds it. A `returned` edge links a factory to each function it returns, so calling the factory reaches the closure |
+| tuple unpacking from a return | `a, b = f()` binds each name to the matching element of the tuple that `f` returns, so calls through `a` and `b` resolve |
 
 ## 8. Test reachability
 
@@ -208,6 +211,8 @@ Each test starts from:
 | `reached_uncertain` | reachable only through an `AMBIGUOUS` edge |
 | `none` | no path, even through ambiguous edges |
 | `test` | the function is itself a test |
+
+**Implicit invocation.** A function with no static or ambiguous path can still be run by machinery the graph cannot see: a dunder (the interpreter calls it), a closure (created at run time and handed on), or a method of a class whose base lies outside the repository (that base calls it). By default these are labelled `reached_uncertain`, not `none`. `--strict-none` on `build` and `coverage-check` restores the plain labels. The default is a decision recorded in section 16.
 
 ### 8.3 Depth
 
@@ -271,7 +276,7 @@ The output is validated against `schemas/graphview.schema.json`. `meta.module_ch
 * the changed and deleted files;
 * their importers, two hops out, using the import edges of both the old and the new graph;
 * the files that define ancestors of changed classes (override dispatch reaches the changed subclasses);
-* files whose name-fallback sites mention a method name whose definitions appeared, disappeared or changed in number.
+* every call, property-read, method-reference and implicit-protocol site whose name was touched: a method or property name whose definitions appeared, disappeared or changed in number. Such a site is re-resolved whatever its status, because an `external` site (no repository method of that name) changes as soon as one appears. The first version re-resolved only `ambiguous`, `unresolved` and unique-name sites, and the six-repository check caught the gap on this repository's own history (commit `4342383`, which added a `get` method that stale `.get()` calls in other files should have found).
 
 Every other file keeps its resolved sites. Reachability is recomputed. `graph_fingerprint()` and `diff_fingerprints()` compare a result with a full rebuild. The incremental result matched a full rebuild on 12 consecutive httpx commits and on every scenario in `tests/test_incremental.py`.
 
@@ -281,11 +286,11 @@ On a repository where one module is imported by most others, most files are affe
 
 ```bash
 unpack-graph extract  <repo> [--rev REV] [--check-ast] [--list]   # pass 1 only
-unpack-graph build    <repo> [--rev REV] [--neo4j]                # passes 1, 2 and reachability
+unpack-graph build    <repo> [--rev REV] [--neo4j] [--strict-none]  # passes 1, 2 and reachability
 unpack-graph changed  <repo> <base> <head> [--json]               # classified changes
 unpack-graph region   <repo> <base> <head> [--cap N] [--tests-per-node N] [--out FILE] [--neo4j]
 unpack-graph eval     <repo> [--json FILE]                        # measurements (exit 1 on mismatch)
-unpack-graph coverage-check <repo> <coverage.json> [--json FILE]  # exit 1 on any false none
+unpack-graph coverage-check <repo> <coverage.json> [--json FILE] [--strict-none]  # exit 1 on any false none
 ```
 
 Neo4j connection: `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The repository's `docker-compose.yml` provides the service.
@@ -336,6 +341,7 @@ Performance on httpx (60 files, one process): a full build takes about 1.3 s; lo
 8. Duplicate module names in different directories can collide, since the first one wins.
 9. Test detection follows pytest naming. `unittest.TestCase` methods outside a `Test*` class are not detected as tests.
 10. Pass 1 handles `.py` files only.
+11. Metaprogramming that builds classes or methods at run time is invisible: `attr.s`-style builders, `make_class` and `type(...)` calls, and methods installed with `setattr`. This is the main gap on attrs.
 
 ## 15. Adapting to another repository
 
@@ -379,3 +385,6 @@ Before this procedure, the repositories checked were: httpx (all checks above), 
 | Jedi not kept | It resolved none of the sites the resolver left open |
 | `none` is the only red flag; `reached` is never presented as executed | Static reachability over-approximates by about a third |
 | Region output follows the existing schema | The schema is the repository's contract; the internal roles are kept as `relation` |
+| Module names follow the directory chain (PEP 420) | `src/flask/sansio/app.py` was named `app` with no `__init__.py` in `sansio/`. Fixing it cut flask's false `none` count from 130 to 23 |
+| Implicit invocations are `reached_uncertain` by default; `--strict-none` restores `none` | Dunders, closures and methods of externally based classes are run by machinery the graph cannot see. Under the default, flask's false `none` count fell from 23 to 8 and click's true `none` count from 23 to 13: the policy trades some untested-function reports for fewer false alarms. It is a flag so the choice stays with the user |
+| Name-dependent sites are re-resolved whatever their status | An `external` call (no repository method of that name) resolves once such a method is added. Re-resolving only `ambiguous`, `unresolved` and unique-name sites gave an incremental result that differed from a full rebuild on a real commit |
