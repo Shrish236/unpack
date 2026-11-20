@@ -1,0 +1,121 @@
+/* Story-step visuals (left column). Default styles are the finished state; animations run only while the
+   step is active, so they replay each time and reduced-motion users just see the end state. */
+
+@property --n { syntax: "<integer>"; inherits: true; initial-value: 0; }
+
+.vz { position: relative; max-width: 460px; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3); padding: var(--sp-4); font-size: var(--fs-3); color: var(--ink-2); overflow: hidden; }
+.vz b { font-weight: 500; }
+.vz .mono { font-family: var(--font-mono); }
+.vz-count::after { counter-reset: n var(--n); content: counter(n); }
+.vz-tick { width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 11px; flex: none; }
+.vz-tick.ok { background: var(--ok-soft); color: var(--ok); } .vz-tick.bad { background: var(--bad-soft); color: var(--bad); }
+
+/* the stagger helper: each child starts --i steps after the step becomes active */
+.step[data-active="true"] .vz [style*="--i"] { animation-delay: calc(0.35s + var(--i) * 0.45s); }
+
+/* 1 · session -> typed decisions */
+.vz-session { display: grid; gap: var(--sp-2); }
+.vz-line { display: grid; grid-template-columns: 28px 36px 1fr auto; gap: var(--sp-2); align-items: baseline; padding: 6px 0 6px var(--sp-2); border-left: 2px solid var(--line-2); }
+.vz-line.human { border-left-color: var(--human); background: linear-gradient(90deg, var(--human-soft), transparent 70%); }
+.vz-line b { font-size: var(--fs-2); color: var(--ink-3); }
+.vz-who { font: var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.vz-line.human .vz-who { color: var(--human-text); }
+.vz-text { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vz-tag { font: normal var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px; background: var(--sunken); color: var(--ink-2); white-space: nowrap; }
+.vz-line.human .vz-tag { background: var(--human-soft); color: var(--human-text); }
+.vz-scan { position: absolute; left: 0; right: 0; height: 36px; top: 0; background: linear-gradient(transparent, color-mix(in oklab, var(--human) 22%, transparent), transparent); opacity: 0; pointer-events: none; }
+.step[data-active="true"] .vz-line { animation: vz-in 0.5s var(--ease) both; }
+.step[data-active="true"] .vz-line .vz-tag { animation: vz-pop 0.4s var(--ease) both; animation-delay: calc(0.75s + var(--i) * 0.45s); }
+.step[data-active="true"] .vz-scan { animation: vz-sweep 2.4s ease-in-out 0.3s both; }
+
+/* 2 · who decided + skill check */
+.vz-who-card { display: grid; gap: var(--sp-3); }
+.vz-split { display: flex; height: 26px; border-radius: 999px; overflow: hidden; background: var(--sunken); }
+.vz-split i { display: flex; align-items: center; padding: 0 var(--sp-3); font: normal var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; width: var(--w); }
+.vz-split .a { background: var(--agent); color: var(--bg); } .vz-split .h { background: var(--human); color: var(--human-on); }
+.vz-rule { display: grid; grid-template-columns: 18px 1fr auto; gap: var(--sp-2); align-items: center; }
+.vz-rule b { color: var(--ink-3); font-size: var(--fs-2); }
+.vz-foot { font-size: var(--fs-2); color: var(--ink-3); padding-top: var(--sp-2); border-top: 1px solid var(--line); } .vz-foot b { color: var(--ink); }
+.step[data-active="true"] .vz-split i { animation: vz-grow 0.9s var(--ease) both; transform-origin: left; }
+.step[data-active="true"] .vz-split .h { animation-delay: 0.25s; }
+.step[data-active="true"] .vz-rule { animation: vz-in 0.45s var(--ease) both; }
+.step[data-active="true"] .vz-rule .vz-tick { animation: vz-pop 0.35s var(--ease) both; animation-delay: calc(0.6s + var(--i) * 0.45s); }
+
+/* 3 · overrule as a diff */
+.vz-diff { display: grid; gap: var(--sp-2); }
+.vz-dl { display: grid; grid-template-columns: 14px 1fr auto; gap: var(--sp-2); align-items: center; padding: 8px var(--sp-3); border-radius: var(--r-2); font-family: var(--font-mono); font-size: var(--fs-2); }
+.vz-dl em { font: normal var(--fs-1) var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); }
+.vz-dl.del { background: var(--bad-soft); color: var(--bad); } .vz-dl.del code { text-decoration: line-through; text-decoration-thickness: 2px; }
+.vz-dl.add { background: var(--human-soft); color: var(--ink); } .vz-dl.add em { color: var(--human-text); }
+.vz-quote { color: var(--ink-2); padding-left: var(--sp-3); border-left: 3px solid var(--human); }
+.vz-quote .mono { display: block; font-size: var(--fs-1); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.step[data-active="true"] .vz-dl, .step[data-active="true"] .vz-quote { animation: vz-in 0.5s var(--ease) both; }
+.step[data-active="true"] .vz-dl.del code { animation: vz-strike 0.6s var(--ease) 0.9s both; }
+.step[data-active="true"] .vz-dl.add code { animation: vz-type 1.2s steps(28) 1.1s both; display: inline-block; white-space: nowrap; overflow: hidden; }
+
+/* 4 · was it the agent or the brief: the question routes to one of two answers */
+.vz-flow { display: grid; gap: var(--sp-3); }
+.vz-q { text-align: center; font-size: var(--fs-2); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.vz-branches { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.vz-br { display: grid; gap: 2px; padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--raised); }
+.vz-ask { font-size: var(--fs-1); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.vz-br b { font: 600 var(--fs-6)/1.1 var(--font-body); color: var(--ink); text-transform: uppercase; letter-spacing: -0.01em; }
+.vz-br i { font-style: normal; color: var(--ink); font-weight: 500; }
+.vz-br small { color: var(--ink-3); font-size: var(--fs-2); }
+.step[data-active="true"] .vz-br.yes { animation: vz-light 6s ease-in-out 0.3s infinite; }
+.step[data-active="true"] .vz-br.no { animation: vz-light 6s ease-in-out 3.3s infinite; }
+
+/* 5 · claim checked by code */
+.vz-claim { display: grid; gap: var(--sp-2); }
+.vz-claim .vz-quote { font: 500 var(--fs-6)/1.2 var(--font-body); color: var(--ink); letter-spacing: -0.02em; margin-bottom: var(--sp-2); }
+.vz-check { position: relative; display: grid; grid-template-columns: 18px 1fr auto; gap: var(--sp-2); align-items: center; }
+.vz-check b { color: var(--ink-3); font-size: var(--fs-2); }
+.vz-spin { position: absolute; left: 2px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--ink-2); opacity: 0; }
+.vz-stamp { justify-self: end; margin-top: var(--sp-2); padding: 6px 12px; border: 2px solid var(--bad); color: var(--bad); border-radius: 6px; background: var(--bad-soft); font-size: var(--fs-3); font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; transform: rotate(-6deg); }
+.step[data-active="true"] .vz-check, .step[data-active="true"] .vz-quote { animation: vz-in 0.45s var(--ease) both; }
+.step[data-active="true"] .vz-check .vz-tick { animation: vz-pop 0.35s var(--ease) both; animation-delay: calc(0.95s + var(--i) * 0.45s); }
+.step[data-active="true"] .vz-spin { animation: vz-spin 0.5s linear calc(0.35s + var(--i) * 0.45s) 1 both; }
+.step[data-active="true"] .vz-stamp { animation: vz-slam 0.5s var(--ease) 2.6s both; }
+
+/* 6 · the same overrule keeps showing up */
+.vz-pattern { display: grid; gap: var(--sp-2); }
+.vz-axis { position: relative; height: 96px; border-bottom: 1px solid var(--line-2); background: repeating-linear-gradient(90deg, transparent 0 calc(20% - 1px), var(--line) calc(20% - 1px) 20%); }
+.vz-axis i { position: absolute; left: var(--x); top: var(--y); width: 12px; height: 12px; margin: -6px; border-radius: 50%; background: var(--human); box-shadow: 0 0 0 3px var(--human-soft); }
+.vz-flag { position: absolute; left: 22%; top: 4px; font-size: var(--fs-1); text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 999px; background: var(--ink); color: var(--bg); }
+.vz-weeks { display: grid; grid-template-columns: repeat(5, 1fr); font-size: var(--fs-1); color: var(--ink-3); }
+.vz-meta { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: baseline; font-size: var(--fs-2); color: var(--ink-3); }
+.vz-meta b { font: 500 var(--fs-6)/1 var(--font-body); color: var(--ink); }
+.step[data-active="true"] .vz-pattern .vz-axis i { animation: vz-pop 0.4s var(--ease) both; animation-delay: calc(0.3s + var(--i) * 0.28s); }
+.step[data-active="true"] .vz-flag { animation: vz-pop 0.4s var(--ease) 1.05s both; }
+.step[data-active="true"] .vz-count { animation: vz-countup 3.2s linear 0.3s both; }
+
+/* 7 · the override rate falls after the policy */
+.vz-loop { padding-bottom: var(--sp-3); }
+.vz-loop svg { width: 100%; height: auto; display: block; overflow: visible; }
+.vz-mark { stroke: var(--line-2); stroke-dasharray: 3 4; }
+.vz-curve { fill: none; stroke: var(--human-line); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.vz-end { fill: var(--ok); }
+.vz-pub { position: absolute; left: calc(50% + 6px); top: var(--sp-3); font-size: var(--fs-1); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.vz-nums { display: flex; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-2); color: var(--ink-3); padding-top: var(--sp-2); }
+.vz-nums span { font: 500 var(--fs-7)/1 var(--font-body); color: var(--human-text); } .vz-nums .after { color: var(--ok); } .vz-nums i { font-style: normal; }
+.step[data-active="true"] .vz-curve { animation: vz-draw 2.2s var(--ease) 0.3s both; }
+.step[data-active="true"] .vz-end { animation: vz-pop 0.4s var(--ease) 2.4s both; }
+.step[data-active="true"] .vz-nums { animation: vz-in 0.5s var(--ease) 1.2s both; }
+
+@keyframes vz-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes vz-pop { from { opacity: 0; transform: scale(0.4); } }
+@keyframes vz-sweep { 0% { opacity: 0; top: -10%; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; top: 95%; } }
+@keyframes vz-grow { from { transform: scaleX(0); } }
+@keyframes vz-strike { from { text-decoration-color: transparent; } }
+@keyframes vz-type { from { width: 0; } to { width: 100%; } }
+@keyframes vz-light { 0%, 8% { border-color: var(--line-2); background: var(--raised); } 14%, 46% { border-color: var(--human); background: var(--human-soft); } 54%, 100% { border-color: var(--line-2); background: var(--raised); } }
+@keyframes vz-spin { 0% { opacity: 1; transform: rotate(0); } 90% { opacity: 1; } 100% { opacity: 0; transform: rotate(360deg); } }
+@keyframes vz-slam { 0% { opacity: 0; transform: scale(1.8) rotate(-16deg); } 100% { opacity: 1; transform: scale(1) rotate(-6deg); } }
+@keyframes vz-countup { from { --n: 0; } }
+@keyframes vz-draw { from { stroke-dashoffset: 1; } }
+
+@media (max-width: 900px) {
+  .vz { max-width: none; }
+  .vz-text { white-space: normal; }
+  .vz-line { grid-template-columns: 28px 1fr; } .vz-line .vz-who { display: none; } .vz-line .vz-tag { grid-column: 2; justify-self: start; }
+}

@@ -20,7 +20,7 @@
 .tl { --gx: 52px; --gw: calc(100% - 76px); position: relative; min-width: 560px; }
 .at { position: absolute; left: calc(var(--gx) + var(--gw) * var(--p)); }
 .gl { position: absolute; left: 0; font: 500 var(--fs-1) var(--font-mono); letter-spacing: 0.06em; color: var(--ink-3); text-transform: uppercase; }
-.gl.agent { color: var(--agent); } .gl.human { color: var(--human); }
+.gl.agent { color: var(--agent); } .gl.human { color: var(--human-text); }
 
 .strip { position: absolute; left: 0; right: 0; background: var(--sunken); border-radius: var(--r-2); }
 .stale { background: var(--bad-soft); border-left: 1px dashed var(--bad); border-radius: 0 var(--r-2) var(--r-2) 0; }
@@ -36,7 +36,7 @@
 .ev-read { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-3); margin-top: 4px; }
 
 .arcs { position: absolute; left: var(--gx); width: var(--gw); top: 0; height: 428px; overflow: visible; pointer-events: none; }
-.arcs path { fill: none; stroke: var(--human); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.55; vector-effect: non-scaling-stroke; transition: opacity 0.2s; }
+.arcs path { fill: none; stroke: var(--human-line); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.55; vector-effect: non-scaling-stroke; transition: opacity 0.2s; }
 .arcs path.on { stroke-width: 2.5; stroke-dasharray: none; opacity: 1; }
 
 .dk { transition: opacity 0.2s; } .dk.dim { opacity: 0.18; }
@@ -125,7 +125,7 @@ blockquote.against { border-left-style: dashed; background: var(--bad-soft); bor
 .ladders { display: grid; }
 .ladder { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 2.4fr) minmax(0, 4.4fr); gap: var(--sp-5); padding: var(--sp-4) 0; border-top: 1px solid var(--line); align-items: center; }
 .ladder:first-child { border-top: 0; padding-top: 0; }
-.ladder-t { display: grid; gap: 2px; } .ladder-t .id { color: var(--human); font-size: var(--fs-2); } .ladder-t b { font-weight: 500; font-size: var(--fs-4); } .src { font-size: var(--fs-2); color: var(--ink-3); }
+.ladder-t { display: grid; gap: 2px; } .ladder-t .id { color: var(--human-text); font-size: var(--fs-2); } .ladder-t b { font-weight: 500; font-size: var(--fs-4); } .src { font-size: var(--fs-2); color: var(--ink-3); }
 .rungs { display: flex; align-items: center; gap: var(--sp-2); }
 .rung { width: 28px; height: 28px; border-radius: 50%; padding: 0; border: 1.5px solid var(--line-2); background: var(--raised); display: grid; place-items: center; transition: transform 0.15s var(--ease); }
 .rung i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
