@@ -124,6 +124,7 @@ class Resolver:
         self._ann_cache: dict = {}
         self._emit: list = []
         self._caller_is_test = True
+        self.props_by_name: dict = {}   # property name -> getter FuncInfos in repository classes
         for m in mods.values():
             if m.name not in self.mod_by_name or m.is_init:
                 self.mod_by_name[m.name] = m
@@ -132,6 +133,8 @@ class Resolver:
                 self.funcs[f.id] = f
                 if f.class_id:
                     self.members.setdefault(f.class_id, {}).setdefault(f.name, []).append(f)
+                    if f.is_property and not f.is_setter:
+                        self.props_by_name.setdefault(f.name, []).append(f)
                     if not f.is_property:
                         self.methods_by_name.setdefault(f.name, []).append(f)
                 if f.is_fixture:
@@ -641,7 +644,10 @@ class Resolver:
         """Declared return types, else (for unannotated functions) types of returned/yielded values."""
         mod = self.mods[f.path]
         ts = self.ann_types(f.returns, mod, f.class_id, **kw)
-        if ts or f.returns or not f.return_shapes:
+        # A declared return type naming a repository or known class wins.  One that only names an
+        # external type or nothing usable (typing.Callable[...]) does not hide what the function
+        # actually returns when its return values can be read.
+        if any(t.ent[0] != "ext" for t in ts) or not f.return_shapes:
             return ts
         key = ("ret", f.id)
         if key in self._active:
@@ -655,7 +661,7 @@ class Resolver:
             sc = Scope(mod, f)
             for sh in f.return_shapes:
                 for v in self.eval_value(sh, sc):
-                    if v.ent[0] in ("inst", "seq"):
+                    if v.ent[0] in ("inst", "seq", "fn"):
                         out.append(adj(v, TIER_INFERRED, "return"))
         finally:
             self._emit = saved
@@ -663,6 +669,7 @@ class Resolver:
         out = self._dedupe(out)
         if kw.get("as_cm"):
             out = [V(("cm", v.ent[1]), v.tier, v.via) for v in out if v.ent[0] == "inst"]
+        out = out or ts          # nothing inferable: keep the declared (external) type
         self._local_types[key] = out
         return out
 
@@ -794,6 +801,8 @@ class Resolver:
         if depth > 8:
             return [UNK]
         k = shape.kind
+        if k == "def":                                  # a function defined in this repository, by id
+            return [V(("fn", shape.base))] if shape.base in self.funcs else [UNK]
         if k == "name":
             vals = self.lookup_name(shape.base, sc)
             if not vals:
@@ -905,6 +914,11 @@ class Resolver:
                 return [V(("mod", sub), v.tier)]
             if self.has_unresolved_star(m):
                 return [V(("ext", f"{v.ent[1]}.{attr}"))]
+            # PEP 562: a missing module attribute is answered by the module's __getattr__
+            hook = m.top_defs.get("__getattr__")
+            if hook is not None and hook[0] == "func":
+                self._emit.append(Target(hook[1], TIER_INFERRED, "module_getattr"))
+                return [V(("fn", hook[1]), TIER_INFERRED, "module_getattr")]
             return [V(("opaque",))]
         if k == "ext":
             return [V(("ext", f"{v.ent[1]}.{attr}" if v.ent[1] else None), v.tier)]
@@ -937,6 +951,8 @@ class Resolver:
                     via = f"inherit:{owner}" if not (k == "super" and owner in self.bases(cid)) else via
             if f.is_property:
                 self._emit.append(Target(f.id, tier, "property" if not via else f"property;{via}"))
+                # a property read on a base-class receiver may run an override (as for methods)
+                self._emit.extend(self.dispatch_targets(f, v))
                 if write:
                     return [V(("opaque",))]
                 ts = self.return_types(f)
@@ -1123,12 +1139,47 @@ class Resolver:
     # --------------------------------------------------- other site kinds
     def resolve_access(self, ac, sc: Scope, owner_path: str) -> Optional[SiteRes]:
         self._emit = []
-        self.eval_value(ac.shape, sc, write_last=ac.write)
+        vals = self.eval_value(ac.shape, sc, write_last=ac.write)
+        # A method read without a call (`report = err.show`) can be called later: it is a reference.
+        for v in vals:
+            if v.ent[0] == "fn" and v.ent[1] in self.funcs and not self.funcs[v.ent[1]].is_property:
+                self._emit.append(Target(v.ent[1], v.tier if v.tier != TIER_EXTRACTED else TIER_INFERRED,
+                                         "method_ref"))
         props = self._merge_targets(self._emit)
+        ids: list = []
+        if not props and not ac.write:
+            props, ids = self._unique_property(ac, sc)
         if not props:
             return None
+        ambiguous = any(t.tier == TIER_AMBIGUOUS for t in props)
         return SiteRes("property", owner_path, ac.line, ac.col, ac.shape.raw, ac.owner,
-                       "attr_access", "resolved", props)
+                       "attr_access", "ambiguous" if ambiguous else "resolved", props,
+                       ids if ambiguous else [])
+
+    def _unique_property(self, ac, sc: Scope) -> tuple:
+        """`x.name` where x has no known type: the repository's property `name`, as for calls.
+
+        One candidate is INFERRED (unique_name); several, or a name that also names a builtin
+        method, are AMBIGUOUS with every candidate kept.  A receiver with any known type never
+        falls back: a known class without that property is not guessed.
+        """
+        attrs = ac.shape.attrs
+        if not attrs:
+            return [], []
+        receiver = Shape(ac.shape.kind, ac.shape.base, attrs[:-1], ac.shape.recv, ac.shape.raw)
+        vals = self.eval_value(receiver, sc)
+        if not vals or any(v.ent[0] != "unk" for v in vals):
+            return [], []
+        name = attrs[-1]
+        pool = [f for f in self.props_by_name.get(name, []) if not f.is_setter]
+        if not sc.mod.is_test:
+            pool = [f for f in pool if not self.mods[f.path].is_test]
+        ids = sorted({f.id for f in pool})
+        if not ids:
+            return [], []
+        if len(ids) == 1 and name not in BUILTIN_METHOD_NAMES:
+            return [Target(ids[0], TIER_INFERRED, "unique_name")], []
+        return [Target(i, TIER_AMBIGUOUS, "ambiguous") for i in ids], ids
 
     def _protocol_targets(self, v: V, names: tuple, first: bool, via: str) -> dict:
         targets: dict = {}

@@ -322,8 +322,11 @@ def _tests_from_props(p: dict, tests: list) -> dict:
         count, depth, path = p.get("test_unc_count", 0), p.get("test_unc_depth", 0), p.get("test_unc_path", [])
     else:
         count, depth, path = p.get("test_count", 0), p.get("test_min_depth", 0), p.get("test_path", [])
+    # a test's own label says nothing about which tests reach it: list none, as the in-memory
+    # region does (a test can be reached by another test through import-time code)
+    listed = [] if label in ("test", None) else tests
     return {"label": label, "count": count, "min_depth": depth, "path": list(path or []),
-            "tests": [{"id": t["n"]["id"], "depth": t["depth"]} for t in tests],
+            "tests": [{"id": t["n"]["id"], "depth": t["depth"]} for t in listed],
             "unresolved_hint": p.get("unresolved_hint", 0)}
 
 
@@ -417,7 +420,7 @@ def region_query(driver, cs, cap: int = DEFAULT_CAP, tests_per_node: int = DEFAU
             add_func(m, "overrider")
             add_edge(plain(m["id"], fid, "OVERRIDES"))
         uncertain = p.get("test_label") == "reached_uncertain"
-        for t in r["tests"]:
+        for t in ([] if p.get("test_label") in ("test", None) else r["tests"]):   # tests list no tests
             add_func(t["n"], "test")
             d = plain(t["n"]["id"], fid, "REACHES")
             d.update({"tier": "AMBIGUOUS" if uncertain else "INFERRED", "depth": t["depth"], "path": list(t["path"])})
