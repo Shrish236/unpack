@@ -82,7 +82,7 @@ class AnalysisRef(BaseModel):
 
 class TrackingStatus(BaseModel):
     branch: str
-    status: Literal["waiting_for_pr", "linked", "closed_recently", "abandoned"]
+    status: Literal["waiting_for_pr", "linked", "closed_recently", "abandoned", "untracked"]
 
 
 class IngestResponse(BaseModel):

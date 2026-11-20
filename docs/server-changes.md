@@ -162,3 +162,53 @@ Both docs were checked against the server design (latest). The server design win
 - Node `kind` values: the server uses `file, class, function, method, test`.
 - Change badges map from the API `change.kind`: `functional` = Modified, `signature` = Signature, `text_only` = Formatting, `added`, `deleted` = Ghost.
 - The map endpoint's `folder` rows match the UI's d3-hierarchy packing.
+
+## 6. Status: server built, reasoning left as a placeholder
+
+Built to the server design (latest), with the Gemini and reasoning code left out:
+
+| Area | Where | State |
+|---|---|---|
+| Config, fail-fast secrets | `server/app/config.py` | Required secrets have no defaults. Startup lists what is missing |
+| Data model + Alembic baseline | `server/app/models.py`, `server/migrations/` | Round-trips (upgrade, downgrade, upgrade). `alembic check` shows no drift |
+| Ingest (§5.1, §5.2) | `routers/ingest.py` | gzip limits, schema version, validation, repo match, app-missing 409, rate limit, dedupe, tracking |
+| Job queue and worker (§6) | `jobs/queue.py`, `jobs/worker.py` | `SKIP LOCKED` claim, retries with backoff, dedupe keys, stuck-job reset, heartbeat |
+| Analysis (§6, §5.5) | `pipeline/analysis.py`, `pipeline/graph_view.py` | Changed functions, neighbours, test paths, impact, reading order, diff hunks, collapsed groups, §5.5 validation |
+| Reconciler (§3) | `jobs/reconciler.py` | Every §3.3 case, backoff §3.4, abandon after `TRACK_MAX_DAYS` |
+| Comment (§3.5, §8) | `jobs/publish.py`, `github/comments.py` | Advisory lock, marker search, create/update/404 handling, body hash skip |
+| GitHub App (§8.2) | `github/service.py`, `github/prs.py` | App JWT, installation token cache (UTC expiry), retries, rate limit |
+| Render and image (§9) | `jobs/render.py`, `routers/images.py` | Chromium screenshot, data-ready and data-error contract, size and blank checks, `/render` token |
+| Live API (§5.5, §5.6) | `routers/live.py` | Analysis, turns, node detail, commit picker, map with ETag, node edges |
+| Viewer login and access (§5.4) | `routers/auth.py`, `deps.py` | OAuth state in a signed JWT, Fernet-encrypted tokens, 10-minute access cache |
+| Webhook and setup (§5.3) | `routers/github_webhook.py` | HMAC check, delivery dedupe, installation events, setup page |
+| Admin (§5.7) | `routers/admin.py` | Create repo (checks the App), rotate token, rebuild graph, jobs, retry, tracked branches |
+| Health (§5.7) | `main.py` | `/readyz` checks Postgres and the worker heartbeat |
+
+**Placeholder (reasoning, Gemini):** `server/app/llm/placeholder.py`. Returns no reasons, findings or timeline. Analyses carry the `reasons_unavailable` banner (or `no_session` when the push had no session). `REASONING_ENABLED` must stay `false` until the real module lands. Session parsing is not built: the session row is stored with empty turns.
+
+**Deviations from the design, on purpose:**
+- **Neo4j is not used.** The code graph is built in-process by `unpack_graph`, pickled per commit under `DATA_DIR/graphs`, and reused by the map and node endpoints. Neo4j was removed from `docker-compose.yml`. Re-add it when the map or query load needs it.
+- **Source attribution is `outside_session` for every change.** Without session parsing that is the honest answer, and the banner says so.
+- **`commit_message` is the first line of the commit message stored on the push.** The hook needs to send commits for this to be populated.
+
+**Verified here:**
+- 49 tests pass against local Postgres 16 (`pytest tests/`). They cover config, tokens, diff parsing, ingest errors and dedupe, the analysis from a real git origin (including the case where the head is not on the origin), the reconciler cases, comment publishing and idempotence, webhook signatures, admin, OAuth login, the render route, and the served image URL.
+- A real screenshot through Chromium: a 2400×1400 PNG (1200×700 at 2×), 56 KB, passes the blank check. It was rendered from `/render` on a running uvicorn.
+- A bug found in that check and fixed: the comment linked `/img/<name>` but the route expects `<name>.png`, so every image would have 404'd.
+
+**Not verified:**
+- The Docker build. The Dockerfile order is fixed (sources before the editable install), but I could not run `docker build` here.
+- A real GitHub App, OAuth app or webhook delivery. All GitHub calls are mocked in tests.
+- The CLI hook. It still hardcodes the owner, never sends the payload and passes raw session lines. It needs its own pass before a real push reaches this server.
+- The web UI. `web/src/App.tsx` fails `tsc` on an unused import (`React`). That is the UI session's code. I built the bundle with `vite build` only to test the render path.
+
+**Still to do:**
+- Fixtures for the UI: `analysis_running`, `analysis_failed`, `analysis_no_session`, node details, turns, PR analyses, and a real map.
+- Reasoning and session parsing (later, Gemini first).
+- Trailer linking (deferred per the pipeline doc).
+
+**Running it:**
+1. Set the env vars in `.env.example` (generate real secrets; the server refuses to start otherwise).
+2. `cd server && alembic -c alembic.ini upgrade head`
+3. `uvicorn server.app.main:app --port 8000` and `python -m server.app.jobs.worker`.
+4. `pytest tests/` (needs a Postgres at `DATABASE_URL`, or the default test database).

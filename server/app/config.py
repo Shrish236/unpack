@@ -1,30 +1,28 @@
-"""Server configuration loaded from environment variables."""
+"""Server configuration loaded from environment variables.
+
+Secrets have no committed defaults. `required_problems()` lists anything missing
+or too weak, and the API and worker refuse to start when that list is not empty.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Base URLs & Server
-    UNPACK_BASE_URL: str = "http://localhost:8000"
+    # Public URL (tunnel) and the internal URL the worker uses to reach /render
+    UNPACK_BASE_URL: str = ""
+    INTERNAL_API_URL: str = "http://127.0.0.1:8000"
 
     # Databases
-    DATABASE_URL: str = "postgresql+asyncpg://unpack:unpackpass@localhost:5432/unpack"
-    NEO4J_URI: str = "bolt://localhost:7687"
-    NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "unpackpass"
+    DATABASE_URL: str = ""
 
-    # Gemini LLM Settings
-    GEMINI_BACKEND: str = "ai_studio"  # "ai_studio" or "vertex"
+    # Reasoning (LLM) is a placeholder in this build. Gemini settings are kept for later.
+    REASONING_ENABLED: bool = False
+    GEMINI_BACKEND: str = "ai_studio"
     GEMINI_API_KEY: str = ""
-    GCP_PROJECT: str | None = None
-    GCP_LOCATION: str = "us-central1"
-    GOOGLE_APPLICATION_CREDENTIALS: str | None = None
-
     GEMINI_MODEL_PRIMARY: str = "gemini-3.1-pro-preview"
     GEMINI_MODEL_FALLBACK: str = "gemini-2.5-pro"
     GEMINI_MODEL_REPAIR: str = "gemini-3.5-flash"
@@ -35,21 +33,27 @@ class Settings(BaseSettings):
     GEMINI_DAILY_TOKEN_BUDGET_PER_REPO: int = 5000000
     PROMPT_VERSION: int = 1
 
-    # GitHub App
+    # GitHub App and OAuth
     GITHUB_API_URL: str = "https://api.github.com"
+    GITHUB_OAUTH_URL: str = "https://github.com/login/oauth"
     GITHUB_APP_ID: str | None = None
+    GITHUB_APP_SLUG: str = "unpack"
     GITHUB_APP_PRIVATE_KEY_PATH: str = "/secrets/app.pem"
     GITHUB_CLIENT_ID: str | None = None
     GITHUB_CLIENT_SECRET: str | None = None
     GITHUB_WEBHOOK_SECRET: str | None = None
 
-    # Security
-    SESSION_SECRET: str = "default_session_secret_32_characters_min"
-    TOKEN_ENCRYPTION_KEY: str = "D7kRj9UqQ3sV4wX8yZ0aBcDeFgHiJkLmNoPqRsTuVwX="
-    RENDER_TOKEN_SECRET: str = "default_render_token_secret_min32chars"
-    ADMIN_TOKEN: str = "unp_admin_secret_token_default"
+    # Secrets (required, no defaults)
+    SESSION_SECRET: str = ""
+    TOKEN_ENCRYPTION_KEY: str = ""
+    RENDER_TOKEN_SECRET: str = ""
+    ADMIN_TOKEN: str = ""
 
-    # Storage & Reconciler
+    # Optional path to a Chromium binary for rendering (the Docker image installs one;
+    # set this only when the Playwright-managed browser is not available)
+    RENDER_CHROMIUM_PATH: str | None = None
+
+    # Storage and limits
     DATA_DIR: str = "/data"
     WORKER_CONCURRENCY: int = 2
     RECONCILE_INTERVAL_SECONDS: int = 30
@@ -59,6 +63,42 @@ class Settings(BaseSettings):
     MAX_NEIGHBORS_PER_NODE: int = 15
     IMPACT_DEPTH: int = 3
     MAX_LLM_FUNCTIONS: int = 50
+    MAX_PAYLOAD_COMPRESSED_BYTES: int = 25 * 1024 * 1024
+    MAX_PAYLOAD_UNCOMPRESSED_BYTES: int = 150 * 1024 * 1024
+    PUSHES_PER_MINUTE_PER_REPO: int = 60
+    ACCESS_CACHE_SECONDS: int = 600
+    JOB_STUCK_SECONDS: int = 600
+
+    def required_problems(self) -> list[str]:
+        """Return a human-readable line for each missing or weak required setting."""
+        problems: list[str] = []
+        if not self.UNPACK_BASE_URL:
+            problems.append("UNPACK_BASE_URL is not set")
+        if not self.DATABASE_URL:
+            problems.append("DATABASE_URL is not set")
+        for name in ("SESSION_SECRET", "RENDER_TOKEN_SECRET", "ADMIN_TOKEN"):
+            value = getattr(self, name)
+            if not value:
+                problems.append(f"{name} is not set")
+            elif len(value) < 32:
+                problems.append(f"{name} must be at least 32 characters")
+        if not self.TOKEN_ENCRYPTION_KEY:
+            problems.append("TOKEN_ENCRYPTION_KEY is not set")
+        else:
+            try:
+                from cryptography.fernet import Fernet
+
+                Fernet(self.TOKEN_ENCRYPTION_KEY.encode())
+            except Exception:
+                problems.append("TOKEN_ENCRYPTION_KEY is not a valid Fernet key")
+        return problems
 
 
 settings = Settings()
+
+
+def require_valid_settings() -> None:
+    """Exit with a clear message if required settings are missing. Called at startup."""
+    problems = settings.required_problems()
+    if problems:
+        raise SystemExit("Unpack refuses to start:\n  - " + "\n  - ".join(problems))

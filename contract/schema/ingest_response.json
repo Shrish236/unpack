@@ -40,7 +40,8 @@
             "waiting_for_pr",
             "linked",
             "closed_recently",
-            "abandoned"
+            "abandoned",
+            "untracked"
           ],
           "title": "Status",
           "type": "string"
