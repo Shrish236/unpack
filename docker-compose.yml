@@ -1,0 +1,102 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: unpack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-unpack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-unpackpass}
+      POSTGRES_DB: ${POSTGRES_DB:-unpack}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unpack -d unpack"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: unpack-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-unpackpass}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2G
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "unpackpass", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: runner
+    container_name: unpack-api
+    restart: unless-stopped
+    command: ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://unpack:unpackpass@postgres:5432/unpack
+      NEO4J_URI: bolt://neo4j:7687
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+      - ./secrets:/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: runner
+    container_name: unpack-worker
+    restart: unless-stopped
+    command: ["python", "-m", "server.app.jobs.worker"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://unpack:unpackpass@postgres:5432/unpack
+      NEO4J_URI: bolt://neo4j:7687
+    volumes:
+      - ./data:/data
+      - ./secrets:/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: unpack-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    profiles:
+      - tunnel
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  neo4j_data:

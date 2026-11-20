@@ -1,0 +1,187 @@
+{
+  "analysis": {
+    "public_id": "q8Xr2mVb0aLk3PzT7uYe1w",
+    "status": "done",
+    "repo": { "owner": "encode", "name": "httpx" },
+    "branch": "feature/retries",
+    "base_sha": "0123456789abcdef0123456789abcdef01234567",
+    "head_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+    "short_sha": "a1b2c3d",
+    "created_at": "2026-11-19T14:30:00Z",
+    "finished_at": "2026-11-19T14:30:25Z",
+    "agent": "gemini-cli",
+    "llm_model": "gemini-3.1-pro-preview",
+    "prompt_version": 1,
+    "has_session": true
+  },
+  "pull_request": {
+    "number": 12,
+    "title": "Add retries to Client and AsyncClient",
+    "url": "https://github.com/encode/httpx/pull/12",
+    "state": "open"
+  },
+  "banner": null,
+  "summary": "Adds retry-on-connect-error to Client and AsyncClient by wrapping _send_single_request; adds retries option to transport config.",
+  "stats": {
+    "functions_changed": 6,
+    "by_source": { "session": 4, "session_then_formatted": 0, "session_partial": 0, "outside_session": 1 },
+    "by_change": { "added": 2, "functional": 3, "signature": 0, "text_only": 1, "deleted": 0 },
+    "not_reached_by_tests": 1
+  },
+  "facts": {
+    "last_test_run": { "turn": "T41", "command": "pytest tests/test_client.py", "exit_code": 0, "summary": "18 passed" },
+    "tested_after_final_edit": true
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "httpx/_client.py",
+        "label": "httpx/_client.py",
+        "kind": "file",
+        "parent": null,
+        "path": "httpx/_client.py",
+        "layer": "container",
+        "imports": ["httpx/_models.py", "httpx/_config.py", "httpx/_transports/base.py"],
+        "imports_total": 14
+      },
+      {
+        "id": "httpx/_client.py::Client",
+        "label": "Client",
+        "kind": "class",
+        "parent": "httpx/_client.py",
+        "path": "httpx/_client.py",
+        "start_line": 640,
+        "end_line": 1330,
+        "layer": "container",
+        "bases": ["BaseClient"]
+      },
+      {
+        "id": "httpx/_client.py::Client._send_single_request",
+        "label": "Client._send_single_request",
+        "name": "_send_single_request",
+        "kind": "method",
+        "parent": "httpx/_client.py::Client",
+        "path": "httpx/_client.py",
+        "start_line": 930,
+        "end_line": 965,
+        "signature": "def _send_single_request(self, request: Request) -> Response",
+        "is_async": false,
+        "is_public": false,
+        "layer": "changed",
+        "change": { "kind": "functional", "source": "session" },
+        "test": { "label": "reached", "count": 18, "shortest_path": ["tests/test_client.py::test_retry", "httpx/_client.py::Client.send", "httpx/_client.py::Client._send_single_request"], "nearest_tested": null },
+        "callers_count": 2,
+        "callees_count": 3,
+        "is_test": false,
+        "has_reason": true,
+        "finding_ids": []
+      },
+      {
+        "id": "httpx/_client.py::AsyncClient",
+        "label": "AsyncClient",
+        "kind": "class",
+        "parent": "httpx/_client.py",
+        "path": "httpx/_client.py",
+        "start_line": 1340,
+        "end_line": 2010,
+        "layer": "container",
+        "bases": ["BaseClient"]
+      },
+      {
+        "id": "httpx/_client.py::AsyncClient._send_single_request",
+        "label": "AsyncClient._send_single_request",
+        "name": "_send_single_request",
+        "kind": "method",
+        "parent": "httpx/_client.py::AsyncClient",
+        "path": "httpx/_client.py",
+        "start_line": 1720,
+        "end_line": 1755,
+        "signature": "async def _send_single_request(self, request: Request) -> Response",
+        "is_async": true,
+        "is_public": false,
+        "layer": "changed",
+        "change": { "kind": "functional", "source": "session" },
+        "test": { "label": "none", "count": 0, "shortest_path": [], "nearest_tested": "httpx/_client.py::Client._send_single_request" },
+        "callers_count": 2,
+        "callees_count": 3,
+        "is_test": false,
+        "has_reason": true,
+        "finding_ids": [3]
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "httpx/_client.py::Client.send",
+        "target": "httpx/_client.py::Client._send_single_request",
+        "kind": "CALLS",
+        "tier": "EXTRACTED",
+        "via": null
+      },
+      {
+        "id": "e2",
+        "source": "httpx/_client.py::AsyncClient.send",
+        "target": "httpx/_client.py::AsyncClient._send_single_request",
+        "kind": "CALLS",
+        "tier": "EXTRACTED",
+        "via": null
+      }
+    ],
+    "collapsed": [],
+    "truncated": { "nodes_omitted": 0, "edges_omitted": 0 }
+  },
+  "reading_order": [
+    "httpx/_config.py::Retry.__init__",
+    "httpx/_client.py::Client._send_single_request",
+    "httpx/_client.py::AsyncClient._send_single_request"
+  ],
+  "impact": {
+    "summary": { "functions": 12, "files": 3, "public_api": 2, "uncertain_paths": 0 },
+    "by_node": {
+      "httpx/_client.py::AsyncClient._send_single_request": [
+        { "id": "httpx/_client.py::AsyncClient.send", "depth": 1, "tier": "EXTRACTED", "uncertain": false },
+        { "id": "httpx/_client.py::AsyncClient.request", "depth": 2, "tier": "EXTRACTED", "uncertain": false }
+      ]
+    }
+  },
+  "timeline": [
+    { "turn": "T1", "kind": "user_request", "ts": "2026-11-19T14:05:00Z", "label": "Add retries, keep async in sync", "nodes": [] },
+    { "turn": "T14", "kind": "edit", "ts": "2026-11-19T14:12:00Z", "label": "_client.py", "nodes": ["httpx/_client.py::Client.send"], "reverted": true },
+    { "turn": "T15", "kind": "test_run", "ts": "2026-11-19T14:13:00Z", "label": "pytest: 1 failed", "nodes": [], "exit_code": 1 },
+    { "turn": "T22", "kind": "edit", "ts": "2026-11-19T14:20:00Z", "label": "_client.py", "nodes": ["httpx/_client.py::Client._send_single_request", "httpx/_client.py::AsyncClient._send_single_request"], "reverted": false },
+    { "turn": "T41", "kind": "test_run", "ts": "2026-11-19T14:26:00Z", "label": "pytest: 18 passed", "nodes": [], "exit_code": 0 },
+    { "turn": "T45", "kind": "claim", "ts": "2026-11-19T14:28:00Z", "label": "Claims tests cover both clients", "nodes": [], "finding_id": 3 }
+  ],
+  "reasons": {
+    "httpx/_client.py::AsyncClient._send_single_request": {
+      "reason": "Mirrors the sync retry so both clients behave the same, as the user asked.",
+      "driver": "user_asked",
+      "history": "Added after the sync version passed its tests (T38).",
+      "confidence": "high",
+      "source": "session",
+      "evidence": [ { "turn": "T1", "quote": "keep the async client in sync" } ]
+    },
+    "httpx/_client.py::Client._send_single_request": {
+      "reason": "Implements retry loop on connect error inside request dispatch.",
+      "driver": "user_asked",
+      "history": "Initially wrapped send() in T14, failed test_retry in T15, moved into _send_single_request in T22.",
+      "confidence": "high",
+      "source": "session",
+      "evidence": [ { "turn": "T1", "quote": "Add retries" } ]
+    }
+  },
+  "findings": [
+    {
+      "id": 3,
+      "kind": "claim_not_backed",
+      "finding": "Agent said tests cover both clients; no test reaches AsyncClient._send_single_request.",
+      "functions": ["httpx/_client.py::AsyncClient._send_single_request"],
+      "evidence": [ { "turn": "T45", "quote": "I've added tests covering both clients" } ]
+    }
+  ],
+  "diff_hunks": {
+    "httpx/_client.py::AsyncClient._send_single_request": [
+      { "start_line": 1720, "end_line": 1755, "patch": "@@ -1720,5 +1720,12 @@\n+    async def _send_single_request(self, request: Request) -> Response:\n+        # Retry logic here\n" }
+    ]
+  }
+}

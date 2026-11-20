@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "TurnDetail": {
+      "properties": {
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "user",
+            "assistant",
+            "thought",
+            "edit",
+            "shell",
+            "read",
+            "plan",
+            "notice"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "instruction": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instruction"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        },
+        "excerpt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excerpt"
+        }
+      },
+      "required": [
+        "turn_id",
+        "kind",
+        "ts"
+      ],
+      "title": "TurnDetail",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "turns": {
+      "items": {
+        "$ref": "#/$defs/TurnDetail"
+      },
+      "title": "Turns",
+      "type": "array"
+    }
+  },
+  "title": "TurnsResponse",
+  "type": "object"
+}

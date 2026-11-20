@@ -1,0 +1,39 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "callers": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Callers",
+      "type": "array"
+    },
+    "callees": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Callees",
+      "type": "array"
+    },
+    "callers_total": {
+      "default": 0,
+      "title": "Callers Total",
+      "type": "integer"
+    },
+    "callees_total": {
+      "default": 0,
+      "title": "Callees Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "NodeEdgesResponse",
+  "type": "object"
+}

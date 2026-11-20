@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "MapCounts": {
+      "properties": {
+        "folders": {
+          "title": "Folders",
+          "type": "integer"
+        },
+        "files": {
+          "title": "Files",
+          "type": "integer"
+        },
+        "classes": {
+          "title": "Classes",
+          "type": "integer"
+        },
+        "functions": {
+          "title": "Functions",
+          "type": "integer"
+        },
+        "tests": {
+          "title": "Tests",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "folders",
+        "files",
+        "classes",
+        "functions",
+        "tests"
+      ],
+      "title": "MapCounts",
+      "type": "object"
+    },
+    "RepoRef": {
+      "properties": {
+        "owner": {
+          "title": "Owner",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "remote_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remote Url"
+        },
+        "default_branch": {
+          "default": "main",
+          "title": "Default Branch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner",
+        "name"
+      ],
+      "title": "RepoRef",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "repo": {
+      "$ref": "#/$defs/RepoRef"
+    },
+    "map_sha": {
+      "title": "Map Sha",
+      "type": "string"
+    },
+    "columns": {
+      "default": [
+        "id",
+        "kind",
+        "parent",
+        "loc",
+        "fan_in",
+        "is_test"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "items": {},
+        "type": "array"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "counts": {
+      "$ref": "#/$defs/MapCounts"
+    }
+  },
+  "required": [
+    "repo",
+    "map_sha",
+    "counts"
+  ],
+  "title": "CodebaseMapResponse",
+  "type": "object"
+}

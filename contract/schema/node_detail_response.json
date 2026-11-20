@@ -1,0 +1,416 @@
+{
+  "$defs": {
+    "CallerCalleeRef": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "tier": {
+          "default": "EXTRACTED",
+          "enum": [
+            "EXTRACTED",
+            "INFERRED",
+            "AMBIGUOUS"
+          ],
+          "title": "Tier",
+          "type": "string"
+        },
+        "via": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Via"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "in_graph": {
+          "default": true,
+          "title": "In Graph",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "CallerCalleeRef",
+      "type": "object"
+    },
+    "DiffHunk": {
+      "properties": {
+        "start_line": {
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "title": "End Line",
+          "type": "integer"
+        },
+        "patch": {
+          "title": "Patch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_line",
+        "end_line",
+        "patch"
+      ],
+      "title": "DiffHunk",
+      "type": "object"
+    },
+    "FileImportRef": {
+      "properties": {
+        "module": {
+          "title": "Module",
+          "type": "string"
+        },
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Names",
+          "type": "array"
+        },
+        "context": {
+          "default": "runtime",
+          "title": "Context",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module"
+      ],
+      "title": "FileImportRef",
+      "type": "object"
+    },
+    "ImpactHop": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "depth": {
+          "title": "Depth",
+          "type": "integer"
+        },
+        "tier": {
+          "enum": [
+            "EXTRACTED",
+            "INFERRED",
+            "AMBIGUOUS"
+          ],
+          "title": "Tier",
+          "type": "string"
+        },
+        "uncertain": {
+          "default": false,
+          "title": "Uncertain",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "depth",
+        "tier"
+      ],
+      "title": "ImpactHop",
+      "type": "object"
+    },
+    "NearestTestedTest": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "count": {
+          "default": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Path",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "NearestTestedTest",
+      "type": "object"
+    },
+    "NodeChange": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "added",
+            "functional",
+            "signature",
+            "text_only",
+            "deleted"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "default": "session",
+          "enum": [
+            "session",
+            "session_then_formatted",
+            "session_partial",
+            "outside_session"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "NodeChange",
+      "type": "object"
+    },
+    "NodeDetailClass": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "bases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Bases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "NodeDetailClass",
+      "type": "object"
+    },
+    "NodeDetailData": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "start_line": {
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "title": "End Line",
+          "type": "integer"
+        },
+        "signature": {
+          "title": "Signature",
+          "type": "string"
+        },
+        "decorators": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Decorators",
+          "type": "array"
+        },
+        "is_async": {
+          "default": false,
+          "title": "Is Async",
+          "type": "boolean"
+        },
+        "is_public": {
+          "default": true,
+          "title": "Is Public",
+          "type": "boolean"
+        },
+        "doc": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doc"
+        },
+        "class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeDetailClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "start_line",
+        "end_line",
+        "signature"
+      ],
+      "title": "NodeDetailData",
+      "type": "object"
+    },
+    "NodeDetailTests": {
+      "properties": {
+        "label": {
+          "enum": [
+            "direct",
+            "reached",
+            "reached_uncertain",
+            "none"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "count": {
+          "default": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "paths": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "nearest_tested": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NearestTestedTest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "NodeDetailTests",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "node": {
+      "$ref": "#/$defs/NodeDetailData"
+    },
+    "change": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NodeChange"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "source_head": {
+      "default": "",
+      "title": "Source Head",
+      "type": "string"
+    },
+    "diff": {
+      "items": {
+        "$ref": "#/$defs/DiffHunk"
+      },
+      "title": "Diff",
+      "type": "array"
+    },
+    "callers": {
+      "items": {
+        "$ref": "#/$defs/CallerCalleeRef"
+      },
+      "title": "Callers",
+      "type": "array"
+    },
+    "callees": {
+      "items": {
+        "$ref": "#/$defs/CallerCalleeRef"
+      },
+      "title": "Callees",
+      "type": "array"
+    },
+    "unresolved_calls": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Unresolved Calls",
+      "type": "array"
+    },
+    "file_imports": {
+      "items": {
+        "$ref": "#/$defs/FileImportRef"
+      },
+      "title": "File Imports",
+      "type": "array"
+    },
+    "file_imported_by": {
+      "items": {
+        "type": "string"
+      },
+      "title": "File Imported By",
+      "type": "array"
+    },
+    "tests": {
+      "$ref": "#/$defs/NodeDetailTests"
+    },
+    "impact": {
+      "items": {
+        "$ref": "#/$defs/ImpactHop"
+      },
+      "title": "Impact",
+      "type": "array"
+    }
+  },
+  "required": [
+    "node",
+    "tests"
+  ],
+  "title": "NodeDetailResponse",
+  "type": "object"
+}

@@ -1,0 +1,81 @@
+{
+  "$defs": {
+    "AnalysisRef": {
+      "properties": {
+        "public_id": {
+          "title": "Public Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "done",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "public_id",
+        "status",
+        "url"
+      ],
+      "title": "AnalysisRef",
+      "type": "object"
+    },
+    "TrackingStatus": {
+      "properties": {
+        "branch": {
+          "title": "Branch",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "waiting_for_pr",
+            "linked",
+            "closed_recently",
+            "abandoned"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "branch",
+        "status"
+      ],
+      "title": "TrackingStatus",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "push_id": {
+      "title": "Push Id",
+      "type": "integer"
+    },
+    "analysis": {
+      "$ref": "#/$defs/AnalysisRef"
+    },
+    "tracking": {
+      "$ref": "#/$defs/TrackingStatus"
+    },
+    "deduplicated": {
+      "default": false,
+      "title": "Deduplicated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "push_id",
+    "analysis",
+    "tracking"
+  ],
+  "title": "IngestResponse",
+  "type": "object"
+}

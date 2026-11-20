@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpack.dev/schemas/graphview.schema.json",
+  "title": "GraphView",
+  "description": "Stable contract for the region output of the Unpack code knowledge graph",
+  "type": "object",
+  "required": ["nodes", "edges", "meta"],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "role", "props"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string", "enum": ["Module", "Class", "Function"] },
+          "role": { "type": "string", "enum": ["changed", "neighbor", "test", "container", "ghost"] },
+          "ghost": { "type": "boolean", "default": false },
+          "props": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "qualname": { "type": "string" },
+              "path": { "type": "string" },
+              "start": { "type": ["integer", "null"] },
+              "end": { "type": ["integer", "null"] },
+              "is_async": { "type": "boolean" },
+              "is_method": { "type": "boolean" },
+              "signature": { "type": ["string", "null"] },
+              "body_hash": { "type": ["string", "null"] },
+              "logic_hash": { "type": ["string", "null"] },
+              "signature_hash": { "type": ["string", "null"] },
+              "bases": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "change": {
+            "type": ["object", "null"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["added", "deleted", "modified", "renamed", "moved", "functional", "signature", "text_only"] },
+              "flags": { "type": "array", "items": { "type": "string" } },
+              "head_lines": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } },
+              "base_lines": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } },
+              "old_id": { "type": ["string", "null"] },
+              "still_called_by": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "tests": {
+            "type": ["object", "null"],
+            "properties": {
+              "label": { "type": "string", "enum": ["direct", "reached", "reached_uncertain", "none", "test"] },
+              "count": { "type": "integer" },
+              "min_depth": { "type": ["integer", "null"] },
+              "path": { "type": "array", "items": { "type": "string" } },
+              "tests": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "depth": { "type": "integer" }
+                  }
+                }
+              },
+              "unresolved_hint": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "kind"],
+        "properties": {
+          "id": { "type": "string" },
+          "source": { "type": "string" },
+          "target": { "type": "string" },
+          "kind": { "type": "string", "enum": ["CALLS", "HAS_METHOD", "INHERITS", "OVERRIDES", "REACHES", "IMPORTS"] },
+          "tier": { "type": ["string", "null"], "enum": ["EXTRACTED", "INFERRED", "AMBIGUOUS", null] },
+          "via": { "type": ["string", "null"] },
+          "lines": { "type": "array", "items": { "type": "integer" } },
+          "candidates": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "module_changes": { "type": "object" },
+        "class_changes": { "type": "object" },
+        "unresolved_calls": { "type": "object" }
+      }
+    }
+  }
+}
