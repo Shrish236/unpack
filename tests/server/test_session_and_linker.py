@@ -5,7 +5,7 @@ from __future__ import annotations
 from unpack_graph.graph import build_graph
 
 from server.app.pipeline.changes import compute_changes
-from server.app.pipeline.edit_linker import link_session_to_changes, parse_test_run
+from server.app.pipeline.edit_linker import is_test_command, link_session_to_changes, parse_test_run
 from server.app.pipeline.session import UnpackTurn, parse_gemini_session
 
 
@@ -236,3 +236,11 @@ def test_parse_test_run_recognizes_python_runners():
 
     non_test = UnpackTurn(turn_id="T10", kind="shell", command="ruff format .", exit_code=0, output="")
     assert parse_test_run(non_test) is None
+
+
+def test_test_commands_are_recognised_behind_wrappers_but_not_when_only_mentioned():
+    for cmd in ("pytest -q", "python -m pytest tests/", "uv run --with pytest python -m pytest", ".venv/bin/pytest -x",
+                "S=/x; $S/uvrun.sh python -m pytest tests/a.py -q", "cd web && make test", "unset X; tox"):
+        assert is_test_command(cmd), cmd
+    for cmd in ('grep -n "pytest" pyproject.toml', "echo pytest", "git log -p tests/test_pytest.py", "cat pytest.ini", "ls tests"):
+        assert not is_test_command(cmd), cmd

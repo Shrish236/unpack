@@ -1,14 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const api = process.env.UNPACK_API || "http://localhost:8000";
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8000",
-      "/auth": "http://localhost:8000",
-      "/img": "http://localhost:8000",
+      "/api": api,
+      "/auth": api,
+      "/img": api,
     },
   },
 });

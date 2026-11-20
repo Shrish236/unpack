@@ -141,6 +141,29 @@ def test_prompt_builder_skips_text_only_and_trims_shell_output():
     assert "lines omitted" in trimmed
 
 
+def test_verifier_accepts_a_node_id_where_an_alias_was_asked_for():
+    """Models sometimes answer `fn` with path::Name instead of F1. That is still a function we sent."""
+    session, outcome, graph_nodes = _make_sample_session()
+    node = "httpx/_client.py::Client._send_single_request"
+    llm_out = LLMReasoningOutput(
+        summary="s",
+        functions=[
+            LLMFunctionReason(fn=node, reason="Added retries.", driver="user_asked", history=[],
+                              evidence=[LLMEvidenceQuote(turn="T1", quote="Add retries  to sync and async clients.")],
+                              confidence="high"),
+            LLMFunctionReason(fn="not/sent.py::f", reason="x", driver="agent_decided", history=[],
+                              evidence=[LLMEvidenceQuote(turn="T2", quote="Wrap _send_single_request")], confidence="low"),
+        ],
+        session_review=[],
+    )
+    verified = verify_reasoning_output(
+        llm_out, session=session, link_outcome=outcome, alias_to_node={"F1": node}, target_node_ids=[node],
+        text_only_node_ids=[], graph_nodes=graph_nodes,
+    )
+    assert verified.reasons[node]["driver"] == "user_asked" and verified.reasons[node]["reason"] == "Added retries."
+    assert verified.rejected_count == 1  # the id we never sent is still dropped
+
+
 def test_verifier_enforces_quotes_user_asked_history_turns_and_facts():
     session, outcome, graph_nodes = _make_sample_session()
     alias_to_node = {

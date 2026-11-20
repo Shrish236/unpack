@@ -6,6 +6,8 @@ or too weak, and the API and worker refuse to start when that list is not empty.
 
 from __future__ import annotations
 
+import re
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,6 +80,9 @@ class Settings(BaseSettings):
     GRAPH_LRU_SIZE: int = 1
     # Concurrent branch checks in the reconciler.
     RECONCILE_CONCURRENCY: int = 8
+    # Local development only: when set, the viewer endpoints accept requests with no login and act as this
+    # user, with access to every repository. Refused unless UNPACK_BASE_URL points at localhost.
+    DEV_VIEWER_LOGIN: str = ""
 
     def required_problems(self) -> list[str]:
         """Return a human-readable line for each missing or weak required setting."""
@@ -92,6 +97,8 @@ class Settings(BaseSettings):
                 problems.append(f"{name} is not set")
             elif len(value) < 32:
                 problems.append(f"{name} must be at least 32 characters")
+        if self.DEV_VIEWER_LOGIN and not re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", self.UNPACK_BASE_URL):
+            problems.append("DEV_VIEWER_LOGIN is only allowed when UNPACK_BASE_URL is localhost or 127.0.0.1")
         if not self.TOKEN_ENCRYPTION_KEY:
             problems.append("TOKEN_ENCRYPTION_KEY is not set")
         else:

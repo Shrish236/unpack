@@ -12,9 +12,12 @@ from unpack_graph.extract import extract_file
 from .changes import FuncChange
 from .session import UnpackSession, UnpackTurn
 
+# A test run is `pytest`, `python -m pytest|unittest`, tox, nox or `make test` at the start of a command
+# segment, behind any runner or wrapper (`uv run --with x`, `.venv/bin/`, `./run.sh`). Commands that only
+# mention the word (grep, echo, cat, sed, git ...) are not runs.
 _TEST_CMD_RE = re.compile(
-    r"(?:^|[;&|]\s*)(?:(?:uv\s+run|poetry\s+run|pipenv\s+run)\s+)?"
-    r"(?:(?:python3?(?:\.\d+)?)\s+-m\s+(?:pytest|unittest)\b|pytest\b|tox\b|nox\b|make\s+test\b)"
+    r"(?:^|[;&|]\s*)(?!(?:grep|egrep|rg|echo|cat|sed|ls|head|tail|git|which|man|printf)\b)(?:[^;&|\n]*?\s)?"
+    r"(?:(?:python3?(?:\.\d+)?)\s+-m\s+(?:pytest|unittest)\b|(?:\S*/)?pytest\b|tox\b|nox\b|make\s+test\b)"
 )
 _PYTEST_SUMMARY_RE = re.compile(
     r"(\d+\s+(?:failed|passed|skipped|error|errors|xfailed|xpassed)"

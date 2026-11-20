@@ -210,7 +210,8 @@ def build_push_payload(
     if selected_session is not None:
         agent_version = get_gemini_cli_version() if agent == "gemini-cli" else None
         raw_session = load_and_trim_session(
-            selected_session, agent=agent, agent_version=agent_version
+            selected_session, agent=agent, agent_version=agent_version,
+            repo_root=repo_root, base_sha=effective_base,
         )
 
     # Redact diff, changed file contents, and session lines with unified counts.
