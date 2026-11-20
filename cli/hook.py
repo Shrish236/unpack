@@ -26,6 +26,7 @@ from .git_info import (
     get_unified_diff,
     resolve_base_sha,
 )
+from .agy_session import find_agy_session, get_agy_cli_version
 from .secrets import SecretScanner
 from .session_finder import (
     find_gemini_session,
@@ -175,9 +176,10 @@ def build_push_payload(
     remote_sha: str | None = None,
     default_branch_override: str | None = None,
     session_path: Path | None = None,
-    agent: str = "gemini-cli",
+    agent: str = "antigravity-cli",
     hook_name: str = "pre-push",
     gemini_dir: Path | None = None,
+    agy_dir: Path | None = None,
 ) -> tuple[dict[str, Any], Path | None]:
     """Collect git context, find/trim session, redact secrets, and build IngestPayload."""
     repo_ref = get_repo_ref(repo_root, default_branch_override=default_branch_override)
@@ -202,13 +204,21 @@ def build_push_payload(
             raise FileNotFoundError(f"Session file not found: {session_path}")
         selected_session = session_path
     else:
-        selected_session = find_gemini_session(
-            repo_root, after=cutoff_time, gemini_dir=gemini_dir
-        )
+        if agent == "antigravity-cli":
+            selected_session = find_agy_session(repo_root, after=cutoff_time, agy_dir=agy_dir)
+        else:
+            selected_session = find_gemini_session(
+                repo_root, after=cutoff_time, gemini_dir=gemini_dir
+            )
 
     raw_session: dict[str, Any] | None = None
     if selected_session is not None:
-        agent_version = get_gemini_cli_version() if agent == "gemini-cli" else None
+        if agent == "antigravity-cli":
+            agent_version = get_agy_cli_version()
+        elif agent == "gemini-cli":
+            agent_version = get_gemini_cli_version()
+        else:
+            agent_version = None
         raw_session = load_and_trim_session(
             selected_session, agent=agent, agent_version=agent_version,
             repo_root=repo_root, base_sha=effective_base,
