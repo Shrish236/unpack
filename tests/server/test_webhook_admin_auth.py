@@ -1,60 +1,25 @@
-"""Webhook (§5.3), admin (§5.7), OAuth login (§5.4) and the internal render route (§5.6)."""
+"""Admin (§5.7), OAuth login (§5.4) and the internal render route (§5.6). There are no webhooks: the poller replaces them."""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
-from sqlalchemy import select, update
 
 from server.app import services
 from server.app.config import settings
 from server.app.db import session_scope
-from server.app.models import TrackedBranch, WebhookDelivery
 from server.app.security import render_token
 
 from .conftest import Origin, drain_jobs
 from .helpers import create_repo, gzip_json, ingest_headers, origin_payload, standard_files
 
 
-def sign(body: bytes) -> str:
-    return "sha256=" + hmac.new(settings.GITHUB_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
-
-
 @pytest.fixture
 def origin(tmp_path):
     base, head = standard_files()
     return Origin(tmp_path, base, head)
-
-
-async def test_webhook_rejects_bad_signature_and_dedupes(client, fake_github, origin):
-    _, token = await create_repo(remote_url=origin.remote_url)
-    await client.post("/v1/ingest", content=gzip_json(origin_payload(origin)), headers=ingest_headers(token))
-    async with session_scope() as session:
-        await session.execute(update(TrackedBranch).values(next_check_at=datetime.now(timezone.utc) + timedelta(hours=5)))
-
-    body = json.dumps({"action": "opened", "repository": {"full_name": "o/r"},
-                       "pull_request": {"head": {"ref": "feature/x"}}}).encode()
-    bad = await client.post("/github/webhook", content=body, headers={
-        "X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "d1", "X-Hub-Signature-256": "sha256=00"})
-    assert bad.status_code == 401
-
-    good_headers = {"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "d2", "X-Hub-Signature-256": sign(body)}
-    ok = await client.post("/github/webhook", content=body, headers=good_headers)
-    assert ok.status_code == 204
-    async with session_scope() as session:
-        tracked = (await session.execute(select(TrackedBranch))).scalar_one()
-        assert tracked.next_check_at <= datetime.now(timezone.utc) + timedelta(seconds=5)
-
-    again = await client.post("/github/webhook", content=body, headers={**good_headers})
-    assert again.status_code == 204
-    async with session_scope() as session:
-        deliveries = (await session.execute(select(WebhookDelivery))).scalars().all()
-        assert [d.delivery_id for d in deliveries] == ["d2"]
 
 
 async def test_admin_requires_token_and_creates_repos(client, fake_github):
@@ -97,9 +62,6 @@ async def test_admin_jobs_retry_and_tracked_branches(client, tmp_data_dir, fake_
     branches = await client.get("/admin/tracked-branches", headers=admin)
     assert branches.json()["branches"][0]["branch"] == "feature/x"
 
-    tracked_id = branches.json()["branches"][0]["id"]
-    check = await client.post(f"/admin/tracked-branches/{tracked_id}/check-now", headers=admin)
-    assert check.status_code == 202
 
 
 async def test_retry_refused_when_not_failed(client, tmp_data_dir, fake_github, origin):

@@ -123,7 +123,7 @@ unpack/
 │       ├── config.py              # Pydantic-settings configuration
 │       ├── db.py, models.py       # SQLAlchemy ORM models
 │       ├── schemas/api.py         # Master API & UI JSON contract
-│       ├── routers/               # Ingest, Live, Webhook, Auth, Admin
+│       ├── routers/               # Ingest, Live, GitHub setup, Auth, Admin, Images
 │       ├── github/                # GitHub App client, comments, PR tracking
 │       ├── pipeline/              # Session parsing, edit mapping, verification
 │       ├── llm/                   # Gemini client, structured output, prompts

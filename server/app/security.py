@@ -71,13 +71,6 @@ def verify_render_token(public_id: str, token: str | None, now: float | None = N
     return hmac.compare_digest(expected, signature)
 
 
-def verify_webhook_signature(secret: str, body: bytes, header: str | None) -> bool:
-    if not header or not header.startswith("sha256="):
-        return False
-    expected = "sha256=" + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header)
-
-
 def _fernet() -> Fernet:
     return Fernet(settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"))
 

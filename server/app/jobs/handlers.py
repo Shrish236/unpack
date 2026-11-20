@@ -11,8 +11,6 @@ from typing import Any
 
 from sqlalchemy import func, select, text
 
-from unpack_graph.graph import build_graph
-from unpack_graph.source import GitSource
 
 from ..db import session_scope
 from ..models import Analysis, FunctionReason, LLMCall, Push, Render, Repo, ReviewFinding, Session
@@ -41,9 +39,10 @@ async def _installation_token(installation_id: int | None) -> str | None:
     return await get_github().installation_token(installation_id)
 
 
-async def _mark_tracked_due(session: Any, repo_id: int, branch: str) -> None:
+async def _mark_publish_pending(session: Any, repo_id: int, branch: str) -> None:
+    """Something a post depends on changed; the poller will post on its next sweep."""
     await session.execute(
-        text("UPDATE tracked_branches SET next_check_at = now() WHERE repo_id = :r AND branch = :b"),
+        text("UPDATE tracked_branches SET needs_publish = true WHERE repo_id = :r AND branch = :b"),
         {"r": repo_id, "b": branch},
     )
 
@@ -187,7 +186,7 @@ async def analyze_push_job(payload: dict[str, Any]) -> None:
         if outcome.has_python_changes and outcome.changed_count > 0:
             await enqueue(session, "render_image", {"analysis_id": analysis_id},
                           dedupe_key=f"render:{analysis_id}")
-        await _mark_tracked_due(session, snapshot["repo_id"], snapshot["branch"])
+        await _mark_publish_pending(session, snapshot["repo_id"], snapshot["branch"])
 
 
 async def _store_failure(analysis_id: int, push_id: int, repo_id: int, branch: str, code: str, message: str) -> None:
@@ -197,7 +196,7 @@ async def _store_failure(analysis_id: int, push_id: int, repo_id: int, branch: s
         analysis.error_code = code
         analysis.error_message = message[:1000]
         analysis.finished_at = _now()
-        await _mark_tracked_due(session, repo_id, branch)
+        await _mark_publish_pending(session, repo_id, branch)
 
 
 async def mark_failed_after_retries(payload: dict[str, Any], error: str) -> None:
@@ -246,11 +245,12 @@ async def render_image_job(payload: dict[str, Any]) -> None:
         render.status = status
         render.bytes = size
         render.error = error
-        await _mark_tracked_due(session, repo_id, branch)
+        await _mark_publish_pending(session, repo_id, branch)
 
 
 async def ensure_head_graph(repo_id: int, owner: str, name: str, remote_url: str, token: str | None, sha: str) -> Any:
-    """Build (or load) the whole-repo graph for one commit. Used by the map and node endpoints."""
+    """Whole-repo head graph for one commit: the cache first, a full build only when cold."""
+    from ..pipeline.build import full_graph_for
     from ..pipeline.repos import load_cached_graph
 
     cached = await asyncio.to_thread(load_cached_graph, repo_id, sha)
@@ -261,13 +261,7 @@ async def ensure_head_graph(repo_id: int, owner: str, name: str, remote_url: str
         await ensure_commit(mirror, sha, token)
     except CommitUnavailable as exc:
         raise AnalysisFailed("graph_unavailable", str(exc)) from exc
-
-    def build() -> Any:
-        graph = build_graph(GitSource(mirror, sha), reach=True)
-        save_cached_graph(repo_id, sha, graph)
-        return graph
-
-    return await asyncio.to_thread(build)
+    return await asyncio.to_thread(full_graph_for, repo_id, str(mirror), sha)
 
 
 async def build_graph_job(payload: dict[str, Any]) -> None:
@@ -280,7 +274,9 @@ async def build_graph_job(payload: dict[str, Any]) -> None:
         remote_url = repo.remote_url or f"https://github.com/{owner}/{name}.git"
         installation_id = repo.installation_id
     token = await _installation_token(installation_id)
-    await ensure_head_graph(repo_id, owner, name, remote_url, token, payload["sha"])
+    graph = await ensure_head_graph(repo_id, owner, name, remote_url, token, payload["sha"])
+
+    await asyncio.to_thread(save_cached_graph, repo_id, payload["sha"], graph)
     async with session_scope() as session:
         repo = await session.get(Repo, repo_id)
         repo.graph_built_sha = payload["sha"]

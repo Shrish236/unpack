@@ -304,7 +304,7 @@ def build_graph_view(
     seen_edges: set[tuple[str, str, str]] = set()
     node_ids = set(nodes)
     ordered = sorted(
-        (e for fid in node_ids for e in head.out_adj.get(fid, []) if _usable(e)),
+        (e for fid in sorted(node_ids) for e in head.out_adj.get(fid, []) if _usable(e)),
         key=lambda e: 0 if (e.src in required or e.dst in required) else 1,
     )
     for e in ordered:

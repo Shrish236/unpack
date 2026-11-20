@@ -13,15 +13,14 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from unpack_graph.source import GitSource
-
 from ..db import get_db
 from ..deps import require_repo_access, viewer
 from ..errors import ApiError
 from ..jobs.handlers import ensure_head_graph, read_payload
 from ..models import Analysis, FunctionReason, PRAnalysis, PullRequest, Push, Repo, ReviewFinding, Session, User
+from ..pipeline.analysis import AnalysisFailed
 from ..pipeline.graph_view import _callees, _callers, _nearest_tested
-from ..pipeline.repos import data_dir, repo_dir
+from ..pipeline.repos import data_dir, repo_dir, read_file_at
 from ..schemas.api import (
     AnalysisFacts,
     AnalysisMetadata,
@@ -63,6 +62,14 @@ async def _repo_by_name(db: AsyncSession, owner: str, name: str) -> Repo:
     if repo is None:
         raise ApiError(404, "not_found", "no such repository")
     return repo
+
+
+async def _graph_or_404(*args: Any) -> Any:
+    """The whole-repo graph for a commit. A commit the server cannot reach is a 404, not a server error."""
+    try:
+        return await ensure_head_graph(*args)
+    except AnalysisFailed as exc:
+        raise ApiError(404, "not_found", f"the code graph for this commit is not available ({exc.code})") from exc
 
 
 async def _repo_token(repo: Repo) -> str | None:
@@ -160,14 +167,13 @@ async def get_turns(public_id: str, request: Request, ids: str = "", auth: tuple
 
 
 def _source_text(push: Push, repo: Repo, path: str, start: int, end: int, head_sha: str) -> str:
-    """Source of one function at head. Reads the repo if the commit is there, else the payload."""
+    """Source of one function at head: one blob from the mirror, else the payload's copy of the file."""
     lines: list[str] = []
     mirror = repo_dir(repo.owner, repo.name)
     if mirror.exists():
         try:
-            text = GitSource(mirror, head_sha).read(path).decode("utf-8", errors="replace")
-            lines = text.splitlines()
-        except Exception:
+            lines = read_file_at(mirror, head_sha, path).decode("utf-8", errors="replace").splitlines()
+        except Exception:  # commit or path not in the mirror (yet)
             lines = []
     if not lines:
         data = read_payload(push.payload_path)
@@ -188,7 +194,7 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
         raise ApiError(404, "not_found", "analysis is not finished")
     token = await _repo_token(repo)
     remote = f"https://github.com/{repo.owner}/{repo.name}.git"
-    head = await ensure_head_graph(repo.id, repo.owner, repo.name, repo.remote_url or remote, token, push.head_sha)
+    head = await _graph_or_404(repo.id, repo.owner, repo.name, repo.remote_url or remote, token, push.head_sha)
     graph_nodes = {n["id"]: n for n in (analysis.graph_view or {}).get("nodes", [])}
     in_graph = set(graph_nodes)
 
@@ -223,16 +229,20 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
                 nr = head.reach.get(nearest)
                 near = {"id": nearest, "count": nr.count if nr else 0, "path": list(nr.path) if nr else []}
             tests = {"label": "none", "count": 0, "paths": [], "nearest_tested": near}
+        all_callers = _callers(head, node_id)
+        all_callees = _callees(head, node_id)
         callers = [
             {"id": e.src, "tier": e.tier, "via": e.via,
              "line": e.lines[0] if e.lines else None, "in_graph": e.src in in_graph}
-            for e in _callers(head, node_id)[:100]
+            for e in all_callers[:100]
         ]
         callees = [
             {"id": e.dst, "tier": e.tier, "via": e.via,
              "line": e.lines[0] if e.lines else None, "in_graph": e.dst in in_graph}
-            for e in _callees(head, node_id)[:100]
+            for e in all_callees[:100]
         ]
+        unresolved = [{"line": line, "raw": raw, "reason": reason}
+                      for line, raw, reason in head.unresolved.get(node_id, [])[:100]]
     elif cls is not None:
         path, start, end = cls.path, cls.start, cls.end
         node = {"id": cls.id, "kind": "class", "path": cls.path, "start_line": cls.start,
@@ -240,7 +250,7 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
                 "is_async": False, "is_public": not cls.name.startswith("_"),
                 "doc": None, "class": None}
         tests = {"label": "none", "count": 0, "paths": [], "nearest_tested": None}
-        callers, callees = [], []
+        callers, callees, unresolved, all_callers, all_callees = [], [], [], [], []
     else:
         mod = head.mods[module_path]
         path, start, end = module_path, 1, max(mod.nlines, 1)
@@ -248,7 +258,7 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
                 "end_line": end, "signature": "", "decorators": [], "is_async": False,
                 "is_public": True, "doc": None, "class": None}
         tests = {"label": "none", "count": 0, "paths": [], "nearest_tested": None}
-        callers, callees = [], []
+        callers, callees, unresolved, all_callers, all_callees = [], [], [], [], []
 
     module_name = path[:-3].replace("/", ".") if path.endswith(".py") else path
     file_imports = []
@@ -273,7 +283,9 @@ async def get_node(public_id: str, node_id: str, request: Request, auth: tuple[U
         "diff": diff,
         "callers": callers,
         "callees": callees,
-        "unresolved_calls": [],
+        "callers_total": len(all_callers),
+        "callees_total": len(all_callees),
+        "unresolved_calls": unresolved,
         "file_imports": file_imports,
         "file_imported_by": file_imported_by,
         "tests": tests,
@@ -319,13 +331,16 @@ def _map_rows(head: Any) -> tuple[list[list[Any]], dict[str, int]]:
     rows: list[list[Any]] = []
     folders: set[str] = set()
     counts = {"folders": 0, "files": 0, "classes": 0, "functions": 0, "tests": 0}
+    folder_loc: dict[str, int] = {}
     for path, mod in sorted(head.mods.items()):
         parts = path.split("/")[:-1]
         for i in range(1, len(parts) + 1):
-            folders.add("/".join(parts[:i]))
+            folder = "/".join(parts[:i])
+            folders.add(folder)
+            folder_loc[folder] = folder_loc.get(folder, 0) + mod.nlines  # lines under the folder
     for folder in sorted(folders):
         parent = folder.rsplit("/", 1)[0] if "/" in folder else None
-        rows.append([folder, "folder", parent, 0, 0, False])
+        rows.append([folder, "folder", parent, folder_loc.get(folder, 0), 0, False])
         counts["folders"] += 1
     for path, mod in sorted(head.mods.items()):
         parent = path.rsplit("/", 1)[0] if "/" in path else None
@@ -361,7 +376,7 @@ async def codebase_map(owner: str, repo: str, sha: str, request: Request, auth: 
     else:
         token = await _repo_token(repo_row)
         remote = repo_row.remote_url or f"https://github.com/{repo_row.owner}/{repo_row.name}.git"
-        head = await ensure_head_graph(repo_row.id, repo_row.owner, repo_row.name, remote, token, sha)
+        head = await _graph_or_404(repo_row.id, repo_row.owner, repo_row.name, remote, token, sha)
         rows, counts = _map_rows(head)
         body = json.dumps({
             "repo": {"owner": repo_row.owner, "name": repo_row.name, "default_branch": repo_row.default_branch},
@@ -385,7 +400,7 @@ async def node_edges(owner: str, repo: str, node_id: str, sha: str, request: Req
     await require_repo_access(db, auth[0], auth[1], repo_row)
     token = await _repo_token(repo_row)
     remote = repo_row.remote_url or f"https://github.com/{repo_row.owner}/{repo_row.name}.git"
-    head = await ensure_head_graph(repo_row.id, repo_row.owner, repo_row.name, remote, token, sha)
+    head = await _graph_or_404(repo_row.id, repo_row.owner, repo_row.name, remote, token, sha)
     if node_id not in head.funcs:
         raise ApiError(404, "not_found", "no such node")
     callers = _callers(head, node_id)

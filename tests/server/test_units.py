@@ -60,18 +60,6 @@ def test_render_token_round_trip_and_expiry():
     assert not security.verify_render_token("abc123", None)
 
 
-def test_webhook_signature():
-    body = b'{"a":1}'
-    import hashlib
-    import hmac
-
-    secret = "s3cret"
-    sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    assert security.verify_webhook_signature(secret, body, sig)
-    assert not security.verify_webhook_signature(secret, body + b" ", sig)
-    assert not security.verify_webhook_signature(secret, body, None)
-
-
 def test_token_encryption_round_trip():
     value = "gho_example_value"
     assert security.decrypt_secret(security.encrypt_secret(value)) == value

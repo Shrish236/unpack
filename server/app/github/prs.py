@@ -65,6 +65,8 @@ async def get_viewer_user(svc: GitHubService, user_token: str) -> dict[str, Any]
 
 __all__ = [
     "CompareResult",
+    "list_installations",
+    "list_open_pulls_conditional",
     "GitHubError",
     "compare",
     "get_pr",
@@ -74,3 +76,36 @@ __all__ = [
     "installation_repositories",
     "list_open_prs_for_head",
 ]
+
+
+async def list_open_pulls_conditional(
+    svc: GitHubService, token: str, owner: str, repo: str, etag: str | None
+) -> tuple[bool, list[dict[str, Any]], str | None]:
+    """All open pull requests of a repository, sent with If-None-Match.
+
+    Returns (changed, pulls, etag). A 304 means the list is unchanged and costs no rate-limit budget;
+    then `changed` is False and `pulls` is empty (the caller keeps its stored list).
+    """
+    headers = {"If-None-Match": etag} if etag else None
+    response = await svc._send(
+        "GET", f"/repos/{owner}/{repo}/pulls", token=token,
+        params={"state": "open", "per_page": 100}, headers=headers,
+    )
+    if response.status_code == 304:
+        return False, [], etag
+    if response.status_code >= 400:
+        raise GitHubError(response.status_code, f"list pulls for {owner}/{repo}", response.text)
+    items: list[dict[str, Any]] = list(response.json())
+    url = next((part[part.index("<") + 1: part.index(">")] for part in response.headers.get("link", "").split(",")
+                if 'rel="next"' in part), None)
+    while url:  # more than one page: follow the links (no ETag on later pages)
+        page = await svc._send("GET", url.replace(svc.api_url, ""), token=token)
+        items.extend(page.json())
+        url = next((part[part.index("<") + 1: part.index(">")] for part in page.headers.get("link", "").split(",")
+                    if 'rel="next"' in part), None)
+    return True, items, response.headers.get("etag")
+
+
+async def list_installations(svc: GitHubService) -> list[dict[str, Any]]:
+    """Every installation of the App, listed with the App's JWT."""
+    return await svc.paginate("/app/installations", svc.app_jwt())

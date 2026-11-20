@@ -11,7 +11,9 @@ from sqlalchemy import select, text
 from ..config import settings
 from ..db import session_scope
 from ..github.comments import build_comment_body, create_comment, find_unpack_comment, update_comment
-from ..models import Analysis, PullRequest, Render, Repo
+from ..github.description import digest, section_for, write_section
+from ..github.service import GitHubError
+from ..models import Analysis, PullRequest, Render, Repo, TrackedBranch
 from ..services import get_github
 
 
@@ -125,7 +127,37 @@ async def publish(pr_id: int, analysis_id: int, *, mode: str = "analysis",
             pr.last_published_analysis_id = analysis.id
         pr.last_body_hash = body_hash
         pr.last_published_at = datetime.now(timezone.utc)
+        if settings.PR_DESCRIPTION_SECTION:
+            await _write_description(session, svc, token, repo, pr, body)
+        await _refresh_needs_publish(session, pr)
         return "published"
+
+
+async def _write_description(session: Any, svc: Any, token: str, repo: Repo, pr: PullRequest, body: str) -> None:
+    """Best effort: a failure here must not undo the comment, so it is logged and the poller moves on."""
+    section = section_for(body)
+    section_hash = digest(section)
+    if pr.description_hash == section_hash:
+        return
+    try:
+        result = await write_section(svc, token, repo.owner, repo.name, pr.number, section)
+    except GitHubError:
+        return
+    if result["written"] or result["reason"] == "unchanged":
+        pr.description_hash = section_hash
+
+
+async def _refresh_needs_publish(session: Any, pr: PullRequest) -> None:
+    """Design §4: needs_publish is false once every open PR on the branch shows the latest analysis."""
+    if pr.tracked_branch_id is None:
+        return
+    tracked = await session.get(TrackedBranch, pr.tracked_branch_id)
+    if tracked is None or tracked.latest_push_id is None:
+        return
+    latest = (await session.execute(select(Analysis.id).where(Analysis.push_id == tracked.latest_push_id))).scalar_one_or_none()
+    open_prs = (await session.execute(select(PullRequest).where(
+        PullRequest.tracked_branch_id == tracked.id, PullRequest.state == "open"))).scalars().all()
+    tracked.needs_publish = any(p.last_published_analysis_id != latest for p in open_prs)
 
 
 async def _short_sha(session: Any, analysis: Analysis) -> str:

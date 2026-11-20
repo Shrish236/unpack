@@ -374,6 +374,16 @@
       "title": "Callees",
       "type": "array"
     },
+    "callers_total": {
+      "default": 0,
+      "title": "Callers Total",
+      "type": "integer"
+    },
+    "callees_total": {
+      "default": 0,
+      "title": "Callees Total",
+      "type": "integer"
+    },
     "unresolved_calls": {
       "items": {
         "additionalProperties": true,

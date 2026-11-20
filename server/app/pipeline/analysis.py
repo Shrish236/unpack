@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from unpack_graph.graph import build_graph
-from unpack_graph.source import GitSource
-
 from ..config import settings
 from ..llm.client import LLMCallRecord, run_reasoning_llm
 from ..llm.prompt_builder import build_reasoning_prompt
-from .changes import FuncChange, compute_changes
-from .edit_linker import LinkOutcome, link_session_to_changes
-from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
-from .payload import PayloadSource, build_overlay, changed_python_files, needs_head_fetch, parse_diff_hunks
-from .repos import CommitUnavailable, ensure_commit, ensure_mirror, save_cached_graph
-from .session import UnpackSession, parse_gemini_session
+from .build import BuildFailed, run_analysis
+from .edit_linker import LinkOutcome
+from .graph_view import GraphBuild
+from .payload import build_overlay, changed_python_files, needs_head_fetch
+from .repos import CommitUnavailable, ensure_commit, ensure_mirror
 from .verify import TEXT_ONLY_REASON, verify_reasoning_output
 
 log = logging.getLogger("unpack.analysis")
@@ -67,43 +62,6 @@ def _summary(build: GraphBuild, file_count: int) -> str:
     return f"{n} function{'s' if n != 1 else ''} changed in {files}{tail}."
 
 
-def _blocking_graph_and_session(
-    head_source: Any,
-    base_source: GitSource,
-    diff_text: str,
-    repo_id: int,
-    head_sha: str,
-    changed_files: list[dict[str, Any]],
-    session_payload: dict[str, Any] | None,
-) -> tuple[GraphBuild, list[FuncChange], UnpackSession | None, LinkOutcome | None]:
-    base_graph = build_graph(base_source, reach=False)
-    head_graph = build_graph(head_source, reach=True)
-    changes = compute_changes(base_graph, head_graph)
-    hunks = parse_diff_hunks(diff_text)
-
-    unpack_session: UnpackSession | None = None
-    link_outcome: LinkOutcome | None = None
-    sources: dict[str, str] | None = None
-
-    if session_payload is not None:
-        known_paths = set(head_graph.mods.keys()) | set(base_graph.mods.keys()) | {
-            f["path"] for f in changed_files if isinstance(f.get("path"), str)
-        }
-        unpack_session = parse_gemini_session(session_payload, known_paths=known_paths)
-        link_outcome = link_session_to_changes(
-            unpack_session, changes, base_graph, head_graph, changed_files
-        )
-        sources = link_outcome.sources
-
-    build = build_graph_view(changes, base_graph, head_graph, hunks, sources=sources)
-    try:
-        validate_graph_view(build, settings.MAX_GRAPH_NODES, settings.MAX_GRAPH_EDGES)
-    except InvalidGraphView as exc:
-        raise AnalysisFailed("invalid_graph_view", str(exc)) from exc
-    save_cached_graph(repo_id, head_sha, head_graph)
-    return build, changes, unpack_session, link_outcome
-
-
 def _text_only_reasons(
     text_only_ids: list[str], link_outcome: LinkOutcome
 ) -> dict[str, dict[str, Any]]:
@@ -148,8 +106,9 @@ async def analyze_push(
     except CommitUnavailable as exc:
         raise AnalysisFailed("graph_unavailable", f"base commit unavailable: {exc}") from exc
 
-    base_source = GitSource(mirror, base_sha)
-    if needs_head_fetch(changed_files):
+    overlay, removed = build_overlay(changed_files)
+    full_head = needs_head_fetch(changed_files)
+    if full_head:
         try:
             await ensure_commit(mirror, head_sha, token)
         except CommitUnavailable as exc:
@@ -157,26 +116,22 @@ async def analyze_push(
                 "graph_unavailable",
                 "a changed file was too large to send and the head commit is not on GitHub yet",
             ) from exc
-        head_source: Any = GitSource(mirror, head_sha)
-    else:
-        overlay, removed = build_overlay(changed_files)
-        head_source = PayloadSource(base_source, overlay, removed)
 
     try:
-        build, _changes, unpack_session, link_outcome = await asyncio.to_thread(
-            _blocking_graph_and_session,
-            head_source,
-            base_source,
-            payload.get("diff", ""),
-            repo_id,
-            head_sha,
-            changed_files,
-            session_payload,
+        analysis_build = await run_analysis(
+            repo_id=repo_id, mirror=str(mirror), base_sha=base_sha, head_sha=head_sha,
+            overlay=overlay, removed=sorted(removed), diff_text=payload.get("diff", ""),
+            full_head=full_head, changed_files=changed_files, session_payload=session_payload,
         )
+    except BuildFailed as exc:
+        raise AnalysisFailed(exc.code, exc.message) from exc
     except AnalysisFailed:
         raise
     except Exception as exc:
         raise AnalysisFailed("graph_failed", f"code graph build failed: {type(exc).__name__}") from exc
+    build = analysis_build.build
+    unpack_session = analysis_build.unpack_session
+    link_outcome = analysis_build.link_outcome
 
     changed_count = build.stats["functions_changed"]
     file_count = len({n["path"] for n in build.graph["nodes"] if n["layer"] in ("changed", "ghost")})

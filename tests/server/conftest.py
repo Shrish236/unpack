@@ -8,13 +8,32 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Settings are read at import time, so the test environment is set before any server module loads.
+# Each pytest-xdist worker gets its own database, so workers can truncate tables without touching each other.
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_TEST_DB = f"unpack_test_{_WORKER}".replace("-", "_")
+
+
+def _ensure_database(name: str) -> None:
+    import psycopg2
+
+    conn = psycopg2.connect(host="localhost", port=5432, user="unpack", password="unpackpass", dbname="postgres")
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,))
+        if cur.fetchone() is None:
+            cur.execute(f'CREATE DATABASE "{name}" OWNER unpack')
+    conn.close()
+
+
+_ensure_database(_TEST_DB)
 os.environ.setdefault("UNPACK_BASE_URL", "https://unpack.test")
-os.environ.setdefault("DATABASE_URL", "postgresql://unpack:unpackpass@localhost:5432/unpack_test")
+# Forced, not defaulted: a shell that exports DATABASE_URL must not send tests to a shared database.
+os.environ["DATABASE_URL"] = f"postgresql://unpack:unpackpass@localhost:5432/{_TEST_DB}"
 os.environ.setdefault("SESSION_SECRET", "test_session_secret_value_that_is_long_enough_32")
 os.environ.setdefault("RENDER_TOKEN_SECRET", "test_render_secret_value_that_is_long_enough_32")
 os.environ.setdefault("ADMIN_TOKEN", "test_admin_token_value_that_is_long_enough_32")
 os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "Yx4bq7Pn1hjVQ1xq0mD3xV0aXlYl7vHk1m3Pz0cQe6U=")
-os.environ.setdefault("DATA_DIR", "/tmp/unpack-test-data")
+os.environ["DATA_DIR"] = f"/tmp/unpack-test-data-{_WORKER}"
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
@@ -78,17 +97,42 @@ class Origin:
         git(self.work, "push", "-q", str(self.bare), "HEAD:refs/heads/main")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(tmp_path, monkeypatch):
+    """Every test gets its own data directory and an empty in-memory graph cache.
+
+    Repository and graph caches are keyed by ids and SHAs that restart in each test, so sharing either
+    would let one test read another test's graph.
+    """
+    from server.app.pipeline import repos as repos_module
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    repos_module._lru.clear()
+    yield
+    repos_module._lru.clear()
+
+
 @pytest.fixture
 def tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
     return tmp_path / "data"
+
+
+_schema_built = False
 
 
 @pytest.fixture
 async def db_ready():
-    """Fresh schema on the test database for every test (tables are truncated, not dropped)."""
+    """Fresh schema on the test database for every test (tables are truncated, not dropped).
+
+    The schema is rebuilt once per worker: create_all never alters an existing table, so a database built
+    from older models would keep dropped columns and miss new ones.
+    """
+    global _schema_built
     reset_engine()
     async with get_engine().begin() as conn:
+        if not _schema_built:
+            await conn.run_sync(Base.metadata.drop_all)
+            _schema_built = True
         await conn.run_sync(Base.metadata.create_all)
         names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
         await conn.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
@@ -119,6 +163,11 @@ class FakeGitHub:
         self.pr_state: dict[int, dict] = {}
         self.next_comment_id = 1000
         self.calls: list[tuple[str, str]] = []
+        self.installation_repos: list[dict] = [{"full_name": "o/r"}]  # the test repository is installed
+        self.installations: list[dict] = [{"id": 123}]
+        self.pull_list_calls = 0
+        self.description_writes: list[str] = []
+        self.not_modified = 0
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         method, path = request.method, request.url.path
@@ -129,7 +178,7 @@ class FakeGitHub:
         if method == "GET" and path == "/user":
             return httpx.Response(200, json={"id": 42, "login": "octo", "avatar_url": "https://a.test/x.png"})
         if method == "GET" and path == "/installation/repositories":
-            return httpx.Response(200, json={"repositories": []})
+            return httpx.Response(200, json={"repositories": self.installation_repos})
         if method == "GET" and path.endswith("/installation"):
             owner_repo = path.split("/")[2:4]
             install = self.installation_for.get("/".join(owner_repo), 123)
@@ -137,10 +186,26 @@ class FakeGitHub:
                 return httpx.Response(404, json={"message": "Not Found"})
             return httpx.Response(200, json={"id": install})
         if method == "GET" and path.endswith("/pulls"):
-            return httpx.Response(200, json=self.open_prs)
+            import hashlib
+            import json as _json
+
+            self.pull_list_calls += 1
+            etag = '"' + hashlib.sha1(_json.dumps(self.open_prs, sort_keys=True).encode()).hexdigest() + '"'
+            if request.headers.get("if-none-match") == etag:
+                self.not_modified += 1
+                return httpx.Response(304, headers={"ETag": etag})
+            return httpx.Response(200, json=self.open_prs, headers={"ETag": etag})
+        if method == "GET" and path == "/app/installations":
+            return httpx.Response(200, json=self.installations)
         if method == "GET" and "/pulls/" in path:
             number = int(path.rsplit("/", 1)[1])
-            return httpx.Response(200, json=self.pr_state.get(number, {"state": "open"}))
+            return httpx.Response(200, json={"state": "open", "body": "", **self.pr_state.get(number, {})})
+        if method == "PATCH" and "/pulls/" in path:
+            number = int(path.rsplit("/", 1)[1])
+            body = json_body(request)
+            self.pr_state.setdefault(number, {"state": "open"})["body"] = body
+            self.description_writes.append(body)
+            return httpx.Response(200, json={"state": "open", "body": body})
         if method == "GET" and "/compare/" in path:
             head = path.split("...")[1]
             return httpx.Response(200, json=self.compare_status.get(head, {"status": "identical", "ahead_by": 0, "behind_by": 0}))
@@ -182,7 +247,6 @@ def fake_github(private_key_pem, monkeypatch):
     )
     services.set_github(svc)
     monkeypatch.setattr(settings, "GITHUB_APP_ID", "1")
-    monkeypatch.setattr(settings, "GITHUB_WEBHOOK_SECRET", "whsec_test_webhook_secret_value_long")
     monkeypatch.setattr(settings, "GITHUB_CLIENT_ID", "client-id")
     monkeypatch.setattr(settings, "GITHUB_CLIENT_SECRET", "client-secret")
     yield fake

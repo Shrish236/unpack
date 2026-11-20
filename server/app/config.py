@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     GITHUB_APP_PRIVATE_KEY_PATH: str = "/secrets/app.pem"
     GITHUB_CLIENT_ID: str | None = None
     GITHUB_CLIENT_SECRET: str | None = None
-    GITHUB_WEBHOOK_SECRET: str | None = None
 
     # Secrets (required, no defaults)
     SESSION_SECRET: str = ""
@@ -56,8 +55,13 @@ class Settings(BaseSettings):
     # Storage and limits
     DATA_DIR: str = "/data"
     WORKER_CONCURRENCY: int = 2
-    RECONCILE_INTERVAL_SECONDS: int = 30
-    TRACK_MAX_DAYS: int = 7
+    # Poller: one sweep per interval over branches with pending posts (no webhooks)
+    RECONCILE_INTERVAL_SECONDS: int = 10
+    # A pushed branch with no pull request is held this many days, then abandoned (posting is on demand later)
+    PR_WAIT_DAYS: int = 3
+    # Also write the Unpack section at the top of the pull request description
+    PR_DESCRIPTION_SECTION: bool = True
+    INSTALLATION_SYNC_SECONDS: int = 900
     MAX_GRAPH_NODES: int = 200
     MAX_GRAPH_EDGES: int = 500
     MAX_NEIGHBORS_PER_NODE: int = 15
@@ -68,6 +72,12 @@ class Settings(BaseSettings):
     PUSHES_PER_MINUTE_PER_REPO: int = 60
     ACCESS_CACHE_SECONDS: int = 600
     JOB_STUCK_SECONDS: int = 600
+    # Analyses run in this many worker processes (graph building is CPU-bound Python). 0 = in-process threads.
+    ANALYSIS_PROCESSES: int = 0
+    # Graphs kept loaded in memory per process for the read endpoints.
+    GRAPH_LRU_SIZE: int = 1
+    # Concurrent branch checks in the reconciler.
+    RECONCILE_CONCURRENCY: int = 8
 
     def required_problems(self) -> list[str]:
         """Return a human-readable line for each missing or weak required setting."""

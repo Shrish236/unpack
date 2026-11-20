@@ -13,6 +13,8 @@ Each design document says what should exist. This document says what does exist,
 | `pytest tests/` with no Postgres | 72 passed, 3 skipped, **33 errors**: every server test needs Postgres on `localhost:5432` |
 | Local Postgres 16, database `unpack_test`, user `unpack` | Started in the sandbox |
 | `pytest tests/` with Postgres | **105 passed, 3 skipped.** The 3 skipped are the Neo4j tests (no Neo4j running) |
+| `pytest tests/ -n auto` on the server branch, after the poller work and the boot-time sync fix (§9) | **147 passed, 4 skipped.** The 4 skips need a launchable Chromium |
+| `alembic upgrade head` on a fresh database, then `alembic check` | Passes. `downgrade base` also exits 0 |
 | Neo4j tests | Not run. Neo4j is not running in this environment |
 | Web build (`npm ci`, `npm run build`) | **Not verified.** The install step was blocked by the session's permission policy. The earlier claim that `App.tsx` fails `tsc` on an unused `React` import is unchecked |
 | Docker build (`server/Dockerfile`) | **Not verified.** Docker is present but no build was run |
@@ -52,7 +54,7 @@ Each design document says what should exist. This document says what does exist,
 | Render and image | [server §9](server-design.md#9-rendering-the-image-must-never-be-wrong) | `jobs/render.py`, `routers/images.py` (1200 × 700, 2× scale, 2 MB limit, blank check, `/render` token) | **Built** (see §1) |
 | Live API | [server §5.5](server-design.md#55-live-graph), [§5.6](server-design.md#56-images-and-rendering) | `routers/live.py`: analysis, turns, node detail, commit picker, map with ETag, node edges | **Built** |
 | Viewer login and access check | [server §5.4](server-design.md#54-viewer-login) | `routers/auth.py`, `deps.py`: OAuth, Fernet-encrypted tokens, 10-minute access cache | **Built** (not tested against GitHub) |
-| Webhook and setup | [server §5.3](server-design.md#53-github) | `routers/github_webhook.py`: HMAC, delivery dedupe, installation events | **Built** (not tested against GitHub) |
+| GitHub setup and poller | [server §5.3](server-design.md#53-github) | `routers/github_setup.py`, `jobs/reconciler.py`: no webhook; the poller and installation sync replace it (§9) | **Built** (mocked tests; not tested against GitHub) |
 | Admin | [server §5.7](server-design.md#57-operations-and-admin) | `routers/admin.py` | **Built** |
 | Health | [server §5.7](server-design.md#57-operations-and-admin) | `/healthz`, `/readyz` (Postgres and worker heartbeat); no CORS middleware | **Built** |
 | Code graph library | [graph-design.md](graph-design.md) | `unpack_graph/`: pass 1, pass 2, reachability, change detection, region, incremental, Neo4j loader | **Built** (Python only) |
@@ -127,3 +129,91 @@ In the order they block the demo (push to PR comment to live graph):
 | `docs/graph-design.md` | Updated: Neo4j references corrected, validation counts clarified, and new sections on build history, server use and glossary |
 | `docs/status.md` | New: replaces `docs/server-changes.md` |
 | `docs/server-changes.md` | Removed. Its gap table and build order are now in this document and the server design |
+
+## 8. Changes on the server branch after `7ad132c`
+
+This section records what changed on `claude/gifted-heisenberg-j9b1dk` (PR #14) after the check above. It also settles some rows of §1: the Docker build and a container run are now verified, and the UI build failure is confirmed.
+
+**Audit against the design.** Every endpoint in design §5 is served (27 routes; see `/openapi.json`). Fixed in this pass:
+
+- `needs_publish` now clears once every open PR shows the latest analysis. The publish step recalculates it.
+- A PR behind an older analysis gets the newest ancestor analysis after 10 minutes (design §3.3). Before, nothing was published.
+- Node detail returns `callers_total`, `callees_total` and `unresolved_calls`. The contract schema is regenerated.
+- Map folder rows carry line totals.
+- The map and node endpoints return 404 for a commit the server cannot reach, instead of 500.
+- OAuth login states are single use (`oauth_states` table).
+- Graph output no longer depends on set iteration order across processes.
+- Compose has a `migrate` service; the API and worker wait for it.
+
+**Performance** (SQLAlchemy, 258 files, about 11,700 functions, one changed function):
+
+| Case | Before | After |
+|---|---|---|
+| Analysis, cold base | 20.1 s (full base and full head) | 14.3 s (base built and cached; head incremental) |
+| Analysis, warm base | 20.1 s | 8.1 s |
+| Four analyses | 32.8 s, sequential | 14.3 s with `ANALYSIS_PROCESSES=2` |
+
+- The base graph is cached per base commit. The head is built with the library's `update_graph` on top of it. A test checks that the result equals a full rebuild.
+- Analyses run in `ANALYSIS_PROCESSES` worker processes.
+- One Chromium per process, reused across renders.
+- Reconciler branch checks run concurrently.
+- Node detail reads one blob instead of listing the repository tree.
+- Indexes for the job claim, the due-branch scan, the push rate limit and PR lookups.
+- Graph cache files use unique temp names, are pruned per repository, and a small in-memory LRU serves the read endpoints.
+
+**Tests.** 131 passed, 4 skipped, with `pytest tests/ -n auto` (about 26 s; about 62 s serially). Each xdist worker has its own database, and each test has its own data directory and graph cache. The four skips need a launchable Chromium.
+
+**Container verification** (this supersedes the "not verified" rows for Docker above):
+
+- The image builds from `server/Dockerfile`, including the pip install, the Playwright browser install and the web stage. The sandbox's proxy CA was passed as a named build context, not committed.
+- Chromium launches inside the container. Migrations are present.
+- The compose stack comes up healthy: Postgres, then `migrate` (exit 0), then the API and worker. `/healthz` and `/readyz` pass, and the worker heartbeat is fresh.
+- End to end: a repository is registered, a push goes through `POST /v1/ingest` (202), the worker clones from a git origin inside its container, and the analysis finishes with the expected facts (two functions changed: one added, one functional; one not reached by tests).
+- Rendering: the worker renders through the API's internal `/render` route and produces a 2400 × 1400 PNG. The public `/img` route serves it.
+- Migrations are idempotent.
+
+**Found and fixed in the container run:** the worker rendered against `127.0.0.1:8000`, which is the worker's own loopback. Every render failed with connection refused. The compose worker now sets `INTERNAL_API_URL=http://api:8000`.
+
+**Confirmed, UI side:** the web bundle does not build. `web/src/App.tsx` fails `tsc` on an unused `React` import (`TS6133`). The Dockerfile's fallback (`npm run build || … touch dist/index.html`) then ships an empty `index.html`, which hides the failure. The live page and the comment image cannot render until the UI builds.
+
+**Still open:**
+- `web/` has no lockfile, so `npm ci` falls back to `npm install` and the install is not reproducible.
+- The Dockerfile's fallback should fail the build once the UI is ready.
+- Real GitHub App, OAuth and webhook delivery: still mocked in tests.
+- The CLI hook against a real push.
+- The webhook replacement is built: see §9.
+
+
+## 9. Poller replaces webhooks
+
+The decisions below were made after the container checks in §8. They are built and tested on this branch.
+
+| Decision | Built as |
+|---|---|
+| No webhooks | `/github/webhook`, `GITHUB_WEBHOOK_SECRET` and the `webhook_deliveries` table are removed (migration `412bc53b2425`). `/github/setup` stays, because the install flow needs a page. |
+| Poller every 10 s | `RECONCILE_INTERVAL_SECONDS=10`. One sweep covers every active branch. |
+| One conditional call per repository | `GET /repos/{o}/{r}/pulls` with `If-None-Match`. A 304 costs no rate-limit budget and reuses the stored list. |
+| Compare cache | `pull_requests.compare_cache` keyed by `(PR head, latest head)`. An unchanged pair is never compared twice. |
+| Installation sync | Every `INSTALLATION_SYNC_SECONDS` (900) from `GET /app/installations`, replacing the installation webhooks. |
+| Hold for a PR | `PR_WAIT_DAYS=3` (configurable). After that the branch is `abandoned`. |
+| One comment per PR | Unchanged: updated in place, as before. |
+| Section at the top of the PR description | `PR_DESCRIPTION_SECTION=true`. Written between `<!-- unpack:begin -->` and `<!-- unpack:end -->`; the author's text is never changed. |
+| Trigger to post after the hold | **Not built.** Deferred, as agreed. |
+
+**Schema:** `tracked_branches.next_check_at` and its index are removed, and `needs_publish` now means "a post is outstanding". New columns: `repos.pulls_etag`, `pull_requests.compare_cache`, `pull_requests.description_hash`. New index: `ix_tracked_sweep`.
+
+**Tests:** 147 passed, 4 skipped, with `pytest tests/ -n auto`. New module `test_poller.py` covers the defaults, the webhook route being gone, the 3-day hold and its setting, the 304 path, the compare cache, and the description section (placed at the top, author text kept, unchanged content not rewritten). The webhook and per-branch timing tests were replaced.
+
+**Found and fixed while checking the poller in the container:**
+- The first installation sync after boot was skipped on a host that had been up for less than the sync interval. The sentinel was `0.0`, but `time.monotonic()` counts from boot, so the check looked like "synced recently". The sentinel is now `None` (never synced), with a test for a young host.
+- The merge migration `b398e9b017ae` had unused imports (ruff F401). They are removed; the migration logic is unchanged.
+- The installation sync retried on every 10-second sweep after a failure. It now retries after about a minute, and the test for that is in place.
+- The setup page returned 500 when GitHub could not be reached. It now returns 503 with a clear message.
+- The first sweep marks a repository `app_missing` when the App does not list it. That matches GitHub and is correct; the test fake now lists the test repository as installed.
+
+**Container check of this change:** the stack ran with the repository's current `server/` mounted over the image's copy, because a fresh image build could not finish in this sandbox (BuildKit's session dropped during the export step). The image's dependencies are unchanged by this work, so the mount exercises the new code on the same environment. A proper rebuild is still to do. What was checked: the migration applied to the new head (`412bc53b2425`), `/github/webhook` returns 404, `/readyz` passes, a push is analysed and held as `waiting_for_pr`, and the worker's sweeps run without errors.
+
+**Known limits:**
+- A PR that is closed or merged is noticed while its branch is active. After the branch is `closed_recently`, a reopened PR is not noticed until a new push.
+- The description section makes the PR body edit (`PATCH /pulls/{n}`), which needs the App's pull-requests write permission (already required by the comment).
+- Polling uses the installation token for each repository with active branches. Abandoned branches are not polled.

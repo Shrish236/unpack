@@ -9,15 +9,15 @@ from urllib.parse import urlencode
 import jwt
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..db import get_db
+from ..db import get_db, session_scope
 from ..deps import SESSION_COOKIE, viewer
 from ..errors import ApiError
 from ..github import prs as gh_prs
-from ..models import User, WebSession
+from ..models import OAuthState, User, WebSession
 from ..security import encrypt_secret, new_session_id
 from ..services import get_github, get_oauth_http
 
@@ -40,6 +40,8 @@ def _callback_url() -> str:
 async def login(next: str | None = None) -> Response:
     target = _safe_next(next)
     nonce = secrets.token_urlsafe(16)
+    async with session_scope() as session:
+        session.add(OAuthState(nonce=nonce, expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)))
     state = jwt.encode(
         {"nonce": nonce, "next": target, "exp": datetime.now(timezone.utc) + timedelta(minutes=10)},
         settings.SESSION_SECRET,
@@ -71,6 +73,11 @@ async def callback(request: Request, code: str | None = None, state: str | None 
     except jwt.PyJWTError:
         return _login_failed()
     if not secrets.compare_digest(claims.get("nonce", ""), request.cookies.get(STATE_COOKIE, "")):
+        return _login_failed()
+    # Single use: consuming the row fails if the state was already used or has expired.
+    consumed = await db.execute(delete(OAuthState).where(
+        OAuthState.nonce == claims["nonce"], OAuthState.expires_at > datetime.now(timezone.utc)))
+    if consumed.rowcount != 1:
         return _login_failed()
     target = _safe_next(claims.get("next"))
 
