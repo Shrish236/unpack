@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from unpack_graph import neo4j_io as nio
+from unpack_graph.incremental import update_graph
 from unpack_graph.diff import detect_changes
 from unpack_graph.graph import build_graph
 from unpack_graph.region import build_region
@@ -92,3 +93,14 @@ def test_counts_match_after_full_load(repo):
     c = nio.db_counts(DRIVER)
     assert (c["modules"], c["classes"], c["functions"], c["calls"]) == (len(g.mods), len(g.classes), len(g.funcs),
                                                                        len(g.calls))
+
+
+def test_delta_equals_full_load(repo):
+    root, base, head = repo
+    gb = build_graph(GitSource(root, base))
+    gi, stats = update_graph(gb, GitSource(root, head), {"pkg/core.py", "tests/test_extra.py"}, set())
+    nio.load_graph(gb, DRIVER)
+    nio.apply_delta(DRIVER, nio.graph_rows(gb), nio.graph_rows(gi))
+    sig_delta = nio.db_signature(DRIVER)
+    nio.load_graph(gi, DRIVER)
+    assert sig_delta == nio.db_signature(DRIVER)

@@ -430,3 +430,106 @@ def region_query(driver, cs, cap: int = DEFAULT_CAP, tests_per_node: int = DEFAU
     meta = build_meta(cs, [fid for fid in order if fid in byid and not byid[fid]["f"].get("ghost")], cap,
                       tests_per_node)
     return {"version": VERSION, "meta": meta, "nodes": node_list, "edges": edge_list}
+# ------------------------------------------------------------------ incremental delta
+def graph_rows(g: Graph, with_reaches: bool = True) -> dict:
+    """Canonical keyed rows of a graph: {'nodes': {label: {id: props}}, 'rels': {spec: {key: props}}}."""
+    nodes = {"Module": {r["id"]: r for r in module_rows(g)},
+             "Class": {r["id"]: r for r in class_rows(g)},
+             "Function": {r["id"]: r for r in function_rows(g)}}
+    rels: dict = {}
+    st = structure_rows(g)
+    for k, rows in st["contains"].items():
+        a, b = k.split("-")
+        rels[("CONTAINS", a, b)] = {(r["src"], r["dst"]): {} for r in rows}
+    rels[("HAS_METHOD", "Class", "Function")] = {(r["src"], r["dst"]): {} for r in st["has_method"]}
+    rels[("INHERITS", "Class", "Class")] = {(r["src"], r["dst"]): {} for r in st["inherits"]}
+    rels[("OVERRIDES", "Function", "Function")] = {(r["src"], r["dst"]): {} for r in st["overrides"]}
+    rels[("IMPORTS", "Module", "Module")] = {
+        (r["src"], r["dst"], r["context"]): {"names": r["names"], "level": r["level"], "context": r["context"]}
+        for r in st["imports"]}
+    ff, mf = calls_rows(g)
+    rels[("CALLS", "Function", "Function")] = {(r["src"], r["dst"]): r["p"] for r in ff}
+    rels[("CALLS", "Module", "Function")] = {(r["src"], r["dst"]): r["p"] for r in mf}
+    if with_reaches:
+        rels[("REACHES", "Function", "Function")] = {
+            (r["src"], r["dst"]): {"depth": r["depth"], "path": r["path"], "uncertain": r["uncertain"]}
+            for r in reach_rows(g)}
+    return {"nodes": nodes, "rels": rels}
+
+
+def apply_delta(driver, old: dict, new: dict) -> dict:
+    """Apply the difference between two `graph_rows` snapshots to the database."""
+    t0 = time.time()
+    stats = {"nodes_removed": 0, "nodes_added": 0, "nodes_changed": 0,
+             "rels_removed": 0, "rels_added": 0, "rels_changed": 0}
+    with driver.session() as s:
+        # 1. removed nodes
+        for label in ("Function", "Class", "Module"):
+            gone = [i for i in old["nodes"][label] if i not in new["nodes"][label]]
+            _run_batched(s, f"UNWIND $rows AS i MATCH (n:{label} {{id: i}}) DETACH DELETE n", gone)
+            stats["nodes_removed"] += len(gone)
+        # 2. removed relationships between surviving nodes
+        for spec, rows in old["rels"].items():
+            typ, a, b = spec
+            gone = [{"src": k[0], "dst": k[1], "ctx": k[2] if len(k) > 2 else None}
+                    for k in rows if k not in new["rels"].get(spec, {})
+                    and k[0] in new["nodes"][a] and k[1] in new["nodes"][b]]
+            if gone:
+                ctx = " AND r.context = x.ctx" if typ == "IMPORTS" else ""
+                _run_batched(s, f"UNWIND $rows AS x MATCH (a:{a} {{id: x.src}})-[r:{typ}]->(b:{b} {{id: x.dst}}) "
+                                f"WHERE true{ctx} DELETE r", gone)
+            stats["rels_removed"] += sum(1 for k in rows if k not in new["rels"].get(spec, {}))
+        # 3. changed nodes, 4. added nodes
+        for label in ("Module", "Class", "Function"):
+            o, n = old["nodes"][label], new["nodes"][label]
+            changed = [r for i, r in n.items() if i in o and o[i] != r]
+            added = [r for i, r in n.items() if i not in o]
+            extra = ("REMOVE n:Test FOREACH (_ IN CASE WHEN r.is_test THEN [1] ELSE [] END | SET n:Test)"
+                     if label == "Function" else "")
+            _run_batched(s, f"UNWIND $rows AS r MATCH (n:{label} {{id: r.id}}) SET n = r {extra}", changed)
+            _run_batched(s, f"UNWIND $rows AS r CREATE (n:{label}) SET n = r" + (
+                " FOREACH (_ IN CASE WHEN r.is_test THEN [1] ELSE [] END | SET n:Test)" if label == "Function" else ""),
+                         added)
+            stats["nodes_changed"] += len(changed)
+            stats["nodes_added"] += len(added)
+        # 5. added rels, 6. changed rel props
+        for spec, rows in new["rels"].items():
+            typ, a, b = spec
+            o = old["rels"].get(spec, {})
+            added = [{"src": k[0], "dst": k[1], "p": p} for k, p in rows.items() if k not in o]
+            changed = [{"src": k[0], "dst": k[1], "ctx": k[2] if len(k) > 2 else None, "p": p}
+                       for k, p in rows.items() if k in o and o[k] != p]
+            _run_batched(s, f"UNWIND $rows AS x MATCH (a:{a} {{id: x.src}}) MATCH (b:{b} {{id: x.dst}}) "
+                            f"CREATE (a)-[r:{typ}]->(b) SET r = x.p", added)
+            if changed:
+                ctx = " AND r.context = x.ctx" if typ == "IMPORTS" else ""
+                _run_batched(s, f"UNWIND $rows AS x MATCH (a:{a} {{id: x.src}})-[r:{typ}]->(b:{b} {{id: x.dst}}) "
+                                f"WHERE true{ctx} SET r = x.p", changed)
+            stats["rels_added"] += len(added)
+            stats["rels_changed"] += len(changed)
+    stats["delta_s"] = round(time.time() - t0, 3)
+    return stats
+
+
+def db_signature(driver) -> dict:
+    """Order-independent fingerprint of everything in the database (used to prove delta == full load)."""
+    import hashlib
+    sig = {}
+    with driver.session() as s:
+        q = {
+            "functions": "MATCH (n:Function) WHERE NOT n:Ghost RETURN n.id AS id, n.logic_hash AS h, n.signature_hash AS sh, "
+                         "n.test_label AS l, n.test_count AS c, n.test_min_depth AS d, n.test_path AS p, n.start AS s, "
+                         "n.is_test AS t, labels(n) AS lb, n.unresolved_calls AS u",
+            "classes": "MATCH (n:Class) RETURN n.id AS id, n.start AS s, n.end AS e, n.bases_raw AS b",
+            "modules": "MATCH (n:Module) RETURN n.id AS id, n.name AS nm, n.package AS pk, n.partial AS pt",
+            "calls": "MATCH (a)-[r:CALLS]->(b) WHERE r.via <> 'removed' OR r.via IS NULL RETURN a.id AS a, b.id AS b, "
+                     "r.tier AS t, r.via AS v, r.lines AS l, r.count AS c, r.candidates AS cd",
+            "reaches": "MATCH (a)-[r:REACHES]->(b) RETURN a.id AS a, b.id AS b, r.depth AS d, r.uncertain AS u, r.path AS p",
+            "structure": "MATCH (a)-[r:CONTAINS|HAS_METHOD|INHERITS|OVERRIDES]->(b) RETURN type(r) AS t, a.id AS a, b.id AS b",
+            "imports": "MATCH (a)-[r:IMPORTS]->(b) RETURN a.id AS a, b.id AS b, r.context AS c, r.names AS n",
+        }
+        for name, cypher in q.items():
+            rows = sorted(repr(tuple(sorted((k, repr(v)) for k, v in r.items()))) for r in s.run(cypher).data())
+            sig[name] = {"n": len(rows), "md5": hashlib.md5("\n".join(rows).encode()).hexdigest()}
+    return sig
+
