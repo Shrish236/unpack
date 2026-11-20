@@ -101,6 +101,15 @@ def update_graph(old: Graph, source, changed: set, deleted: set, resolver_opts: 
                 if s.raw.split("(")[0].split(".")[-1].strip() in touched:
                     affected.add(s.path)
 
+    # getattr-dispatched sites depend on the method names of their receiver's class
+    if touched:
+        for s in old.sites:
+            if s.kind != "dynamic" or s.path in affected:
+                continue
+            kind, _, text = (s.reason or "").partition(":")
+            if any((n == text) if kind == "literal" else n.startswith(text) for n in touched):
+                affected.add(s.path)
+
     affected &= set(mods)
     sites: list = []
     reused = 0
@@ -121,8 +130,8 @@ def update_graph(old: Graph, source, changed: set, deleted: set, resolver_opts: 
     compute_reach(new)
     t3 = time.time()
     stats = {"files": len(mods), "changed": len(changed), "deleted": len(deleted),
-             "affected": len(affected), "reused": reused, "reparse_s": t1 - t0, "relink_s": t2 - t1,
-             "reach_s": t3 - t2, "total_s": t3 - t0}
+             "affected": len(affected), "affected_files": sorted(affected), "reused": reused,
+             "reparse_s": t1 - t0, "relink_s": t2 - t1, "reach_s": t3 - t2, "total_s": t3 - t0}
     new.timing = {"total_s": t3 - t0}
     return new, stats
 

@@ -228,10 +228,52 @@ class Walker:
             owner=ctx.scope_id, arg_names=tuple(arg_shapes),
             is_await=parent is not None and parent.type == "await",
             kwargs=tuple(kwargs), npos=npos, splat=splat, guards=self.guards_of(node),
+            dyn=self.dynamic_getattr(fn, args, ctx),
         )
         self.cs_memo[node.id] = cs
         ctx.scope.calls.append(cs)
         return cs
+
+    # ---- string-keyed attribute access: getattr(obj, "name") and getattr(obj, "prefix" + x)
+    def name_pattern(self, node) -> tuple:
+        """What a name argument tells us: ("literal", s) for a known name, ("prefix", s) for a known
+        start, ("unknown", "") otherwise."""
+        if node.type == "string":
+            if any(c.type == "interpolation" for c in node.children):
+                parts = []
+                for c in node.children:
+                    if c.type == "interpolation":
+                        break
+                    if c.type == "string_content":
+                        parts.append(self.txt(c))
+                prefix = "".join(parts)
+                return ("prefix", prefix) if prefix else ("unknown", "")
+            try:
+                value = ast.literal_eval(self.txt(node))
+            except (ValueError, SyntaxError):
+                return ("unknown", "")
+            return ("literal", value) if isinstance(value, str) else ("unknown", "")
+        if node.type == "binary_operator":
+            op = node.child_by_field_name("operator")
+            left = node.child_by_field_name("left")
+            if op is not None and self.txt(op) == "+" and left is not None and left.type == "string":
+                kind, text = self.name_pattern(left)
+                if kind == "literal":
+                    return ("prefix", text)
+        return ("unknown", "")
+
+    def dynamic_getattr(self, fn, args, ctx: Ctx) -> tuple:
+        """For a call to the builtin getattr with a receiver that is a plain name or attribute:
+        (receiver Shape, name pattern); otherwise ()."""
+        if fn is None or fn.type != "identifier" or self.txt(fn) != "getattr" or args is None:
+            return ()
+        pos = [a for a in args.named_children if a.type not in ("comment", "keyword_argument")]
+        if len(pos) < 2 or pos[0].type not in ("identifier", "attribute"):
+            return ()
+        receiver = self.shape(pos[0], ctx)
+        if receiver.kind != "name":
+            return ()
+        return (receiver, self.name_pattern(pos[1]))
 
     # --------------------------------------------------------------- walk
     def children(self, node, ctx: Ctx):
