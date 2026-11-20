@@ -1,11 +1,14 @@
 """Command line interface: `unpack-graph <command>`.
 
-Commands are added one increment at a time.  This increment provides:
+Commands:
 
   extract <repo> [--rev REV] [--check-ast] [--list]
       Pass 1 only: parse every .py file and report the functions and classes found.
       --check-ast compares every definition's (start, end, name) with Python's `ast` module.
       --list prints one line per definition.
+
+  build <repo> [--rev REV]
+      Passes 1 and 2: the call graph with a confidence tier on every edge.
 """
 
 from __future__ import annotations
@@ -14,8 +17,10 @@ import argparse
 import ast
 import json
 import sys
+from collections import Counter
 
 from .extract import extract_file, module_name_for
+from .graph import build_graph
 from .source import FsSource, GitSource
 
 
@@ -97,6 +102,32 @@ def cmd_extract(args) -> int:
     return 0
 
 
+def graph_summary(g) -> dict:
+    sites = Counter(f"{s.kind}:{s.status}" for s in g.sites)
+    tiers = Counter(e.tier for e in g.calls.values())
+    return {
+        "source": g.label,
+        "modules": len(g.mods),
+        "functions": len(g.funcs),
+        "classes": len(g.classes),
+        "call_edges": len(g.calls),
+        "call_edges_by_tier": dict(tiers),
+        "inherits": len(g.inherits),
+        "overrides": len(g.overrides),
+        "imports": len(g.imports),
+        "sites": dict(sites),
+        "unresolved_functions": len(g.unresolved),
+        "partial_files": sorted(m.path for m in g.mods.values() if m.partial),
+        "timing_s": {k: round(v, 3) for k, v in g.timing.items()},
+    }
+
+
+def cmd_build(args) -> int:
+    g = build_graph(_source(args.repo, args.rev))
+    print(json.dumps(graph_summary(g), indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="unpack-graph", description="Unpack code knowledge graph CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -107,6 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--check-ast", action="store_true", help="verify definitions against Python's ast")
     ex.add_argument("--list", action="store_true", help="print every definition")
     ex.set_defaults(func=cmd_extract)
+
+    bd = sub.add_parser("build", help="build the call graph with confidence tiers (passes 1 and 2)")
+    bd.add_argument("repo", help="repository root (working tree)")
+    bd.add_argument("--rev", default=None, help="read a git revision instead of the working tree")
+    bd.set_defaults(func=cmd_build)
     return parser
 
 
