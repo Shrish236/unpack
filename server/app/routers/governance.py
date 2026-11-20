@@ -7,17 +7,18 @@ so the page can refresh from one response. Any logged-in viewer can act; per-rol
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..deps import viewer
 from ..errors import ApiError
+from ..dashboard_seed import BRIEFS  # the dummy briefs; a revised policy reopens with its own when one exists
 from ..models import GovCandidate, GovEvidence, GovHistory, GovPolicy, GovSkillRule
 
 router = APIRouter(prefix="/api/governance", dependencies=[Depends(viewer)])
@@ -29,6 +30,8 @@ TREND_ON_REVISE = [1, 1, 2, 1, 2, 2, 3, 3]
 
 Scope = Literal["repo", "team", "org"]
 Enforcement = Literal["advice", "check", "gate"]
+STEP_DOWN = {"gate": "check", "check": "advice"}
+WATCH_DAYS, RENEW_DAYS = 14, 180
 
 
 class ApproveIn(BaseModel):
@@ -37,6 +40,8 @@ class ApproveIn(BaseModel):
     enforcement: Enforcement
     owner: str = Field(pattern=r"^@[A-Za-z0-9][A-Za-z0-9_-]*$")
     expires: date
+    target: int | None = Field(default=None, ge=0, le=1000)  # overrides per 100 sessions the policy should reach
+    review: date | None = None  # when the owner checks whether it worked
 
 
 class RejectIn(BaseModel):
@@ -83,6 +88,7 @@ async def _state(db: AsyncSession) -> dict[str, Any]:
                 "teams": c.teams, "developers": c.developers, "trend": list(c.trend),
                 "per_hundred": c.per_hundred, "match": c.match, "scope": c.scope, "enforcement": c.enforcement,
                 "owner": c.owner, "expires": c.expires.isoformat(), "evidence": by_candidate[c.id], "source": c.source,
+                "brief": c.brief,
             }
             for c in candidates
         ],
@@ -91,6 +97,10 @@ async def _state(db: AsyncSession) -> dict[str, Any]:
                 "id": p.id, "statement": p.statement, "type": p.type, "scope": p.scope, "scope_name": p.scope_name,
                 "enforcement": p.enforcement, "owner": p.owner, "expires": p.expires.isoformat(),
                 "adherence": p.adherence, "before": p.before, "after": p.after, "match": p.match,
+                "target": p.target, "review": p.review_on.isoformat() if p.review_on else None,
+                "approved": p.published_on.isoformat() if p.published_on else None,
+                "weekly": list(p.weekly) if p.weekly is not None else None,
+                "checks": None if p.checks_flagged is None else {"flagged": p.checks_flagged, "wrong": p.checks_wrong or 0},
                 "recurrence": None if p.recurrence_sessions is None else {
                     "sessions": p.recurrence_sessions, "teams": p.recurrence_teams,
                     "developers": p.recurrence_developers, "evidence": by_policy[p.id],
@@ -122,6 +132,28 @@ async def _open_candidate(db: AsyncSession, candidate_id: str) -> GovCandidate:
     return candidate
 
 
+async def _next_id(db: AsyncSession, prefix: str) -> str:
+    """History ids are unique; repeated actions on one item get -w1, -w2 ... style suffixes."""
+    n = (await db.execute(select(func.count()).select_from(GovHistory).where(GovHistory.id.like(f"{prefix}%")))).scalar_one()
+    return f"{prefix}{n + 1}"
+
+
+def _revised_brief(policy: GovPolicy) -> dict[str, Any]:
+    """The brief a revised policy reopens with: the seeded one when there is one, else what the policy itself shows."""
+    if (known := BRIEFS.get(f"c-{policy.id}")) is not None:
+        return known
+    sessions, teams = policy.recurrence_sessions or 0, policy.recurrence_teams or 0
+    flagged, wrong = policy.checks_flagged or 0, policy.checks_wrong or 0
+    reach = {"repos": 1, "teams": teams, "scanned": 0, "flagged": flagged, "confirmed": flagged - wrong}
+    return {
+        "proposed": sessions, "teams": [], "areas": [], "rework": {"turns": 0, "hours": 0.0, "prs": 0},
+        "reach": {"repo": reach, "team": reach, "org": reach}, "conflicts": [{
+            "id": policy.id, "level": "overlap", "note": f"This replaces {policy.id}. Approving it retires {policy.id}."}],
+        "recommend": {"action": "trial", "enforcement": policy.enforcement,
+                      "reason": f"{policy.id} is still overridden in {sessions} sessions. Reword it and watch whether overrides fall."},
+    }
+
+
 async def _active_policy(db: AsyncSession, policy_id: str) -> GovPolicy:
     policy = await db.get(GovPolicy, policy_id)
     if policy is None or policy.status != "active":
@@ -143,6 +175,8 @@ async def approve(candidate_id: str, body: ApproveIn, db: AsyncSession = Depends
         raise ApiError(400, "invalid_payload", "statement: must not be blank")
     if body.expires < today:
         raise ApiError(400, "invalid_payload", "expires: must be today or later")
+    if body.review is not None and not today <= body.review <= body.expires:
+        raise ApiError(400, "invalid_payload", "review: must be between today and the expiry date")
     if await db.get(GovPolicy, candidate.pid) is not None:
         raise ApiError(409, "policy_exists", f"policy {candidate.pid} already exists")
 
@@ -150,13 +184,14 @@ async def approve(candidate_id: str, body: ApproveIn, db: AsyncSession = Depends
         id=candidate.pid, statement=statement, type=candidate.type, scope=body.scope,
         scope_name=SCOPE_NAME[body.scope], enforcement=body.enforcement, owner=body.owner, expires=body.expires,
         adherence=None, before=candidate.per_hundred, after=None, match=candidate.match,
-        status="active", published_on=today,
+        status="active", published_on=today, target=body.target, review_on=body.review,
     ))
     candidate.status = "approved"
     candidate.decided_at = datetime.now(timezone.utc)
     db.add(GovHistory(
         id=f"h-{candidate.pid}", statement=statement, outcome="approved", role=ROLE, occurred_on=today,
-        why=f"{candidate.sessions} sessions across {candidate.teams} teams, {candidate.developers} developers.",
+        why=f"{candidate.sessions} sessions across {candidate.teams} teams, {candidate.developers} developers."
+        + (f" Target: {body.target} overrides per 100 sessions." if body.target is not None else ""),
     ))
     await db.flush()
     return await _state(db)
@@ -171,6 +206,51 @@ async def reject(candidate_id: str, body: RejectIn | None = None, db: AsyncSessi
     db.add(GovHistory(
         id=f"h-{candidate.pid}", statement=candidate.statement, outcome="rejected", role=ROLE, occurred_on=_today(),
         why=reason or "No reason given.",
+    ))
+    await db.flush()
+    return await _state(db)
+
+
+@router.post("/candidates/{candidate_id}/watch")
+async def watch(candidate_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """"Not yet": the candidate stays in the inbox and the decision is logged, so it is looked at again later."""
+    candidate = await _open_candidate(db, candidate_id)
+    until = _today() + timedelta(days=WATCH_DAYS)
+    db.add(GovHistory(
+        id=await _next_id(db, f"h-{candidate.pid}-w"), statement=candidate.statement, outcome="watching", role=ROLE,
+        occurred_on=_today(), why=f"Not yet. Look again on {until.isoformat()}; at {candidate.sessions} sessions and "
+                                  f"{candidate.developers} developers it needs more evidence.",
+    ))
+    await db.flush()
+    return await _state(db)
+
+
+@router.post("/policies/{policy_id}/renew")
+async def renew(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    policy = await _active_policy(db, policy_id)
+    policy.expires = policy.expires + timedelta(days=RENEW_DAYS)
+    now = "Still measuring." if policy.after is None else f"Overrides {policy.before} -> {policy.after} per 100 sessions."
+    db.add(GovHistory(
+        id=await _next_id(db, f"h-{policy.id}-n"), statement=policy.statement, outcome="approved", role="Policy owner",
+        occurred_on=_today(), why=f"Renewed to {policy.expires.isoformat()}. {now}",
+    ))
+    await db.flush()
+    return await _state(db)
+
+
+@router.post("/policies/{policy_id}/relax")
+async def relax(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Steps the enforcement down one level (gate, then check, then advice) when the check is noisy."""
+    policy = await _active_policy(db, policy_id)
+    step = STEP_DOWN.get(policy.enforcement)
+    if step is None:
+        raise ApiError(409, "already_advice", "the policy is already advice only")
+    policy.enforcement = step
+    if step == "advice":
+        policy.checks_flagged = policy.checks_wrong = None
+    db.add(GovHistory(
+        id=await _next_id(db, f"h-{policy.id}-x"), statement=policy.statement, outcome="approved", role="Policy owner",
+        occurred_on=_today(), why=f"Relaxed to {step}. Re-check accuracy before raising it again.",
     ))
     await db.flush()
     return await _state(db)
@@ -206,7 +286,7 @@ async def revise(policy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str
         sessions=policy.recurrence_sessions, teams=policy.recurrence_teams or 0,
         developers=policy.recurrence_developers or 0, trend=TREND_ON_REVISE, per_hundred=policy.after or 0,
         match=policy.match, scope=policy.scope, enforcement=policy.enforcement, owner=policy.owner,
-        expires=policy.expires, first_seen=_today(), status="open",
+        expires=policy.expires, first_seen=_today(), status="open", brief=_revised_brief(policy),
     ))
     await db.flush()
     evidence = (await db.execute(
