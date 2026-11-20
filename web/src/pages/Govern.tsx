@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, FileText, Share2, ShieldCheck } from "lucide-react";
+import { BookOpen, Check, Eye, FileText, Share2, ShieldCheck } from "lucide-react";
 import { Kpi, PageHead, Panel, Seg, TypeChip } from "../ui";
 import { TYPE_LABEL, type DType, type HumanKind } from "../data";
 import {
@@ -7,6 +7,7 @@ import {
   type ActivePolicy, type Candidate, type Enforcement, type Evidence, type HistoryItem, type Scope,
 } from "../data.govern";
 import GovernBrief, { briefStats, ENF_LABEL } from "./GovernBrief";
+import PolicyHealth, { issuesOf, reachedTarget, STEP_DOWN } from "./GovernHealth";
 import "../styles/govern.css";
 
 type Tab = "candidates" | "active" | "skills" | "history";
@@ -70,6 +71,7 @@ export default function Govern() {
   const [reason, setReason] = useState("");
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [watch, setWatch] = useState<Record<string, string>>({}); // candidate id -> date to look again
   const detail = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,7 +82,7 @@ export default function Govern() {
 
   const meets = (c: Candidate) => c.sessions >= minS && c.developers >= minD;
   // strongest evidence first: more developers, then more sessions
-  const sorted = useMemo(() => [...cands].sort((a, b) => b.developers - a.developers || b.sessions - a.sessions), [cands]);
+  const sorted = useMemo(() => [...cands].sort((a, b) => Number(!!watch[a.id]) - Number(!!watch[b.id]) || b.developers - a.developers || b.sessions - a.sessions), [cands, watch]);
   const c = sorted.find((x) => x.id === sel) ?? sorted[0];
   const ready = cands.filter(meets).length;
 
@@ -113,11 +115,32 @@ export default function Govern() {
     setToast(`${x.pid} rejected and moved to history.`);
   };
 
+  const watchOn = (x: Candidate) => {
+    const until = new Date(Date.parse(TODAY) + 14 * 864e5).toISOString().slice(0, 10);
+    setWatch((w) => ({ ...w, [x.id]: until }));
+    setHist((h) => [{ id: `h-${x.pid}-w${h.length}`, statement: x.statement, outcome: "watching", role: "Tech lead (you)", when: TODAY, why: `Not yet. Look again on ${fmt(until)}; at ${x.sessions} sessions and ${x.developers} developers it needs more evidence.` }, ...h]);
+    setToast(`${x.pid} is being watched until ${fmt(until)}. It stays in the inbox.`);
+  };
+  const watchOff = (x: Candidate) => { setWatch((w) => { const { [x.id]: _, ...rest } = w; return rest; }); setToast(`Stopped watching ${x.pid}.`); };
+
   const stillHappening = (p: ActivePolicy) => p.after !== null && p.after >= p.before * 0.6;
   const retire = (p: ActivePolicy) => {
+    const why = issuesOf(p).includes("noisy") ? "Retired: reviewers kept overriding the check." : issuesOf(p).includes("overridden") ? "Retired: the override kept recurring after the policy." : "Retired by the owner.";
     setActives((a) => a.filter((y) => y.id !== p.id));
-    setHist((h) => [{ id: `h-${p.id}-r`, statement: p.statement, outcome: "expired", role: "Policy owner", when: TODAY, why: "Retired: the override kept recurring after the policy." }, ...h]);
+    setHist((h) => [{ id: `h-${p.id}-r`, statement: p.statement, outcome: "expired", role: "Policy owner", when: TODAY, why }, ...h]);
     setToast(`${p.id} retired.`);
+  };
+  const renew = (p: ActivePolicy) => {
+    const expires = new Date(Date.parse(p.expires) + 180 * 864e5).toISOString().slice(0, 10);
+    setActives((a) => a.map((y) => (y.id === p.id ? { ...y, expires } : y)));
+    setHist((h) => [{ id: `h-${p.id}-n${h.length}`, statement: p.statement, outcome: "approved", role: "Policy owner", when: TODAY, why: `Renewed to ${fmt(expires)}. ${p.after === null ? "Still measuring." : `Overrides ${p.before} → ${p.after} per 100 sessions.`}` }, ...h]);
+    setToast(`${p.id} renewed to ${fmt(expires)}.`);
+  };
+  const relax = (p: ActivePolicy) => {
+    const next = STEP_DOWN[p.enforcement];
+    if (!next) return;
+    setActives((a) => a.map((y) => (y.id === p.id ? { ...y, enforcement: next, checks: next === "advice" ? undefined : y.checks } : y)));
+    setToast(`${p.id} relaxed to ${ENF_LABEL[next]}. Re-check accuracy before raising it again.`);
   };
   const revise = (p: ActivePolicy) => {
     if (!p.recurrence) return;
@@ -134,6 +157,13 @@ export default function Govern() {
 
   const avgAdherence = Math.round(actives.filter((a) => a.adherence !== null).reduce((s, a) => s + a.adherence!, 0) / Math.max(1, actives.filter((a) => a.adherence !== null).length));
   const overridden = actives.filter(stillHappening).length;
+  const flaggedPolicies = actives.filter((a) => issuesOf(a).length);
+  const noisy = actives.filter((a) => issuesOf(a).includes("noisy")).length;
+  const expiring = actives.filter((a) => issuesOf(a).includes("expiring")).length;
+  const measured = actives.filter((a) => a.after !== null);
+  const cut = Math.round((measured.reduce((s, a) => s + (a.before - a.after!), 0) / Math.max(1, measured.reduce((s, a) => s + a.before, 0))) * 100);
+  const onTarget = actives.filter(reachedTarget).length;
+  const watching = cands.filter((x) => watch[x.id]).length;
 
   const d = c ? draftOf(c) : null;
   const agentsMd = c && d ? `## ${HEADING[c.type]}\n- ${d.statement}\n  <!-- ${c.pid} · scope: ${d.scope} · owner: ${d.owner} · expires: ${d.expires} -->` : "";
@@ -152,10 +182,11 @@ export default function Govern() {
       />
 
       <section className="kpis" aria-label="Summary">
-        <Kpi value={ready} label="ready for review" sub={`${cands.length} candidates in the inbox`} tone="hot" />
-        <Kpi value={actives.length} label="active policies" sub={`${actives.filter((a) => a.enforcement !== "advice").length} enforced in PRs`} />
+        <Kpi value={ready - cands.filter((x) => meets(x) && watch[x.id]).length} label="ready for review" sub={`${cands.length} in the inbox${watching ? ` · ${watching} watching` : ""}`} tone="hot" />
+        <Kpi value={`−${cut}%`} label="overrides since policies" sub={`${measured.length} measured policies, per 100 sessions`} tone="ok" />
+        <Kpi value={`${onTarget} of ${actives.length}`} label="policies at target" sub="overrides at or below the target set on approval" />
         <Kpi value={`${avgAdherence}%`} label="average adherence" sub="agent decisions that followed the rule" tone="ok" />
-        <Kpi value={overridden} label="still being overridden" sub="revise or retire" tone={overridden ? "bad" : undefined} />
+        <Kpi value={flaggedPolicies.length} label="need attention" sub={`${overridden} still overridden · ${noisy} noisy · ${expiring} expiring`} tone={flaggedPolicies.length ? "bad" : undefined} />
       </section>
 
       <section className="gv-pub" aria-label="Published to">
@@ -187,7 +218,7 @@ export default function Govern() {
                   <Spark v={x.trend} />
                 </span>
                 <span className="gv-item-m">
-                  {meets(x) ? <span className="chip ok">Meets threshold</span> : <span className="chip warn">Preference · below threshold</span>}
+                  {watch[x.id] ? <span className="chip warn"><Eye size={12} aria-hidden="true" /> Watching until {fmt(watch[x.id])}</span> : meets(x) ? <span className="chip ok">Meets threshold</span> : <span className="chip warn">Preference · below threshold</span>}
                   <span>{x.pid}</span>
                 </span>
               </button>
@@ -273,6 +304,9 @@ export default function Govern() {
               ) : (
                 <div className="gv-actions">
                   <button className="btn ok" disabled={!meets(c)} onClick={() => approve(c)}><Check size={16} /> Approve and publish</button>
+                  {watch[c.id]
+                    ? <button className="btn" onClick={() => watchOff(c)}><Eye size={16} /> Stop watching</button>
+                    : <button className="btn" onClick={() => watchOn(c)}><Eye size={16} /> Not yet, watch 2 weeks</button>}
                   <button className="btn" onClick={() => setRejecting(true)}>Reject</button>
                   {!meets(c) && <span className="gv-hint">Below threshold: keep watching, or lower it above.</span>}
                 </div>
@@ -288,8 +322,10 @@ export default function Govern() {
         </div>
       ))}
 
+      {tab === "active" && <PolicyHealth actives={actives} onRevise={revise} onRetire={retire} onRenew={renew} onRelax={relax} />}
+
       {tab === "active" && (
-        <Panel title="Active policies" sub="Adherence is measured on agent decisions. Overrides are per 100 sessions."
+        <Panel title="All active policies" sub="Adherence is measured on agent decisions. Overrides are per 100 sessions."
           aside={<span className="chip sim">Illustrative data</span>}>
           <div className="gv-scroll">
             <table className="table">
@@ -357,7 +393,7 @@ export default function Govern() {
           <div className="gv-hist">
             {hist.map((h) => (
               <div key={h.id}>
-                <span className={`chip ${h.outcome === "approved" ? "ok" : h.outcome === "rejected" ? "bad" : ""}`}>{h.outcome}</span>
+                <span className={`chip ${h.outcome === "approved" ? "ok" : h.outcome === "rejected" ? "bad" : h.outcome === "watching" ? "warn" : ""}`}>{h.outcome}</span>
                 <div><b>{h.statement}</b><p>{h.why}</p></div>
                 <div className="gv-cell-s">{h.role}<br />{fmt(h.when)}</div>
               </div>

@@ -54,6 +54,9 @@ export interface ActivePolicy {
   match: string;
   target?: number; // overrides per 100 sessions the policy is meant to reach
   review?: string; // date the owner checks whether it worked
+  approved?: string;
+  weekly?: number[]; // overrides per 100 sessions, per week since approval, oldest first
+  checks?: { flagged: number; wrong: number }; // PRs the check flagged, and how many a reviewer overrode as wrong
   recurrence?: { sessions: number; teams: number; developers: number; evidence: Evidence[] };
 }
 
@@ -71,7 +74,7 @@ export interface SkillRule {
 export interface HistoryItem {
   id: string;
   statement: string;
-  outcome: "approved" | "rejected" | "expired";
+  outcome: "approved" | "rejected" | "expired" | "watching";
   role: string;
   when: string;
   why: string;
@@ -164,10 +167,10 @@ export const candidates: Candidate[] = [
 
 export const actives: ActivePolicy[] = [
   { id: "P-09", statement: "Retries: exponential backoff, at most 5 attempts.", type: "retries", scope: "team", scopeName: "Payments",
-    enforcement: "check", owner: "@platform", expires: "2027-02-14", adherence: 92, before: 9, after: 2,
+    enforcement: "check", owner: "@platform", expires: "2027-02-14", adherence: 92, before: 9, after: 2, target: 2, approved: "2026-10-14", weekly: [9, 7, 5, 4, 3, 2, 2, 2], checks: { flagged: 14, wrong: 1 },
     match: "diff adds a retry loop without a backoff or with more than 5 attempts" },
   { id: "P-07", statement: "Never skip or delete a failing test without a linked issue.", type: "test", scope: "org", scopeName: "Org",
-    enforcement: "gate", owner: "@quality", expires: "2027-06-30", adherence: 71, before: 14, after: 9,
+    enforcement: "gate", owner: "@quality", expires: "2027-06-30", adherence: 71, before: 14, after: 9, target: 5, approved: "2026-08-05", weekly: [14, 13, 12, 11, 10, 10, 9, 9], checks: { flagged: 31, wrong: 9 },
     match: "diff adds skip or xfail markers",
     recurrence: { sessions: 9, teams: 3, developers: 6, evidence: [
       { id: "e20", session: "s-e4a1", pr: "#474", team: "Identity", dev: "dev-91ad", turn: 29, kind: "reject", when: "Nov 18",
@@ -175,10 +178,10 @@ export const actives: ActivePolicy[] = [
         quote: "A placeholder issue isn't a reason. Fix the test." },
     ] } },
   { id: "P-05", statement: "Public API changes need a changelog entry.", type: "design", scope: "repo", scopeName: "api",
-    enforcement: "advice", owner: "@api-guild", expires: "2026-12-18", adherence: 88, before: 6, after: 3,
+    enforcement: "advice", owner: "@api-guild", expires: "2026-12-18", adherence: 88, before: 6, after: 3, target: 2, approved: "2026-09-12", weekly: [6, 5, 4, 4, 3, 3, 3, 3],
     match: "diff changes a public signature with no CHANGELOG.md edit" },
   { id: "P-04", statement: "Use the repo's HTTP client. No new HTTP libraries.", type: "dependency", scope: "repo", scopeName: "payments-service",
-    enforcement: "gate", owner: "@platform", expires: "2027-05-01", adherence: 96, before: 7, after: 1,
+    enforcement: "gate", owner: "@platform", expires: "2027-05-01", adherence: 96, before: 7, after: 1, target: 1, approved: "2026-08-21", weekly: [7, 4, 3, 2, 1, 1, 1, 1], checks: { flagged: 12, wrong: 0 },
     match: "diff imports requests, urllib3 or aiohttp in application code" },
 ];
 
@@ -219,6 +222,24 @@ export interface Brief {
 }
 
 export const briefs: Record<string, Brief> = {
+  // Reopened from P-07 with "Revise": why the existing wording keeps being overridden.
+  "c-P-07": {
+    proposed: 14,
+    teams: [
+      { team: "Payments", developers: 2, overruled: 3, accepted: 1 },
+      { team: "Identity", developers: 2, overruled: 3, accepted: 2 },
+      { team: "Search", developers: 2, overruled: 3, accepted: 2 },
+    ],
+    areas: [{ area: "tests/ with a placeholder issue link", n: 6 }, { area: "tests/fixtures", n: 3 }],
+    rework: { turns: 33, hours: 2.7, prs: 5 },
+    reach: {
+      repo: { repos: 1, teams: 1, scanned: 31, flagged: 4, confirmed: 4 },
+      team: { repos: 4, teams: 1, scanned: 52, flagged: 6, confirmed: 5 },
+      org: { repos: 14, teams: 6, scanned: 168, flagged: 17, confirmed: 15 },
+    },
+    conflicts: [{ id: "P-07", level: "overlap", note: "This replaces P-07. The current wording lets a placeholder issue link satisfy it, which is why it keeps being overridden. Approving retires P-07." }],
+    recommend: { action: "approve", enforcement: "gate", reason: "The tightened wording would have been right 88% of the time. The only failures of P-07 are the placeholder-issue loophole." },
+  },
   c1: {
     proposed: 19,
     teams: [
