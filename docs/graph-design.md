@@ -283,7 +283,7 @@ unpack-graph eval     <repo> [--json FILE]                        # measurements
 unpack-graph coverage-check <repo> <coverage.json> [--json FILE]  # exit 1 on any false none
 ```
 
-Neo4j connection: `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The repository's `docker-compose.yml` provides the service.
+Neo4j connection (only for `--neo4j` and the Neo4j tests): `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The Neo4j service is **not** in the repository's `docker-compose.yml` any more; the server does not use Neo4j either (see [section 18](#18-use-in-the-server-and-status)). Run a Neo4j 5 instance yourself to use these options. Without one, the Neo4j tests are skipped.
 
 Library use:
 
@@ -302,7 +302,7 @@ view = build_region(cs)                              # the GraphView dict
 
 | Property | How it is checked | Result |
 |---|---|---|
-| Pass 1 finds every definition | `ast.walk` over every file, comparing `(start, end, name)` | httpx 0.28.1: 1,241 of 1,241. flask: 1,622 of 1,622. requests: 807 of 807 |
+| Pass 1 finds every definition | `ast.walk` over every file, comparing `(start, end, name)`. Counts are functions plus classes (httpx: 1,134 functions and 107 classes) | httpx 0.28.1: 1,241 of 1,241. flask: 1,622 of 1,622. requests: 807 of 807 |
 | Call resolution is sound | 60 hand-labelled call sites from httpx, and an independent audit of 30 more | 27 of 28 correct on the labelled set before tuning, 28 of 28 after; 30 of 30 on the audit |
 | No false `none` | a coverage.py run of httpx's own test suite (`coverage-check`) | 0 false `none` over 436 functions |
 | No false `none` on subsets | 8 subsets of httpx's tests, each run under coverage, compared with labels built from that subset | 1 false `none` in 875 labels; the cause is a format-string attribute read, which static analysis cannot see |
@@ -367,3 +367,53 @@ Before this procedure, the repositories checked were: httpx (all checks above), 
 | Jedi not kept | It resolved none of the sites the resolver left open |
 | `none` is the only red flag; `reached` is never presented as executed | Static reachability over-approximates by about a third |
 | Region output follows the existing schema | The schema is the repository's contract; the internal roles are kept as `relation` |
+
+## 17. Build history
+
+Chronological, with what went wrong and what it taught. Most major design elements exist because a measurement exposed a gap.
+
+1. **Environment.** httpx was pinned to 0.28.1 (the latest release; 1.0.0.beta0 is a 2021 pre-release tag). Counts matched the task statement.
+2. **First extractor.** The tree-sitter walk was compared with `ast` immediately: a 100% match on httpx from the first run. This confirmed that a recursive walk is needed, not a walk over `root.children`. Early discovery: getter and setter IDs collided, which led to the `#setter` suffix.
+3. **First resolver and first reachability numbers.** A full build took about 0.5 s, but **102 functions were labelled `none`** (79 of them in `httpx/`). Reading that list became the main development loop: each group of false `none`s pointed to a missing language feature.
+4. **Property accesses are not calls.** `URL.host` looked untested although every test read it. Added attribute-access records and property edges (getter versus setter, and the intermediate chain steps).
+5. **Implicit protocols.** Dunder methods (`__iter__`, `__eq__`, `__getitem__`, `__repr__` and others) were the next largest group. Added operator, iteration, truthiness, subscript, f-string and builtin-protocol sites, with their edges.
+6. **Import subtleties.** `httpx.main` was shadowed by its `except ImportError` fallback definition, so the guarded import now wins. `from . import sub` inside `__init__.py` resolved to itself and looped until the hop limit, so the submodule now wins. Star imports and `__all__` were essential: `httpx/__init__.py` is almost entirely `from ._x import *`.
+7. **Decorator ownership and callbacks.** For `@click.option(callback=validate_json)`, decorator expressions now belong to the decorated function, and function names passed as arguments become `ref` edges.
+8. **Reachability depth.** Depth 8 (the first brief) gave false `none`s; depth 12 was measured against real coverage.
+9. **Dispatch through `getattr`.** Running httpx's own tests under coverage found 51 false `none`s in a visitor that dispatches with `getattr`. String-keyed dispatch is now resolved (section 7.6).
+10. **Argument gating.** A new option threaded through `send(..., source=None)` made the helper look reached by every test. Gating by guarded parameters fixed the planted scenario without weakening the none check.
+11. **Incremental and Neo4j delta.** Both were checked against full rebuilds on real commits before being kept.
+
+## 18. Use in the server, and status
+
+The server (`server/`) uses this library in two places:
+
+- **Analysis.** `server/app/pipeline/analysis.py` and `jobs/handlers.py` call `build_graph(GitSource(...))` on the head commit. `server/app/pipeline/graph_view.py` turns that graph into the API payload: changed functions, neighbours, test paths, reachability labels, impact (upstream callers to depth 3), reading order and collapsed groups.
+- **Change classification.** `server/app/pipeline/changes.py` reuses `unpack_graph.diff._flags`, the library's classification rule, so the server and the library agree on what counts as `text_only`, `signature` or `functional`. The server does its own change detection, because the library's `detect_changes` needs the head commit in git, and at push time the head is not on GitHub yet.
+- **Caching.** The built graph is pickled per commit under `DATA_DIR/graphs/<repo_id>/<sha>.pkl`, and reused by the map and node endpoints. The server does not use Neo4j.
+
+The server uses this library's `build_graph` and `GitSource`, not `region.build_region`. The GraphView output (`schemas/graphview.schema.json`) is used by the CLI (`unpack-graph region`) and by the tests.
+
+**Status on `main` (7ad132c):**
+
+- `pytest tests/` on this repository, with a local Postgres for the server tests: 105 passed, 3 skipped. The skipped tests are the Neo4j tests, which need a running Neo4j instance.
+- The library's test files: `test_extraction.py`, `test_resolution.py`, `test_reachability.py`, `test_diff.py`, `test_incremental.py`, `test_dynamic_dispatch.py`, `test_neo4j.py`, `test_evaluate.py`, plus fixtures under `tests/fixtures/`.
+- Source sizes on main: `extract.py` 1,184 lines, `resolve.py` 1,313, `neo4j_io.py` 535, `reach.py` 245, `diff.py` 265, `incremental.py` 164, `graph.py` 211, `region.py` 217.
+
+## 19. Glossary
+
+| Term | Meaning |
+|---|---|
+| Node | A file, class, function, method or test. The ID is its path and qualified name |
+| Edge | A relationship: `CALLS`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `HAS_METHOD`, `REACHES` |
+| Tier | How an edge was found: `EXTRACTED`, `INFERRED`, `AMBIGUOUS` (section 7.4) |
+| `via` | The reason for an edge (type, dispatch, unique_name, ref, …) |
+| Unresolved call | A call the resolver could not place. Kept on the function with its raw text and reason |
+| Reachability label | `direct`, `reached`, `reached_uncertain`, `none`, or `test` (section 8.2) |
+| False `none` | A function labelled `none` that a test actually runs. The only failure the design must avoid |
+| Ghost | A function deleted in the diff, kept with its former callers |
+| Region | The changed functions plus their neighbours, tests and ghosts, as a GraphView |
+| GraphView | The JSON output of a region, validated against `schemas/graphview.schema.json` |
+| Logic hash | A hash of the body's tokens without comments, docstrings or whitespace. Decides `functional` |
+| Body hash | A hash of the exact body bytes |
+| Signature hash | A hash of the name, decorators, parameters and return annotation |
