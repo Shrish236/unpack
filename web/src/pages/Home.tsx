@@ -24,8 +24,20 @@ const KINDS = [
   { icon: MessagesSquare, name: "Discussion decision", quote: "Option B. Retry in the transport layer, not per call.", records: "The options discussed before any code, the choice, and your rationale.", where: ["PR story", "Decision ledger"] },
 ];
 
-export default function Home() {
+const DWELL = 2600; // 6 steps x 2.6 s: the whole flow plays in about 16 s
+
+// `live` (the home page at #/): while the hero is on screen the scene runs one short loop through the six steps by
+// itself, each with its callout. Scrolling hands control back to the scroll story. Without `live` (#/home-16) the hero
+// scene idles on the single miniature loop instead.
+export default function Home({ live = false }: { live?: boolean }) {
   const [step, setStep] = useState(0);
+  const [demo, setDemo] = useState(1); // 1..6
+  useEffect(() => {
+    if (!live || step !== 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const t = setTimeout(() => setDemo((d) => (d % 6) + 1), DWELL);
+    return () => clearTimeout(t);
+  }, [live, step, demo]);
+  const sceneStep = live && step === 0 ? demo : step;
   const refs = useRef<(HTMLElement | null)[]>([]);
 
   // the current step is the one crossing a band of the viewport (a lower band on phones, where the scene is pinned on top)
@@ -42,7 +54,7 @@ export default function Home() {
   return (
     <main>
       <section className="wrap hx-story">
-        <div className="hx-stage-col"><div className="hx-stage"><IsoScene step={step} /></div></div>
+        <div className="hx-stage-col"><div className="hx-stage"><IsoScene step={sceneStep} /></div></div>
         <div className="hx-steps">
           {STEPS.map((s, i) => (
             <article key={i} className="hx-step" data-i={i} data-active={step === i} ref={(el) => { refs.current[i] = el; }}>

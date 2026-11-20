@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { decisions, TYPE_LABEL } from "../../data";
 
-/* The 2D story figure for #/home-b, adapted from Stage.tsx (which #/home-v1 still uses).
+/* The 2D story figure for #/home-3, adapted from Stage.tsx (which #/home-1 still uses).
    Governance-led order, six states. Sizes are viewBox units. Every decision is one pill and one dot;
    a pose table places them per step and CSS transitions do the morphing. */
 

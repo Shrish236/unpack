@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Hand } from "lucide-react";
 
-/* Hero scene for #/home-b: "Monday to Monday".
+/* Hero scene for #/home-3: "Monday to Monday".
    Three teams make the same correction in one week; Unpack folds it into one policy; next Monday the agent
    follows it unprompted. A phase counter drives CSS transitions (8 phases x 1.75 s = a 14 s loop).
    Reduced motion: the last phase, held. */
