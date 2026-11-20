@@ -100,6 +100,11 @@ async def run_worker() -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    from ..pipeline.build import shutdown_pool
+    from .render import shutdown_browser
+
+    await shutdown_browser()
+    shutdown_pool()
 
 
 def main() -> None:

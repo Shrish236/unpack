@@ -366,6 +366,8 @@ class NodeDetailResponse(BaseModel):
     diff: list[DiffHunk] = Field(default_factory=list)
     callers: list[CallerCalleeRef] = Field(default_factory=list)
     callees: list[CallerCalleeRef] = Field(default_factory=list)
+    callers_total: int = 0
+    callees_total: int = 0
     unresolved_calls: list[dict[str, Any]] = Field(default_factory=list)
     file_imports: list[FileImportRef] = Field(default_factory=list)
     file_imported_by: list[str] = Field(default_factory=list)

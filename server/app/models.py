@@ -8,6 +8,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -52,7 +53,11 @@ class Push(Base):
     cli_version = Column(Text, nullable=True)
     received_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("repo_id", "head_sha", name="uq_push_repo_head_sha"),)
+    __table_args__ = (
+        UniqueConstraint("repo_id", "head_sha", name="uq_push_repo_head_sha"),
+        Index("ix_pushes_repo_received", "repo_id", "received_at"),  # push rate limit
+        Index("ix_pushes_repo_branch", "repo_id", "branch"),
+    )
 
 
 class Analysis(Base):
@@ -132,7 +137,10 @@ class TrackedBranch(Base):
     check_count = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
 
-    __table_args__ = (UniqueConstraint("repo_id", "branch", name="uq_tracked_branch"),)
+    __table_args__ = (
+        UniqueConstraint("repo_id", "branch", name="uq_tracked_branch"),
+        Index("ix_tracked_due", "status", "next_check_at"),  # reconciler scan
+    )
 
 
 class PullRequest(Base):
@@ -155,7 +163,10 @@ class PullRequest(Base):
     last_published_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_repo_pr_number"),)
+    __table_args__ = (
+        UniqueConstraint("repo_id", "number", name="uq_repo_pr_number"),
+        Index("ix_pr_tracked_branch", "tracked_branch_id"),
+    )
 
 
 class PRAnalysis(Base):
@@ -182,6 +193,8 @@ class Job(Base):
     last_error = Column(Text, nullable=True)
     dedupe_key = Column(Text, unique=True, nullable=True)  # cleared when the job finishes
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_jobs_claim", "status", "run_after"),)  # queue claim
 
 
 class Render(Base):
@@ -219,6 +232,15 @@ class LLMCall(Base):
     request_hash = Column(Text, nullable=True)
     response_text = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class OAuthState(Base):
+    """Login states issued by /auth/login. Each state is accepted once (design §11)."""
+
+    __tablename__ = "oauth_states"
+
+    nonce = Column(String(64), primary_key=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
 class WebhookDelivery(Base):

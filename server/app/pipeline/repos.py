@@ -6,6 +6,10 @@ import asyncio
 import os
 import pickle
 import stat
+import subprocess
+import threading
+import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -87,22 +91,69 @@ async def ensure_commit(path: Path, sha: str, token: str | None) -> None:
         raise CommitUnavailable(f"commit {sha} is not reachable from the repository")
 
 
-def graph_cache_path(repo_id: int, sha: str) -> Path:
-    return data_dir() / "graphs" / str(repo_id) / f"{sha}.pkl"
+GRAPH_CACHE_KEEP = 30  # pickles kept per repository, newest first
+_lru: "OrderedDict[tuple[int, str, str], Any]" = OrderedDict()
+_lru_lock = threading.Lock()
 
 
-def load_cached_graph(repo_id: int, sha: str) -> Any | None:
-    path = graph_cache_path(repo_id, sha)
+def graph_cache_path(repo_id: int, sha: str, kind: str = "head") -> Path:
+    suffix = "" if kind == "head" else f".{kind}"
+    return data_dir() / "graphs" / str(repo_id) / f"{sha}{suffix}.pkl"
+
+
+def _lru_get(key: tuple[int, str, str]) -> Any | None:
+    with _lru_lock:
+        if key in _lru:
+            _lru.move_to_end(key)
+            return _lru[key]
+    return None
+
+
+def _lru_put(key: tuple[int, str, str], graph: Any) -> None:
+    with _lru_lock:
+        _lru[key] = graph
+        _lru.move_to_end(key)
+        while len(_lru) > max(settings.GRAPH_LRU_SIZE, 1):
+            _lru.popitem(last=False)
+
+
+def load_cached_graph(repo_id: int, sha: str, kind: str = "head") -> Any | None:
+    key = (repo_id, sha, kind)
+    hit = _lru_get(key)
+    if hit is not None:
+        return hit
+    path = graph_cache_path(repo_id, sha, kind)
     if not path.exists():
         return None
     with path.open("rb") as fh:
-        return pickle.load(fh)  # written only by this server, from its own data directory
+        graph = pickle.load(fh)  # written only by this server, from its own data directory
+    _lru_put(key, graph)
+    return graph
 
 
-def save_cached_graph(repo_id: int, sha: str, graph: Any) -> None:
-    path = graph_cache_path(repo_id, sha)
+def save_cached_graph(repo_id: int, sha: str, graph: Any, kind: str = "head") -> None:
+    path = graph_cache_path(repo_id, sha, kind)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    # A unique temp name lets concurrent processes write the same graph without clobbering each other.
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
     with tmp.open("wb") as fh:
         pickle.dump(graph, fh, protocol=pickle.HIGHEST_PROTOCOL)
     tmp.replace(path)
+    _lru_put((repo_id, sha, kind), graph)
+    _prune_graph_cache(path.parent)
+
+
+def _prune_graph_cache(folder: Path) -> None:
+    files = sorted(folder.glob("*.pkl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in files[GRAPH_CACHE_KEEP:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def read_file_at(mirror: Path, sha: str, path: str) -> bytes:
+    """One blob from a commit, without listing the whole tree (the GitSource constructor does that)."""
+    proc = subprocess.run(["git", "-C", str(mirror), "cat-file", "-p", f"{sha}:{path}"],
+                          capture_output=True, check=True)
+    return proc.stdout

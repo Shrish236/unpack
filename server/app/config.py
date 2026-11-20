@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     PUSHES_PER_MINUTE_PER_REPO: int = 60
     ACCESS_CACHE_SECONDS: int = 600
     JOB_STUCK_SECONDS: int = 600
+    # Analyses run in this many worker processes (graph building is CPU-bound Python). 0 = in-process threads.
+    ANALYSIS_PROCESSES: int = 0
+    # Graphs kept loaded in memory per process for the read endpoints.
+    GRAPH_LRU_SIZE: int = 1
+    # Concurrent branch checks in the reconciler.
+    RECONCILE_CONCURRENCY: int = 8
 
     def required_problems(self) -> list[str]:
         """Return a human-readable line for each missing or weak required setting."""

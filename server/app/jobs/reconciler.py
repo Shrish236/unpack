@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -64,16 +65,21 @@ async def reconcile_once() -> int:
             RETURNING id
             """
         ))).scalars().all()
-    for tid in ids:
-        try:
-            await check_branch(int(tid))
-        except Exception as exc:  # one bad branch must not stop the others
-            log.warning("branch %s check failed: %s", tid, type(exc).__name__)
-            async with session_scope() as session:
-                row = await session.get(TrackedBranch, tid)
-                if row is not None:
-                    row.last_error = f"{type(exc).__name__}: {str(exc)[:400]}"
-                    row.next_check_at = _now() + timedelta(seconds=120)
+    gate = asyncio.Semaphore(max(settings.RECONCILE_CONCURRENCY, 1))
+
+    async def check_one(tid: int) -> None:
+        async with gate:
+            try:
+                await check_branch(int(tid))
+            except Exception as exc:  # one bad branch must not stop the others
+                log.warning("branch %s check failed: %s", tid, type(exc).__name__)
+                async with session_scope() as session:
+                    row = await session.get(TrackedBranch, tid)
+                    if row is not None:
+                        row.last_error = f"{type(exc).__name__}: {str(exc)[:400]}"
+                        row.next_check_at = _now() + timedelta(seconds=120)
+
+    await asyncio.gather(*(check_one(tid) for tid in ids))
     return len(ids)
 
 
@@ -98,7 +104,7 @@ def choose_target(
     if status == "ahead":  # our push is not on GitHub yet
         if latest_age_seconds < PUBLISH_WAIT_SECONDS:
             return "wait"
-        return None
+        return "ancestor"  # design §3.3: fall back to the newest analysis that is an ancestor of the PR head
     if status == "behind":  # commits were pushed without the hook
         n = compare_result.behind_by
         noun = "commit" if n == 1 else "commits"
@@ -191,6 +197,8 @@ async def check_branch(tracked_id: int) -> None:
             latest_age_seconds=age,
             latest_short=snapshot["latest_short"],
         )
+        if target == "ancestor":
+            target = await _ancestor_target(svc, token, owner, name, pr_head, snapshot, done_by_head)
         scheduled_targets.append(target)
         if isinstance(target, Target):
             await _enqueue_publish(pr_id, target)
@@ -202,6 +210,25 @@ async def check_branch(tracked_id: int) -> None:
         row.last_error = None
         wait = any(t == "wait" for t in scheduled_targets)
         row.next_check_at = _now() + timedelta(seconds=15 if wait else LINKED_CHECK_SECONDS)
+        # Design §4: needs_publish stays true until every open PR shows the latest analysis.
+        open_prs = (await session.execute(select(PullRequest).where(
+            PullRequest.tracked_branch_id == tracked_id, PullRequest.state == "open"))).scalars().all()
+        row.needs_publish = any(pr.last_published_analysis_id != snapshot["latest_id"] for pr in open_prs)
+
+
+async def _ancestor_target(svc: Any, token: str, owner: str, name: str, pr_head: str,
+                           snapshot: dict[str, Any], done_by_head: dict[str, int]) -> Target | None:
+    """Newest done analysis whose head is an ancestor of the PR head (design §3.3, after 10 minutes)."""
+    candidates = sorted(((head, aid) for head, aid in done_by_head.items()
+                         if head != snapshot["latest_head"]), key=lambda item: -item[1])
+    for head, aid in candidates:
+        result = await gh_prs.compare(svc, token, owner, name, head, pr_head)
+        if result.status == "ahead":  # the PR head contains this analysis's head
+            return Target(aid, "analysis", {
+                "kind": "partial_coverage",
+                "message": f"Covers up to {head[:7]}; the newest push is not on GitHub yet.",
+            })
+    return None
 
 
 @dataclass

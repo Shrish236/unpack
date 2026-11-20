@@ -213,3 +213,55 @@ Built to the server design (latest), with the Gemini and reasoning code left out
 2. `cd server && alembic -c alembic.ini upgrade head`
 3. `uvicorn server.app.main:app --port 8000` and `python -m server.app.jobs.worker`.
 4. `pytest tests/` (needs a Postgres at `DATABASE_URL`, or the default test database).
+
+
+## 7. Audit against the design (after merge)
+
+Every endpoint in design §5 is served. The routes are listed in the OpenAPI schema (`/openapi.json`).
+
+| Design section | Endpoints | State |
+|---|---|---|
+| §5.1 | `POST /v1/ingest` | Implemented: gzip limits, validation, repo match, dedupe, rate limit, tracking |
+| §5.2 | `GET /v1/pushes/{id}` | Implemented |
+| §5.3 | `POST /github/webhook`, `GET /github/setup` | Implemented: HMAC, delivery dedupe, installation events, setup page |
+| §5.4 | `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, `GET /api/me` | Implemented. Login states are now single use (`oauth_states` table) |
+| §5.5 | `GET /a/{id}`, analysis, turns, node detail, PR commit picker, map, node edges | Implemented. Node detail now returns `callers_total`, `callees_total` and `unresolved_calls` |
+| §5.6 | `GET /img/{file}.png`, `GET /render/{id}` | Implemented. The render route refuses non-internal clients |
+| §5.7 | `/healthz`, `/readyz`, all `/admin/*` | Implemented. `/readyz` has no Neo4j check (see differences) |
+
+**Differences from the design, and why:**
+
+- **Neo4j is not used.** The graph lives in-process and is cached per commit as a pickle (`DATA_DIR/graphs`). Map and node reads use the same cache. Neo4j was removed from compose.
+- **Graph building is incremental.** A head graph is `update_graph` on top of a cached base graph (one per base commit). The design builds whole graphs per push. The result is checked equal to a full rebuild in the tests.
+- **Change detection is server-side.** The library's `detect_changes` needs the head commit in git, which GitHub may not have yet. Renames therefore show as one deleted and one added function.
+- **`Idempotency-Key` is not read.** Dedupe is by `(repo, head_sha)`, which is the design's default.
+- **Node `tests.paths` has one path.** The library returns the shortest path only.
+- **PR list requests send no ETag.** Each reconcile tick asks GitHub afresh.
+- **Content-Security-Policy adds `style-src 'self' 'unsafe-inline'` and `worker-src blob:`.** React Flow sets inline styles, and ELK may use a blob worker (see the UI findings).
+- **Folder rows carry line totals** (design §5.5 example), computed from the files beneath them.
+
+**Fixed in this pass** (found by the audit):
+- `needs_publish` was never cleared. It now clears when every open PR shows the latest analysis, and the publish step recalculates it.
+- A PR behind an older analysis, after 10 minutes, now gets the newest ancestor analysis (design §3.3). Before, nothing was published.
+- The map and node endpoints answered with a server error for a commit the server cannot reach. They now return 404 `not_found`.
+- Graph output depended on set iteration order, so a worker process could order the same edges differently. Iteration is now sorted.
+- Comment images: the link now matches the route (`/img/<name>.png`).
+
+**Performance** (SQLAlchemy, 258 files, about 11,700 functions, one changed function; `ANALYSIS_PROCESSES` controls parallelism):
+
+| Case | Time | What runs |
+|---|---|---|
+| Old pipeline (full base + full head) | 20.1 s | full base build, full head build |
+| Cold base, incremental head | 14.3 s | full base build (cached), incremental head |
+| Warm base, incremental head | 8.1 s | base loaded from cache (1.7 s), incremental head (about 3 to 4.5 s) |
+
+The incremental head alone takes 2.5 to 4.5 s against 8.7 s for a full build. The head-timing spread is machine noise.
+
+**Throughput:** four warm analyses take 32.8 s run one after another. With `ANALYSIS_PROCESSES=2` they take 14.3 s, about 2.3 times the throughput. The compose worker is set to 2.
+
+**Tests:** 131 passed, 4 skipped, run with `pytest tests/ -n auto` (about 26 s; serially about 45 s). Each xdist worker has its own database. The four skips need a launchable Chromium on this machine.
+
+**Still not verified:**
+- The Docker build. The image builds through pip. The Playwright step needs the network path that is the sandbox's, not the repo's. The web stage runs `npm ci`, which needs a lockfile that `web/` does not have, and falls back to `npm install`. Lock it on the UI side.
+- A real GitHub App, OAuth app and webhook delivery. All GitHub calls are mocked.
+- The CLI hook against a real push.

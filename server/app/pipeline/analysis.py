@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from unpack_graph.graph import build_graph
-from unpack_graph.source import GitSource
 
-from ..config import settings
 from ..llm.placeholder import generate_reasons
-from .changes import compute_changes
-from .graph_view import GraphBuild, InvalidGraphView, build_graph_view, validate_graph_view
-from .payload import PayloadSource, build_overlay, changed_python_files, needs_head_fetch, parse_diff_hunks
-from .repos import CommitUnavailable, ensure_commit, ensure_mirror, save_cached_graph
+from .build import BuildFailed, run_analysis
+from .graph_view import GraphBuild
+from .payload import build_overlay, changed_python_files, needs_head_fetch
+from .repos import CommitUnavailable, ensure_commit, ensure_mirror
 
 
 class AnalysisFailed(Exception):
@@ -66,26 +62,6 @@ def _banner(payload: dict[str, Any], changed_count: int) -> dict[str, str] | Non
     return {"kind": "reasons_unavailable", "message": "Reasons are not generated in this build yet."}
 
 
-def _blocking_analysis(
-    head_source: Any,
-    base_source: GitSource,
-    diff_text: str,
-    repo_id: int,
-    head_sha: str,
-) -> tuple[GraphBuild, Any]:
-    base_graph = build_graph(base_source, reach=False)
-    head_graph = build_graph(head_source, reach=True)
-    changes = compute_changes(base_graph, head_graph)
-    hunks = parse_diff_hunks(diff_text)
-    build = build_graph_view(changes, base_graph, head_graph, hunks)
-    try:
-        validate_graph_view(build, settings.MAX_GRAPH_NODES, settings.MAX_GRAPH_EDGES)
-    except InvalidGraphView as exc:
-        raise AnalysisFailed("invalid_graph_view", str(exc)) from exc
-    save_cached_graph(repo_id, head_sha, head_graph)
-    return build, head_graph
-
-
 async def analyze_push(
     *,
     repo_id: int,
@@ -108,8 +84,9 @@ async def analyze_push(
     except CommitUnavailable as exc:
         raise AnalysisFailed("graph_unavailable", f"base commit unavailable: {exc}") from exc
 
-    base_source = GitSource(mirror, base_sha)
-    if needs_head_fetch(changed_files):
+    overlay, removed = build_overlay(changed_files)
+    full_head = needs_head_fetch(changed_files)
+    if full_head:
         try:
             await ensure_commit(mirror, head_sha, token)
         except CommitUnavailable as exc:
@@ -117,15 +94,15 @@ async def analyze_push(
                 "graph_unavailable",
                 "a changed file was too large to send and the head commit is not on GitHub yet",
             ) from exc
-        head_source: Any = GitSource(mirror, head_sha)
-    else:
-        overlay, removed = build_overlay(changed_files)
-        head_source = PayloadSource(base_source, overlay, removed)
 
     try:
-        build, head_graph = await asyncio.to_thread(
-            _blocking_analysis, head_source, base_source, payload.get("diff", ""), repo_id, head_sha,
+        build, _timings = await run_analysis(
+            repo_id=repo_id, mirror=str(mirror), base_sha=base_sha, head_sha=head_sha,
+            overlay=overlay, removed=sorted(removed), diff_text=payload.get("diff", ""),
+            full_head=full_head,
         )
+    except BuildFailed as exc:
+        raise AnalysisFailed(exc.code, exc.message) from exc
     except AnalysisFailed:
         raise
     except Exception as exc:
