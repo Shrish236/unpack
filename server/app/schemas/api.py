@@ -228,10 +228,15 @@ class EvidenceQuote(BaseModel):
     quote: str
 
 
+class HistoryStep(BaseModel):
+    turn: str
+    text: str
+
+
 class FunctionReason(BaseModel):
     reason: str
     driver: Literal["user_asked", "agent_decided", "not_stated"]
-    history: str | None = None
+    history: list[HistoryStep] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"] = "high"
     source: str = "session"
     evidence: list[EvidenceQuote] = Field(default_factory=list)

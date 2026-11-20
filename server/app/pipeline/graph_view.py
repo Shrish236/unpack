@@ -152,6 +152,7 @@ def build_graph_view(
     base: Any,
     head: Any,
     diff_hunks: dict[str, list[Hunk]],
+    sources: dict[str, str] | None = None,
 ) -> GraphBuild:
     max_nodes = settings.MAX_GRAPH_NODES
     max_edges = settings.MAX_GRAPH_EDGES
@@ -204,8 +205,9 @@ def build_graph_view(
         }
 
     # 1. Changed and ghost nodes are always included.
+    source_map = sources or {}
     for c in changes:
-        change = {"kind": _change_kind(c), "source": "outside_session"}
+        change = {"kind": _change_kind(c), "source": source_map.get(c.id, "outside_session")}
         if c.kind == "deleted":
             func = base.funcs.get(c.id)
             if func is None:
@@ -386,12 +388,19 @@ def build_graph_view(
                    for n in sorted(not_reached_nodes, key=lambda n: (n["path"], n["start_line"]))]
 
     by_change: dict[str, int] = {"added": 0, "functional": 0, "signature": 0, "text_only": 0, "deleted": 0}
+    by_source: dict[str, int] = {
+        "session": 0,
+        "session_then_formatted": 0,
+        "session_partial": 0,
+        "outside_session": 0,
+    }
     for c in changes:
         by_change[_change_kind(c)] += 1
+        src = source_map.get(c.id, "outside_session")
+        by_source[src] = by_source.get(src, 0) + 1
     stats = {
         "functions_changed": len(changes),
-        "by_source": {"session": 0, "session_then_formatted": 0, "session_partial": 0,
-                      "outside_session": len(changes)},
+        "by_source": by_source,
         "by_change": by_change,
         "not_reached_by_tests": len(not_reached),
     }
