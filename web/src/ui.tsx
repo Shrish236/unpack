@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ApiError } from "./api";
 import { TYPE_LABEL, type DType } from "./data";
 
 // Shared primitives so every product page uses identical markup and type sizes.
@@ -53,4 +54,19 @@ export function Seg<T extends string>({ value, options, onChange }: { value: T; 
       ))}
     </div>
   );
+}
+
+// Loading and error states for a dashboard page. Children render only with data.
+export function DataGate<T>({ q, children }: { q: { data: T | undefined; error: Error | null; isError: boolean }; children: (data: T) => ReactNode }) {
+  if (q.data !== undefined) return <>{children(q.data)}</>;
+  if (q.isError && q.error) {
+    const login = q.error instanceof ApiError && q.error.kind === "login";
+    return (
+      <Panel title={login ? "Log in to see this page" : "This page could not load"} sub={q.error.message}
+        aside={login ? <a className="btn primary" href="/auth/login">Log in with GitHub</a> : undefined}>
+        {null}
+      </Panel>
+    );
+  }
+  return <Panel><p className="panel-sub">Loading…</p></Panel>;
 }
