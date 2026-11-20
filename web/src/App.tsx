@@ -40,6 +40,9 @@ function useRoute(): string {
     if (hash) return hash;
     const p = location.pathname.replace(/\/+$/, "");
     if (/^\/home-\d+$/.test(p)) return p;
+    // /a/{public_id} is the link in PR comments and CLI output: it opens that analysis's PR page.
+    const analysis = /^\/a\/([^/]+)$/.exec(p);
+    if (analysis) return `/pr/${analysis[1]}`;
     return "/";
   };
   const [route, setRoute] = useState(read);
