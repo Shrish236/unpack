@@ -32,6 +32,9 @@ COPY unpack_graph/ ./unpack_graph/
 COPY cli/ ./cli/
 COPY schemas/ ./schemas/
 
+# /data can hold git mirrors copied in by another user; git refuses those ("dubious ownership").
+RUN git config --system --add safe.directory '*'
+
 # Install python dependencies
 RUN pip install --no-cache-dir -e .
 
