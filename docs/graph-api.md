@@ -10,7 +10,7 @@ Examples use output from a real run on `pallets/flask` (1,462 functions). Long l
 |---|---|---|
 | `unpack-graph query` (CLI) | one question about a repository, answered as JSON | one cold build per call, then microseconds |
 | Python: `GraphIndex` | many questions in one process | build once, then microseconds per query |
-| `unpack-graph build --neo4j` and Cypher | serving many users, or questions across changes | indexed lookups in the database (not measured here, see section 8) |
+| `unpack-graph build --neo4j` and Cypher | serving many users, or questions across changes | indexed lookups in the database, about 1 to 2 ms per query on localhost (section 8) |
 | `unpack-graph region`, `changed`, `eval`, `coverage-check` | change review, measurement | one build per call |
 
 ## 2. What the graph holds
@@ -367,7 +367,7 @@ Indexes (created by `ensure_schema`, in `neo4j_io.SCHEMA_STMTS`):
 
 ### 7.1 Cypher examples
 
-These are not yet run against a live server (see section 8). Each parameter is written `$name`.
+These were run against a local Neo4j 5 server: each returns the same answer as the in-memory index (section 8). Each parameter is written `$name`.
 
 ```cypher
 // one function by id
@@ -431,11 +431,24 @@ The first query pays the cold build, which is the expensive part:
 
 So from a cold start, the CLI answers in well under a second, not in milliseconds. Milliseconds from a cold start needs a process that stays up with the index loaded (one build, then every query is microseconds), or the Neo4j path with its indexes.
 
-### 8.3 Neo4j timing: not measured yet
+### 8.3 Neo4j timing
 
-The Neo4j indexes in section 7 were added to the loader, but this session could not start a Neo4j server to test them, so their effect and the cypher queries in section 7.1 are unverified. The loader's earlier measurements, from an earlier run on httpx, were a load of about 8 s (of which about 6 s wrote 107,691 `REACHES` relationships) and region queries of 40 to 70 ms. Those numbers predate the indexes and must be re-measured.
+Measured against a local Neo4j 5 Community server (installed from the official tarball, not Docker) on this container, with the flask graph loaded (1,462 functions):
 
-To measure: start Neo4j (`docker compose up -d neo4j`), run `pytest tests/test_neo4j.py` (the three tests skip without a server), then `unpack-graph build <repo> --neo4j` and time the cypher queries in section 7.1 with `PROFILE`.
+| Query (section 7.1) | Median | p99 | Result matches the in-memory index |
+|---|---|---|---|
+| one function by id | 1.2 ms | 1.7 ms | yes |
+| production callers | 1.3 ms | 3.1 ms | yes (3 callers) |
+| tests reaching a function (391 rows) | 10.0 ms | 16.6 ms | yes |
+| untested functions under a prefix | 2.1 ms | 3.0 ms | yes (14 functions) |
+| overrides | 1.0 ms | 1.6 ms | yes |
+| subclasses | 1.2 ms | 2.0 ms | yes (2 subclasses) |
+| transitive callers, depth 3 | 1.8 ms | 3.5 ms | not compared (no in-memory equivalent) |
+
+Those times include the Bolt driver's round trip on localhost. Loading flask took about 9 s, mostly writing the `REACHES` relationships.
+
+Reproduce: start Neo4j 5 yourself (the repository's `docker-compose.yml` does not provide it), then run `pytest tests/test_neo4j.py` (three tests), and `unpack-graph build <repo> --neo4j` to load a repository.
+
 
 ## 9. Limits of what is stored
 

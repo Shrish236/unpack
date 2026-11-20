@@ -82,7 +82,7 @@ class AnalysisRef(BaseModel):
 
 class TrackingStatus(BaseModel):
     branch: str
-    status: Literal["waiting_for_pr", "linked", "closed_recently", "abandoned"]
+    status: Literal["waiting_for_pr", "linked", "closed_recently", "abandoned", "untracked"]
 
 
 class IngestResponse(BaseModel):
@@ -228,10 +228,15 @@ class EvidenceQuote(BaseModel):
     quote: str
 
 
+class HistoryStep(BaseModel):
+    turn: str
+    text: str
+
+
 class FunctionReason(BaseModel):
     reason: str
     driver: Literal["user_asked", "agent_decided", "not_stated"]
-    history: str | None = None
+    history: list[HistoryStep] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"] = "high"
     source: str = "session"
     evidence: list[EvidenceQuote] = Field(default_factory=list)
@@ -366,6 +371,8 @@ class NodeDetailResponse(BaseModel):
     diff: list[DiffHunk] = Field(default_factory=list)
     callers: list[CallerCalleeRef] = Field(default_factory=list)
     callees: list[CallerCalleeRef] = Field(default_factory=list)
+    callers_total: int = 0
+    callees_total: int = 0
     unresolved_calls: list[dict[str, Any]] = Field(default_factory=list)
     file_imports: list[FileImportRef] = Field(default_factory=list)
     file_imported_by: list[str] = Field(default_factory=list)

@@ -259,7 +259,7 @@ The output is validated against `schemas/graphview.schema.json`. `meta.module_ch
 
 ### 10.1 Schema
 
-`Module`, `Class` and `Function` nodes (with `:Test` on test functions and `:Ghost` on deleted functions). Relationships: `CONTAINS`, `HAS_METHOD`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `CALLS` (with the same properties as the in-memory edge) and `REACHES` (with depth, path and whether it is uncertain). Fifteen indexes are created by `ensure_schema`: `id`, `path`, `name` and `qualname` on each node label, the composite `Function(path, name)`, `Function(test_label)` for untested-function queries, `CALLS(tier)` and `REACHES(depth)` on relationships. The full list, and the queries they serve, are in `graph-api.md` section 7. All writes are `UNWIND` batches of 500. The new indexes have not yet been run against a live server (see section 13).
+`Module`, `Class` and `Function` nodes (with `:Test` on test functions and `:Ghost` on deleted functions). Relationships: `CONTAINS`, `HAS_METHOD`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `CALLS` (with the same properties as the in-memory edge) and `REACHES` (with depth, path and whether it is uncertain). Fifteen indexes are created by `ensure_schema`: `id`, `path`, `name` and `qualname` on each node label, the composite `Function(path, name)`, `Function(test_label)` for untested-function queries, `CALLS(tier)` and `REACHES(depth)` on relationships. The full list, and the queries they serve, are in `graph-api.md` section 7. All writes are `UNWIND` batches of 500. The indexes were verified online on a live Neo4j 5 server (see section 13).
 
 ### 10.2 Region query
 
@@ -295,7 +295,7 @@ unpack-graph query    <repo> <op> [target] [--rev REV] [--limit N] [--include-un
                                                                 # ops: find node callers callees tests overrides class unresolved untested
 ```
 
-Neo4j connection: `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The repository's `docker-compose.yml` provides the service.
+Neo4j connection (only for `--neo4j` and the Neo4j tests): `UNPACK_NEO4J_URI` (default `bolt://localhost:7687`), `UNPACK_NEO4J_USER` (default `neo4j`), `UNPACK_NEO4J_PASSWORD`. The Neo4j service is **not** in the repository's `docker-compose.yml` any more; the server does not use Neo4j either (see [section 18](#18-use-in-the-server-and-status)). Run a Neo4j 5 instance yourself to use these options. Without one, the Neo4j tests are skipped.
 
 Library use:
 
@@ -314,7 +314,7 @@ view = build_region(cs)                              # the GraphView dict
 
 | Property | How it is checked | Result |
 |---|---|---|
-| Pass 1 finds every definition | `ast.walk` over every file, comparing `(start, end, name)` | httpx 0.28.1: 1,241 of 1,241. flask: 1,622 of 1,622. requests: 807 of 807 |
+| Pass 1 finds every definition | `ast.walk` over every file, comparing `(start, end, name)`. Counts are functions plus classes (httpx: 1,134 functions and 107 classes) | httpx 0.28.1: 1,241 of 1,241. flask: 1,622 of 1,622. requests: 807 of 807 |
 | Call resolution is sound | 60 hand-labelled call sites from httpx, and an independent audit of 30 more | 27 of 28 correct on the labelled set before tuning, 28 of 28 after; 30 of 30 on the audit |
 | No false `none` | a coverage.py run of httpx's own test suite (`coverage-check`) | 0 false `none` over 436 functions |
 | No false `none` on subsets | 8 subsets of httpx's tests, each run under coverage, compared with labels built from that subset | 1 false `none` in 875 labels; the cause is a format-string attribute read, which static analysis cannot see |
@@ -331,7 +331,7 @@ The unit tests (`pytest`) cover every corner in the fixtures under `tests/fixtur
 
 Query speed, measured on this container with the in-memory index (`graph-api.md` section 8): a query over a loaded index takes 1 to 2 microseconds at the median and at most 0.14 ms at p99 on the six repositories. The cold build is the cost: 0.5 s to 2.6 s per repository, and the index build adds 4 to 82 ms. A pickled snapshot does not help: it reloads in 0.18 to 0.45 s. From a cold start the CLI answers in under a second, not in milliseconds.
 
-Neo4j timing is not re-measured yet. An earlier run on httpx gave a load of about 8 s (about 6 s writing the 107,691 `REACHES` relationships) and region queries of 40 to 70 ms; those predate the indexes. Re-measuring needs a running server (`docker compose up -d neo4j`). This session could not start one, so the new Neo4j indexes and the cypher in `graph-api.md` section 7.1 are unverified.
+Neo4j was run against a local Neo4j 5 Community server on this container. All three Neo4j tests pass, all fifteen schema indexes are online, and seven example queries from `graph-api.md` return the same answers as the in-memory index on flask. Typical Cypher latency over the Bolt driver on localhost is 1 to 2 ms, and the 391-row `REACHES` query for one function takes about 10 ms. Load time for flask is about 9 s, dominated by writing the `REACHES` relationships. The earlier httpx figures (about 8 s load, 40 to 70 ms region queries) came from a run before the indexes existed and are not current.
 
 ## 14. Limits
 
@@ -390,10 +390,60 @@ Results so far: httpx (all checks above), flask, requests, click and attrs (pass
 | Delta update by diffing keyed rows | Exact, and independent of the change that caused it |
 | Jedi not kept | It resolved none of the sites the resolver left open |
 | `none` is the only red flag; `reached` is never presented as executed | Static reachability over-approximates by about a third |
+| Region output follows the existing schema | The schema is the repository's contract; the internal roles are kept as `relation` |
 | Indexes are built once per graph; each query reads dictionaries | Measured: 1 to 2 microseconds per query on the six repositories. The build dominates a cold start, so indexing the graph is the cheapest way to make queries fast |
 | No pickled snapshot for cold starts | Reloading a pickled graph took 0.18 to 0.45 s, and rebuilding the index added 0.15 to 0.4 s. Not milliseconds, so not used |
 | Every query returns one JSON document | One output format, scriptable, with no per-command text formatting to maintain |
-| Region output follows the existing schema | The schema is the repository's contract; the internal roles are kept as `relation` |
 | Module names follow the directory chain (PEP 420) | `src/flask/sansio/app.py` was named `app` with no `__init__.py` in `sansio/`. Fixing it cut flask's false `none` count from 130 to 23 |
 | Implicit invocations are `reached_uncertain` by default; `--strict-none` restores `none` | Dunders, closures and methods of externally based classes are run by machinery the graph cannot see. Under the default, flask's false `none` count fell from 23 to 8 and click's true `none` count from 23 to 13: the policy trades some untested-function reports for fewer false alarms. It is a flag so the choice stays with the user |
 | Name-dependent sites are re-resolved whatever their status | An `external` call (no repository method of that name) resolves once such a method is added. Re-resolving only `ambiguous`, `unresolved` and unique-name sites gave an incremental result that differed from a full rebuild on a real commit |
+
+## 17. Build history
+
+Chronological, with what went wrong and what it taught. Most major design elements exist because a measurement exposed a gap.
+
+1. **Environment.** httpx was pinned to 0.28.1 (the latest release; 1.0.0.beta0 is a 2021 pre-release tag). Counts matched the task statement.
+2. **First extractor.** The tree-sitter walk was compared with `ast` immediately: a 100% match on httpx from the first run. This confirmed that a recursive walk is needed, not a walk over `root.children`. Early discovery: getter and setter IDs collided, which led to the `#setter` suffix.
+3. **First resolver and first reachability numbers.** A full build took about 0.5 s, but **102 functions were labelled `none`** (79 of them in `httpx/`). Reading that list became the main development loop: each group of false `none`s pointed to a missing language feature.
+4. **Property accesses are not calls.** `URL.host` looked untested although every test read it. Added attribute-access records and property edges (getter versus setter, and the intermediate chain steps).
+5. **Implicit protocols.** Dunder methods (`__iter__`, `__eq__`, `__getitem__`, `__repr__` and others) were the next largest group. Added operator, iteration, truthiness, subscript, f-string and builtin-protocol sites, with their edges.
+6. **Import subtleties.** `httpx.main` was shadowed by its `except ImportError` fallback definition, so the guarded import now wins. `from . import sub` inside `__init__.py` resolved to itself and looped until the hop limit, so the submodule now wins. Star imports and `__all__` were essential: `httpx/__init__.py` is almost entirely `from ._x import *`.
+7. **Decorator ownership and callbacks.** For `@click.option(callback=validate_json)`, decorator expressions now belong to the decorated function, and function names passed as arguments become `ref` edges.
+8. **Reachability depth.** Depth 8 (the first brief) gave false `none`s; depth 12 was measured against real coverage.
+9. **Dispatch through `getattr`.** Running httpx's own tests under coverage found 51 false `none`s in a visitor that dispatches with `getattr`. String-keyed dispatch is now resolved (section 7.6).
+10. **Argument gating.** A new option threaded through `send(..., source=None)` made the helper look reached by every test. Gating by guarded parameters fixed the planted scenario without weakening the none check.
+11. **Incremental and Neo4j delta.** Both were checked against full rebuilds on real commits before being kept.
+
+## 18. Use in the server, and status
+
+The server (`server/`) uses this library in two places:
+
+- **Analysis.** `server/app/pipeline/analysis.py` and `jobs/handlers.py` call `build_graph(GitSource(...))` on the head commit. `server/app/pipeline/graph_view.py` turns that graph into the API payload: changed functions, neighbours, test paths, reachability labels, impact (upstream callers to depth 3), reading order and collapsed groups.
+- **Change classification.** `server/app/pipeline/changes.py` reuses `unpack_graph.diff._flags`, the library's classification rule, so the server and the library agree on what counts as `text_only`, `signature` or `functional`. The server does its own change detection, because the library's `detect_changes` needs the head commit in git, and at push time the head is not on GitHub yet.
+- **Caching.** The built graph is pickled per commit under `DATA_DIR/graphs/<repo_id>/<sha>.pkl`, and reused by the map and node endpoints. The server does not use Neo4j.
+
+The server uses this library's `build_graph` and `GitSource`, not `region.build_region`. The GraphView output (`schemas/graphview.schema.json`) is used by the CLI (`unpack-graph region`) and by the tests.
+
+**Status on `main` (7ad132c):**
+
+- `pytest tests/` on this repository, with a local Postgres for the server tests: 105 passed, 3 skipped. The skipped tests are the Neo4j tests, which need a running Neo4j instance.
+- The library's test files: `test_extraction.py`, `test_resolution.py`, `test_reachability.py`, `test_diff.py`, `test_incremental.py`, `test_dynamic_dispatch.py`, `test_neo4j.py`, `test_evaluate.py`, plus fixtures under `tests/fixtures/`.
+- Source sizes on main: `extract.py` 1,184 lines, `resolve.py` 1,313, `neo4j_io.py` 535, `reach.py` 245, `diff.py` 265, `incremental.py` 164, `graph.py` 211, `region.py` 217.
+
+## 19. Glossary
+
+| Term | Meaning |
+|---|---|
+| Node | A file, class, function, method or test. The ID is its path and qualified name |
+| Edge | A relationship: `CALLS`, `INHERITS`, `OVERRIDES`, `IMPORTS`, `HAS_METHOD`, `REACHES` |
+| Tier | How an edge was found: `EXTRACTED`, `INFERRED`, `AMBIGUOUS` (section 7.4) |
+| `via` | The reason for an edge (type, dispatch, unique_name, ref, …) |
+| Unresolved call | A call the resolver could not place. Kept on the function with its raw text and reason |
+| Reachability label | `direct`, `reached`, `reached_uncertain`, `none`, or `test` (section 8.2) |
+| False `none` | A function labelled `none` that a test actually runs. The only failure the design must avoid |
+| Ghost | A function deleted in the diff, kept with its former callers |
+| Region | The changed functions plus their neighbours, tests and ghosts, as a GraphView |
+| GraphView | The JSON output of a region, validated against `schemas/graphview.schema.json` |
+| Logic hash | A hash of the body's tokens without comments, docstrings or whitespace. Decides `functional` |
+| Body hash | A hash of the exact body bytes |
+| Signature hash | A hash of the name, decorators, parameters and return annotation |

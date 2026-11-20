@@ -90,7 +90,7 @@ def _make_handler(state: MockIngestState) -> type[BaseHTTPRequestHandler]:
             self._send_json(404, {"error": {"code": "not_found", "message": "Not found"}})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/ingest":
+            if self.path != "/v1/ingest":
                 self._send_json(404, {"error": {"code": "not_found", "message": "Not found"}})
                 return
 
@@ -182,7 +182,7 @@ def run_mock_server(
 ) -> None:
     """Run the local mock /ingest server until interrupted."""
     server, state = create_mock_server(host=host, port=port, out_dir=out_dir, quiet=False)
-    print(f"Unpack mock server listening on {state.base_url}/ingest", flush=True)
+    print(f"Unpack mock server listening on {state.base_url}/v1/ingest", flush=True)
     if out_dir is not None:
         print(f"Saving received payloads to {out_dir.resolve()}", flush=True)
     try:

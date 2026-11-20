@@ -19,7 +19,7 @@ contract:
 	python contract/export_schemas.py
 
 test:
-	pytest tests/ -v
+	pytest tests/ -n auto
 
 lint:
 	ruff check .
