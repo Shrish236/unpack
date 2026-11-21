@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "unpack-probe": { "type": "stdio", "command": "python3", "args": [".claude/mcp/probe_server.py"] }
+  }
+}

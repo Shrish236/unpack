@@ -1,0 +1,13 @@
+{
+  "enableAllProjectMcpServers": true,
+  "env": { "UNPACK_PROBE_ENV": "PROBE-SETTINGS-ENV" },
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }],
+    "PreToolUse":       [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }],
+    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }],
+    "SubagentStop":     [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe_hook.py\"" }] }]
+  }
+}
