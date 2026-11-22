@@ -236,7 +236,7 @@ async def sweep_branch(session: Any, svc: Any, token: str, repo: Repo, tb: Track
         )
         if target == "wait":
             waiting = True
-        elif isinstance(target, Target):
+        elif isinstance(target, Target) and not _already_published(pr, target):
             await _enqueue_publish(session, pr.id, target)
     tb.status = "linked"
     open_linked = (await session.execute(select(PullRequest).where(
@@ -275,6 +275,13 @@ async def _ancestor(svc: Any, token: str, repo: Repo, pr_head: str, latest_head:
         if result.status == "ahead":
             return [aid, head]
     return None
+
+
+def _already_published(pr: PullRequest, target: Target) -> bool:
+    """The PR already shows this analysis. Publishing again would only rewrite the same comment, and
+    that edit changes the PR list, which starts the next sweep: a loop over every open PR."""
+    return (target.mode == "analysis" and target.banner_override is None
+            and pr.comment_id is not None and pr.last_published_analysis_id == target.analysis_id)
 
 
 async def _enqueue_publish(session: Any, pr_id: int, target: Target) -> None:

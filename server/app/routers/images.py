@@ -55,8 +55,11 @@ async def render_page(public_id: str, request: Request, render_token: str | None
     return FileResponse(index, media_type="text/html")
 
 
+@router.get("/")
+@router.get("/home-{variant:int}")
 @router.get("/a/{public_id}")
-async def app_page(public_id: str) -> Response:
+async def app_page(public_id: str | None = None, variant: int | None = None) -> Response:
+    """The single-page app: the home and dashboards (hash routes under /), home variants, and analysis pages."""
     index = web_index()
     if index is None:
         return JSONResponse({"error": {"code": "unavailable", "message": "web UI is not built"}}, status_code=503)

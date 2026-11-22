@@ -19,6 +19,5 @@ images:
 substitutions:
   _REGION: asia-south1
   _TAG: manual
-options:
-  machineType: E2_HIGHCPU_8
-timeout: 1800s
+# Default build machine: new projects are not allowed larger machine types (quota) until support raises it.
+timeout: 2400s

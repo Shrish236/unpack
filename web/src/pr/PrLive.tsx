@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Bot, ExternalLink } from "lucide-react";
 import { ApiError, fetchAnalysis, fetchTurns, type AnalysisResponse, type Driver, type GNode, type Reason, type Turn } from "../api";
-import { Kpi, PageHead, Panel } from "../ui";
+import { Kpi, loginHref, PageHead, Panel } from "../ui";
 import PrMode from "./PrMode";
 import DiffFiles from "./DiffFiles";
 import { DecisionStory, GovernancePanel, ReviewFindings, TimelinePanel } from "./PrSections";
@@ -65,7 +65,7 @@ export default function PrLive({ id }: { id: string }) {
     <main className="wrap page">
       <PageHead title="PR analysis" sub={msg} meta={<><span className="chip sim">{id}</span><PrMode mode="live" /></>} />
       {st.k === "error" && st.e.kind === "notfound" && <p className="lv-muted">Try the demo: <a href="#/pr/demo">small commit</a> · <a href="#/pr/demo-large">large commit</a></p>}
-      {st.k === "error" && st.e.kind === "login" && <a className="btn primary" style={{ width: "fit-content" }} href="/auth/login">Log in with GitHub</a>}
+      {st.k === "error" && st.e.kind === "login" && <a className="btn primary" style={{ width: "fit-content" }} href={loginHref()}>Log in with GitHub</a>}
     </main>
   );
 }

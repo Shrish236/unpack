@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..config import settings
 from .service import GitHubService
 
 MARKER_PREFIX = "<!-- unpack:v1 "
@@ -58,8 +59,10 @@ def build_comment_body(
 
     if image_url:
         lines += [f"[![Graph of the changed code]({image_url})]({live_url})", ""]
+    # With PUBLIC_VIEWER the live graph opens without a login, so the comment does not ask for one.
+    access = "" if settings.PUBLIC_VIEWER else " (GitHub login and repo access required)"
     lines += [
-        f"**[Open the live graph →]({live_url})** · reasons and evidence for each function (GitHub login and repo access required)",
+        f"**[Open the live graph →]({live_url})** · reasons and evidence for each function{access}",
         "",
         f"<sub>Analysis of `{short_sha}` · updated {generated_at}</sub>",
     ]

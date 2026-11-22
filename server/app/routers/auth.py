@@ -27,8 +27,13 @@ SESSION_DAYS = 14
 
 
 def _safe_next(value: str | None) -> str:
-    if not value or not value.startswith("/a/") or value.startswith("//") or "\\" in value:
-        raise ApiError(400, "invalid_next", "next must be a relative /a/ path")
+    """Where to send the viewer after login: a path on this site (default "/"), never another host."""
+    if not value:
+        return "/"
+    # "//host" and "/\host" are other hosts to a browser, which also drops tabs and newlines first.
+    if (not value.startswith("/") or value.startswith("//") or "\\" in value
+            or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value)):
+        raise ApiError(400, "invalid_next", "next must be a relative path on this site")
     return value
 
 

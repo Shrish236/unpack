@@ -89,8 +89,9 @@ async def test_oauth_login_and_callback(client, fake_github):
         assert location.startswith("https://github.com/login/oauth/authorize?")
         state = dict(p.split("=", 1) for p in location.split("?", 1)[1].split("&"))["state"]
 
-        bad_next = await client.get("/auth/login?next=https://evil.test", follow_redirects=False)
-        assert bad_next.status_code == 400
+        for evil in ("https://evil.test", "//evil.test", "/\\evil.test", "/%09/evil.test"):
+            bad_next = await client.get(f"/auth/login?next={evil}", follow_redirects=False)
+            assert bad_next.status_code == 400, evil
 
         bad = await client.get("/auth/callback?code=x&state=forged", follow_redirects=False)
         assert bad.status_code == 400 and "Login failed" in bad.text
@@ -104,6 +105,13 @@ async def test_oauth_login_and_callback(client, fake_github):
         await client.post("/auth/logout")
         logged_out = await client.get("/api/me")
         assert logged_out.status_code == 401
+
+        # Login from a dashboard: no next goes home, and a hash route is kept through the callback.
+        assert (await client.get("/auth/login", follow_redirects=False)).status_code == 302
+        dash = await client.get("/auth/login?next=%2F%23%2Fteam", follow_redirects=False)
+        dash_state = dict(p.split("=", 1) for p in dash.headers["location"].split("?", 1)[1].split("&"))["state"]
+        back = await client.get(f"/auth/callback?code=abc&state={dash_state}", follow_redirects=False)
+        assert back.status_code == 302 and back.headers["location"] == "/#/team"
     finally:
         services.set_oauth_transport(None)
 

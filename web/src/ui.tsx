@@ -58,6 +58,11 @@ export function Seg<T extends string>({ value, options, onChange }: { value: T; 
   );
 }
 
+// GitHub login that comes back to the page the viewer is on (path and hash route).
+export function loginHref(): string {
+  return `/auth/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
+}
+
 // Loading and error states for a dashboard page. Children render only with data.
 export function DataGate<T>({ q, children }: { q: { data: T | undefined; error: Error | null; isError: boolean }; children: (data: T) => ReactNode }) {
   if (q.data !== undefined) return <>{children(q.data)}</>;
@@ -65,7 +70,7 @@ export function DataGate<T>({ q, children }: { q: { data: T | undefined; error: 
     const login = q.error instanceof ApiError && q.error.kind === "login";
     return (
       <Panel title={login ? "Log in to see this page" : "This page could not load"} sub={q.error.message}
-        aside={login ? <a className="btn primary" href="/auth/login">Log in with GitHub</a> : undefined}>
+        aside={login ? <a className="btn primary" href={loginHref()}>Log in with GitHub</a> : undefined}>
         {null}
       </Panel>
     );

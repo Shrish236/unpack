@@ -1,4 +1,5 @@
 import type { DType, HumanKind } from "./data";
+import { readSnapshot, STATIC } from "./staticData";
 // Typed client for the viewer endpoints (docs/api-contract.md §5). Same-origin: the browser sends the session cookie.
 
 export type Driver = "user_asked" | "agent_decided" | "not_stated";
@@ -90,6 +91,13 @@ interface RequestInit2 { method?: "GET" | "POST"; body?: unknown }
 
 // One place for transport and error mapping. A 400 or 409 carries the server's message, shown to the person.
 async function request<T>(path: string, init: RequestInit2 = {}): Promise<T> {
+  if (STATIC) {
+    // GitHub Pages build: a read-only snapshot of the database, no server behind it.
+    if (init.method === "POST") throw new ApiError("server", "This is a read-only snapshot of Unpack, so decisions cannot be saved here.");
+    const body = await readSnapshot<T>(path).catch(() => null);
+    if (body === null) throw new ApiError("notfound", "That page is not in this snapshot.", 404);
+    return body;
+  }
   const hasBody = init.body !== undefined;
   let r: Response;
   try {
