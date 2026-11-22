@@ -2,7 +2,7 @@
 
 Unpack turns AI-written code changes into an explained, explorable graph. For each pull request it shows what changed, why, and which parts no test reaches.
 
-These documents describe the designs and the state of `main`. Start with the status document if you want to know what works today.
+These documents describe the designs and the state of `main`. Start with the status document if you want to know what was verified, but note it is a snapshot from 2026-11-20: the web UI, dashboards, governance and deployment have all been built since. The [root README](../README.md) describes the project as it is now.
 
 ## Reading order
 
@@ -17,6 +17,8 @@ These documents describe the designs and the state of `main`. Start with the sta
 | 6a | [ui-graph-plan.md](ui-graph-plan.md) | The PR graph page opened from the dashboard: build plan, every decision (`G1`–`G70`), open questions |
 | 7 | [graph-design.md](graph-design.md) | The code knowledge graph library: parsing, resolution, test reachability, change detection, validation, limits |
 | 8 | [graph-api.md](graph-api.md) | What the graph holds, every query and its response shape, the Cypher examples, and measured speed |
+| 9 | [api-contract.md](api-contract.md) | Every endpoint, its auth, limits and error codes |
+| 10 | [governance-pipeline.md](governance-pipeline.md) | How sessions become decisions, policy candidates and the dashboard numbers |
 
 ## Which document wins
 
