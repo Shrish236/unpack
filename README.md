@@ -1,250 +1,181 @@
-# 🧭 Unpack
+<div align="center">
 
-> **Turns AI-written code changes into an explained, explorable graph.**
+# Unpack
 
-Unpack helps engineering teams understand code they did not write themselves. For every pull request an AI agent produces, Unpack extracts the reasoning behind each changed function, backs every claim with verbatim evidence from the agent's session, flags untested code paths, and renders an interactive knowledge graph instead of an overwhelming diff.
+**Check what an AI coding agent says against what you asked and what actually happened,<br>then turn the verified decisions into governed team knowledge.**
 
----
+[![Live demo](https://img.shields.io/badge/live%20demo-GitHub%20Pages-2ea44f)](https://shrish236.github.io/unpack/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![Node](https://img.shields.io/badge/node-20%2B-339933)](web/package.json)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](#license)
 
-## 🎯 The Problem
+[Live demo](https://shrish236.github.io/unpack/) · [Quickstart](#quickstart) · [How it works](#how-it-works) · [Documentation](docs/README.md)
 
-Code comprehension is the modern software bottleneck. AI coding agents write code far faster than humans can review, comprehend, and verify. When reviewers, on-call engineers, or incident responders look at an AI-generated pull request:
-- They don't know **why** a specific line or function was changed.
-- They cannot tell if the agent fulfilled what the user asked or went down an unverified tangent.
-- They cannot easily see what calls into the change or which code paths lack test coverage.
+<img src="docs/images/pr-analysis.png" alt="An Unpack PR analysis: the change graph, the reason for each function, and the diff" width="860">
 
-Unpack closes this gap by bridging the agent session with the repository's code knowledge graph.
-
----
-
-## 🏛 Architecture
-
-```
-Developer + Agent (Gemini CLI, Claude Code, Cursor)
-       │
-       ▼ (git push)
-  pre-push hook (CLI)
-  • Scans & scrubs secrets locally (.env, tokens)
-  • Captures session turns & diff
-  • Gzips & streams to Unpack server
-       │
-       ▼
- ┌─────────────────────────────────────────────────────────────┐
- │                      Unpack Server                          │
- │                                                             │
- │  ┌─────────────────┐    ┌────────────────────────────────┐  │
- │  │ API (FastAPI)   │    │ Background Worker              │  │
- │  │ • Ingestion API │    │ • Analyze push jobs            │  │
- │  │ • OAuth & Auth  │    │ • Branch reconciler loop       │  │
- │  │ • Static Web UI │    │ • Playwright screenshot render │  │
- │  └────────┬────────┘    └──────────────┬─────────────────┘  │
- │           │                            │                    │
- │    ┌──────▼────────┐           ┌───────▼────────┐           │
- │    │  Postgres 16  │           │    Neo4j 5     │           │
- │    │ State & Jobs  │           │ Code Knowledge │           │
- │    └───────────────┘           └───────┬────────┘           │
- │                                        │                    │
- │  ┌─────────────────────────────────────▼─────────────────┐  │
- │  │ Gemini AI Reasoning Engine (Google GenAI)             │  │
- │  │ • Explains per-function rationale                     │  │
- │  │ • Classifies drivers (user_asked vs agent_decided)    │  │
- │  │ • Verbatim quote verification against session turns   │  │
- │  └───────────────────────────────────────────────────────┘  │
- └──────────────────────────────┬──────────────────────────────┘
-                                │
-          ┌─────────────────────┴─────────────────────┐
-          ▼                                           ▼
-   Pull Request Comment                         Interactive UI
-   • Summary & test gap warnings                • React Flow (PR cards view)
-   • Linked static preview image                • Sigma.js (Whole codebase map)
-   • Link to interactive graph                  • Session timeline & Why tab
-```
+</div>
 
 ---
 
-## 🧩 The 6 Core Components
+## Why
 
-1. **CLI & Git Hook (`cli/`)**:
-   - Installed via `unpack install --server <URL> --token <TOKEN>`.
-   - On `git push`, scrubs secrets locally using regex and `.env` dictionaries, captures the agent session from `~/.gemini/tmp/`, and sends the diff and session payload to the server.
-2. **Server (`server/`)**:
-   - High-throughput FastAPI API + background job worker.
-   - Postgres job queue (`SELECT ... FOR UPDATE SKIP LOCKED`).
-   - Branch reconciler that tracks pushed branches, discovers pull requests, and updates PR comments idempotently.
-3. **AI Reasoning Engine (`server/app/llm/` & `server/app/pipeline/`)**:
-   - Built on `google-genai` SDK with Gemini 3 Pro / 2.5 Pro.
-   - Structured JSON output mapping changes to reasons, driver origin, and history.
-   - Rigorous verification checking every quote verbatim against session turns.
-4. **Code Knowledge Graph (`unpack_graph/`)**:
-   - Tree-sitter and AST two-pass parser.
-   - Call graph resolution with confidence tiers on every edge (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`). Calls that cannot be resolved are kept on their function with the reason, not as edges.
-   - Argument-gated BFS test reachability with the labels `direct`, `reached`, `reached_uncertain` and `none`. `none` is the only red flag, and it is checked against a real coverage run (`unpack-graph coverage-check`).
-   - Function-level change classification (text only, signature, behaviour) and the GraphView region for a change.
-   - Neo4j persistence, a single-query region, and incremental updates.
-5. **PR Comment Bot (`server/app/github/`)**:
-   - GitHub App integration editing a single comment per PR on every push.
-   - Includes change summary, risk flags (e.g. untested functions), rendered graph screenshot, and authenticated live link.
-6. **Interactive Graph UI (`web/`)**:
-   - **PR View**: Built with React 19 and `@xyflow/react` (React Flow) with ELK compound layout for crisp cards, test paths, and reasoning details.
-   - **Codebase Map**: Built with `sigma` v3 and `graphology` with deterministic d3 circle-packing for repository context.
+AI agents now write pull requests faster than people can read them, and they decide things along the way: which dependency to add, what schema to use, whether to skip a test. Reviewers are left reading the agent's own account of its work.
 
----
+Unpack works at two levels.
 
-## 📁 Repository Layout
+- **For each pull request:** it shows what changed, why, and which changed code no test reaches. Every reason is backed by a verbatim quote from the agent session, and a claim with no quote is dropped.
+- **Across pull requests:** it records every decision, by the agent and by the human who corrected it. When the same correction keeps coming back, it proposes a policy that a person approves and that is then checked on later work.
 
-```
-unpack/
-├── README.md                      # Project documentation
-├── pyproject.toml                 # Python packaging and dependencies
-├── docker-compose.yml             # Postgres, Neo4j, API, Worker, Cloudflared
-├── .env.example                   # Environment configuration template
-├── Makefile                       # Development task shortcuts
-├── docs/
-│   └── graph-design.md            # Design, tiers, validation, adapting to other repositories
-├── schemas/
-│   └── graphview.schema.json      # Stable JSON schema for GraphView
-├── unpack_graph/                  # Code knowledge graph library & CLI
-│   ├── model.py                   # Data models (Shape, CallSite, FuncInfo, ModuleInfo, ...)
-│   ├── extract.py                 # Pass 1: Syntax extraction & hashing
-│   ├── resolve.py                 # Pass 2: Whole-repo symbol & call resolution
-│   ├── graph.py                   # In-memory graph container & builder
-│   ├── reach.py                   # Test reachability BFS with argument gating
-│   ├── diff.py                    # Change detection & classification
-│   ├── region.py                  # GraphView region builder
-│   ├── incremental.py             # Incremental graph update
-│   ├── neo4j_io.py                # Neo4j loader and Cypher queries
-│   ├── source.py                  # FsSource and GitSource abstractions
-│   ├── evaluate.py                # Measurements: coverage against ast, coverage check
-│   └── cli.py                     # `unpack-graph` CLI
-├── server/                        # FastAPI server & worker
-│   ├── Dockerfile                 # Multi-stage production container
-│   └── app/
-│       ├── main.py                # FastAPI entrypoint & static mount
-│       ├── config.py              # Pydantic-settings configuration
-│       ├── db.py, models.py       # SQLAlchemy ORM models
-│       ├── schemas/api.py         # Master API & UI JSON contract
-│       ├── routers/               # Ingest, Live, GitHub setup, Auth, Admin, Images
-│       ├── github/                # GitHub App client, comments, PR tracking
-│       ├── pipeline/              # Session parsing, edit mapping, verification
-│       ├── llm/                   # Gemini client, structured output, prompts
-│       └── jobs/                  # Worker loop, queue, reconciler, render
-├── cli/                           # Developer CLI tool & pre-push hook
-│   ├── main.py                    # `unpack` CLI commands
-│   ├── hook.py                    # Pre-push hook runner
-│   ├── secrets.py                 # Local secret scrubbing engine
-│   └── session_finder.py          # Gemini CLI session finder
-├── contract/                      # Schema sync & test fixtures
-│   ├── export_schemas.py          # Exports Pydantic schemas to JSON Schema
-│   ├── schema/                    # Generated JSON schemas for UI
-│   └── fixtures/                  # Demo scenarios (e.g. analysis_done.json)
-├── web/                           # React 19 + TypeScript + Vite frontend
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── src/                       # PR view, Codebase map, Timeline, Detail panel
-└── tests/                         # Test suite
-    ├── test_extraction.py         # Pass 1 corner cases, checked against ast
-    ├── test_resolution.py         # Pass 2: imports, types, dispatch, containers
-    ├── test_reachability.py       # Test reachability and argument gating
-    ├── test_dynamic_dispatch.py   # getattr-dispatched methods
-    ├── test_diff.py               # Change classification and the region schema
-    ├── test_neo4j.py              # Neo4j parity and delta (needs the neo4j service)
-    ├── test_incremental.py        # Incremental update equals a full rebuild
-    ├── test_evaluate.py           # Measurements and the coverage check
-    └── fixtures/                  # Small Python packages the graph tests analyse
+> **AI proposes, evidence decides.** The model extracts and explains. Checks such as "did the tests run", "was there an edit after the last run" and "does a test reach this function" are deterministic, and the model never grades its own claims.
+
+## What you get
+
+| | |
+|---|---|
+| **Change graph** | Only the changed part of the codebase as an interactive graph, with callers, callees and the blast radius of each change. Edges carry a confidence tier: `EXTRACTED`, `INFERRED` or `AMBIGUOUS`. |
+| **Reasons with evidence** | Per function: why it changed, whether you asked for it or the agent decided, and the session turn that shows it. |
+| **Test gaps** | Each function is labelled `direct`, `reached`, `reached_uncertain` or `none`. Only `none` is a red flag, and it is checked against a real coverage run. |
+| **Decision ledger** | Agent choices and human redirects, rejections and requirements, typed and linked to the code they touched. |
+| **Governance inbox** | Repeated human corrections become policy candidates with evidence, a recommendation and an owner. Approved policies are tracked to see whether they work. |
+| **Dashboards** | Executive, manager and per-repository views of adherence, repeat overrides and rework. |
+| **PR comment** | One comment per pull request, kept up to date, with a summary, risk flags, a graph image and a link to the live page. |
+
+<p align="center">
+  <img src="docs/images/executive.png" alt="Executive dashboard" width="49%">
+  <img src="docs/images/governance.png" alt="Governance inbox" width="49%">
+</p>
+
+## Live demo
+
+**https://shrish236.github.io/unpack/** is the full dashboard as a read-only static site. It runs on a snapshot of the real database (20 analyses of a fork of `httpx`), so there is no backend and no login. Governance actions are disabled there. See [web/README.md](web/README.md#static-demo-github-pages) for how the snapshot is made.
+
+## How it works
+
+```mermaid
+flowchart LR
+    Dev["Developer + agent<br/>(Gemini CLI, Antigravity, Claude Code)"] -- git push --> Hook["unpack CLI<br/>pre-push hook"]
+    Hook -- "session + diff<br/>secrets scrubbed locally" --> API
+    subgraph Server["Unpack server"]
+        API["FastAPI API"] --> Q[("Postgres<br/>state + job queue")]
+        Q --> W["Worker"]
+        W --> G["Code graph<br/>unpack_graph"]
+        W --> L["Gemini<br/>reasons + decisions"]
+        W --> V["Verification<br/>quotes + facts"]
+    end
+    W --> C["PR comment<br/>(GitHub App)"]
+    API --> UI["Web UI<br/>graph + dashboards"]
 ```
 
----
+1. **Capture.** On `git push`, the CLI finds the agent session for the branch, removes secrets locally (known values, patterns, high-entropy strings), and sends the session and diff to the server.
+2. **Analyse.** The worker builds the code graph at the pushed commit, finds the changed functions, maps each session edit to them, and asks Gemini for the reason and the decisions.
+3. **Verify.** Every quote must appear verbatim in the turn it cites, and every claim is checked against the diff and the test runs. Anything that fails is dropped, not shown.
+4. **Publish.** The server edits one comment on the pull request and serves the live page.
+5. **Aggregate.** Decisions are rolled up into the dashboards and the governance inbox, and measured rows are kept apart from sample data.
 
-## 🚀 Quickstart & Development
+## Repository layout
 
-### 1. Prerequisites
-- **Python**: `>= 3.11`
-- **Node.js**: `>= 20.0.0`
-- **Docker & Docker Compose** (for Postgres & Neo4j)
+| Path | What it is |
+|---|---|
+| [`cli/`](cli/README.md) | The `unpack` command: installs the pre-push hook, finds and scrubs the session, uploads it. Adapters for Gemini CLI, Antigravity and Claude Code sessions. |
+| [`server/`](server/README.md) | FastAPI API, background worker, branch reconciler, GitHub App integration, LLM pipeline, migrations. |
+| [`unpack_graph/`](unpack_graph/README.md) | The code knowledge graph library and the `unpack-graph` CLI (tree-sitter, two-pass resolution, test reachability). |
+| [`web/`](web/README.md) | React 19 + TypeScript + Vite UI: PR analysis page, dashboards, governance inbox. |
+| [`contract/`](contract/) | JSON Schemas exported from the API models, and fixtures for building the UI without a server. |
+| [`deploy/`](deploy/README.md) | Production setup: Compose file, Cloud Run front door, deploy and backup scripts. |
+| [`docs/`](docs/README.md) | Design documents, API contract and current status. |
+| [`tests/`](tests/) | Graph, CLI and server tests. |
 
-### 2. Clone & Configure
+## Quickstart
+
+You need Python 3.11+, Node 20+ and Docker (for Postgres). A Gemini API key is needed only if you want reasoning on real sessions.
+
 ```bash
 git clone https://github.com/Shrish236/unpack.git
 cd unpack
 
-cp .env.example .env
-# Edit .env and supply your GEMINI_API_KEY
+cp .env.example .env            # fill in the secrets; see the comments in the file
+
+docker compose up -d postgres   # Postgres 16
+pip install -e ".[dev]"         # or: make install
+(cd web && npm install)
 ```
 
-### 3. Start Database Services
+Run the three processes, each in its own terminal:
+
 ```bash
-docker compose up -d postgres neo4j
+make dev-server    # API on http://localhost:8000
+make dev-worker    # job worker and branch reconciler
+make dev-ui        # web UI on http://localhost:5173
 ```
 
-### 4. Install Dependencies
+To look around without a real agent session, load sample dashboard data and fake sessions:
+
 ```bash
-# Install Python packages in editable mode
-pip install -e ".[dev]"
-
-# Install Web dependencies
-cd web && npm install && cd ..
+make seed-dashboard
+make fake-sessions
 ```
 
-### 5. Export Schemas & Run Tests
+### Hook up a repository
+
+Register the repository with the server (`POST /admin/repos`, see [docs/api-contract.md](docs/api-contract.md)) to get an ingest token, then in the project you want to analyse:
+
 ```bash
-# Export Pydantic models to JSON schemas for the frontend
-python contract/export_schemas.py
-
-# Run test suite (the Neo4j tests need `docker compose up -d neo4j`;
-# without it they are skipped, and with it they clear the database they use)
-pytest
+unpack install --server "http://localhost:8000" --token "unp_..."
 ```
 
-### 6. Run the Application
-In separate terminals:
+From then on every `git push` sends the session and diff. `unpack push --dry-run` shows what would be sent, and `unpack status` shows what the CLI can see. Details are in [cli/README.md](cli/README.md).
+
+### Run the tests
+
 ```bash
-# Start FastAPI backend server (http://localhost:8000)
-uvicorn server.app.main:app --reload --port 8000
-
-# Start background worker & reconciler
-python -m server.app.jobs.worker
-
-# Start frontend development server (http://localhost:5173)
-cd web && npm run dev
+make test       # pytest -n auto (the server tests need Postgres on localhost:5432)
+make lint       # ruff
 ```
 
----
+The Neo4j tests are skipped unless a Neo4j service is running.
 
-## 🛠 CLI Usage
+## Configuration
 
-### Build Code Knowledge Graph
-```bash
-# Pass 1 only: check every definition against Python's ast module
-unpack-graph extract . --check-ast
+All settings are environment variables, described in [`.env.example`](.env.example). The server refuses to start if a required secret is missing or too short.
 
-# Call graph with a confidence tier per edge, and reachability labels
-unpack-graph build .
-unpack-graph build . --neo4j                       # also load into Neo4j
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Postgres connection string. |
+| `UNPACK_BASE_URL` | Public URL, used in PR comments and for OAuth. |
+| `GEMINI_API_KEY`, `REASONING_ENABLED` | Turn on the LLM reasoning and decisions passes. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub App: cloning private repositories, viewer login, PR comments. |
+| `SESSION_SECRET`, `RENDER_TOKEN_SECRET`, `ADMIN_TOKEN`, `TOKEN_ENCRYPTION_KEY` | Required secrets. Generation commands are in `.env.example`. |
+| `PUBLIC_VIEWER`, `DEV_VIEWER_LOGIN` | Demo mode: everyone sees everything as one named viewer, with no GitHub login. Never enable on a server with private data. |
 
-# Functions changed between two revisions, classified
-unpack-graph changed . main feature-branch --json
+## Deployment
 
-# GraphView region JSON for the change (schemas/graphview.schema.json)
-unpack-graph region . main feature-branch --out region.json
-unpack-graph region . main feature-branch --neo4j  # answered by the Cypher region query
+The reference deployment is one VM running [`deploy/docker-compose.prod.yml`](deploy/docker-compose.prod.yml) (API, worker, Postgres), with a small Cloud Run service as the public HTTPS front door. Images are built with Cloud Build ([`cloudbuild.yaml`](cloudbuild.yaml)). See [deploy/README.md](deploy/README.md).
 
-# Measurements, and the reachability check against a real test run
-unpack-graph eval .
-coverage run -m pytest && coverage json -o cov.json   # run from the repository root
-unpack-graph coverage-check . cov.json             # exits 1 on any false "none"
-```
+The static demo is published by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches `web/`.
 
-Neo4j connection: `UNPACK_NEO4J_URI`, `UNPACK_NEO4J_USER`, `UNPACK_NEO4J_PASSWORD` (defaults: `bolt://localhost:7687`, `neo4j`, `unpackpass` as in `docker-compose.yml`). Start the service with `docker compose up -d neo4j`.
+## Documentation
 
-The design, the tiers, the validation and how to adapt the graph to another repository are described in [docs/graph-design.md](docs/graph-design.md).
+Start at [docs/README.md](docs/README.md). The most useful pages:
 
-### Install Git Pre-Push Hook
-In any project repository:
-```bash
-unpack install --server "https://unpack.yourdomain.com" --token "unp_your_repo_token"
-```
+- [Status](docs/status.md): what is built, verified and still open.
+- [Server design](docs/server-design.md) and [API contract](docs/api-contract.md).
+- [Session pipeline](docs/session-pipeline.md) and [governance pipeline](docs/governance-pipeline.md): how a session becomes reasons, decisions and dashboard numbers.
+- [Code graph design](docs/graph-design.md) and [graph API](docs/graph-api.md).
+- [UI design](docs/ui-design.md).
 
----
+## Status and limits
 
-## 📜 License
-MIT License.
+Unpack was built for the Startup Buildathon India 2026 and is under active development.
+
+- The code graph supports **Python only**.
+- Session capture supports Gemini CLI and Antigravity sessions directly, and Claude Code through a converter.
+- The server builds the graph in memory and caches it on disk. Neo4j is optional and used only by the `unpack-graph` CLI and its tests.
+- Reasoning quality has not been validated with outside teams yet.
+
+## Contributing
+
+Issues and pull requests are welcome. Run `make lint` and `make test` before opening a pull request, and keep changes focused. For larger changes, read [docs/status.md](docs/status.md) first so you know which design document is authoritative for the area.
+
+## License
+
+MIT.
