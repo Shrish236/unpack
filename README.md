@@ -7,7 +7,6 @@
 [![Live demo](https://img.shields.io/badge/live%20demo-GitHub%20Pages-2ea44f)](https://shrish236.github.io/unpack/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Node](https://img.shields.io/badge/node-20%2B-339933)](web/package.json)
-[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](#license)
 
 [Live demo](https://shrish236.github.io/unpack/) · [Quickstart](#quickstart) · [How it works](#how-it-works) · [Documentation](docs/README.md)
 
@@ -176,6 +175,3 @@ Unpack was built for the Startup Buildathon India 2026 and is under active devel
 
 Issues and pull requests are welcome. Run `make lint` and `make test` before opening a pull request, and keep changes focused. For larger changes, read [docs/status.md](docs/status.md) first so you know which design document is authoritative for the area.
 
-## License
-
-MIT.
