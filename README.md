@@ -261,6 +261,3 @@ Unpack was built for the Startup Buildathon India 2026 and is under active devel
 - Policy enforcement levels (`advice`, `check`, `gate`) are recorded and tracked. Reasoning quality has not yet been validated with outside teams.
 - The server builds graphs in memory and caches them on disk. Neo4j is optional and used only by the `unpack-graph` CLI and its tests.
 
-## Contributing
-
-Issues and pull requests are welcome. Run `make lint` and `make test` before opening a pull request, and keep changes focused. For larger changes, read [docs/status.md](docs/status.md) first so you know which design document is authoritative for the area.
