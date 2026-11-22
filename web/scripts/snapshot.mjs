@@ -18,9 +18,13 @@ async function get(p) {
   if (!r.ok) throw new Error(`${p} -> HTTP ${r.status}`);
   return r.json();
 }
+// Recorded sessions contain the developer's local paths. Keep the home directory name out of the published files.
+// JSON text escapes a backslash as two characters, so the separator is matched as one or more of / or \.
+const scrub = (text) => text.replace(/((?:Users|home)[\\/]+)[A-Za-z0-9_.-]+/g, "$1user");
+
 async function save(p) {
   const body = await get(p);
-  await writeFile(path.join(out, name(p)), JSON.stringify(body));
+  await writeFile(path.join(out, name(p)), scrub(JSON.stringify(body)));
   count++;
   return body;
 }
@@ -56,7 +60,7 @@ for (const { public_id: id } of analyses) {
     const part = await get(`/api/analyses/${encodeURIComponent(id)}/turns?ids=${list.slice(i, i + 50).join(",")}`);
     turns.push(...part.turns);
   }
-  await writeFile(path.join(out, name(`/api/analyses/${encodeURIComponent(id)}/turns`)), JSON.stringify({ turns }));
+  await writeFile(path.join(out, name(`/api/analyses/${encodeURIComponent(id)}/turns`)), scrub(JSON.stringify({ turns })));
   count++;
 }
 console.log(`wrote ${count} files to ${out}`);

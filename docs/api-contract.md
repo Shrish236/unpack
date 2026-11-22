@@ -166,7 +166,7 @@ Receives one push from the pre-push hook. The server stores the payload and queu
 
 ```bash
 gzip -c payload.json | curl -sS -X POST https://unpack.example.com/v1/ingest \
-  -H "Authorization: Bearer unp_4fQ0m2Zb9KxT8pL3vR7yN1cW6sH5dJ2gA0eU9iO8tY" \
+  -H "Authorization: Bearer unp_<ingest-token>" \
   -H "Content-Type: application/json" \
   -H "Content-Encoding: gzip" \
   --data-binary @-
@@ -249,7 +249,7 @@ Returns the state of a push that the token's repository sent. The CLI can poll t
 
 ```bash
 curl -sS https://unpack.example.com/v1/pushes/418 \
-  -H "Authorization: Bearer unp_4fQ0m2Zb9KxT8pL3vR7yN1cW6sH5dJ2gA0eU9iO8tY"
+  -H "Authorization: Bearer unp_<ingest-token>"
 ```
 
 **Sample response `200`**
@@ -786,7 +786,7 @@ curl -sS -X POST https://unpack.example.com/admin/repos \
 ```json
 {
   "repo_id": 7,
-  "ingest_token": "unp_4fQ0m2Zb9KxT8pL3vR7yN1cW6sH5dJ2gA0eU9iO8tY",
+  "ingest_token": "unp_<ingest-token>",
   "installation_id": 53917204
 }
 ```
@@ -807,7 +807,7 @@ curl -sS -X POST https://unpack.example.com/admin/repos/7/rotate-token \
 **Response `200`**
 
 ```json
-{"ingest_token": "unp_Zt3rQ8vL0mB6nE2xK9wC4jH7pD1sF5yA8gU3oI6eR0k"}
+{"ingest_token": "unp_<ingest-token>"}
 ```
 
 **Errors:** `404 not_found`.
